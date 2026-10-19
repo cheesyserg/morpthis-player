@@ -32,18 +32,11 @@
 #include "src/gui/library/libraryscan.h"
 #include "src/gui/wireless/dlna.h"
 #include "src/gui/wireless/sonixlink.h"
-#include "src/gui/gearboy/gearboypage.h"
-#include "src/gui/gearboy/gearboysettings.h"
-#include "src/gui/flappybird/flappybird.h"
-#include "src/gui/gearboy/gearboyplay.h"
 #include "src/gui/shell/main_menu.h"
 #include "src/gui/library/medialist.h"
 #include "src/gui/library/filespage.h"
 #include "src/gui/library/pictureview.h"
 #include "src/gui/library/textview.h"
-#include "src/gui/calculator/calculator.h"
-#include "src/gui/notes/noteeditor.h"
-#include "src/gui/notes/notes.h"
 #include "src/gui/shell/morepage.h"
 #include "src/gui/shell/popover.h"
 #include "src/gui/nowplaying/trackmenu.h"
@@ -501,12 +494,6 @@ static void modal_init(gui_config_t *cfg) {
 static void key_async_cb(void *user_data) {
 	gui_key_t key = (gui_key_t)(uintptr_t)user_data;
 
-	// While a Game Boy is open the device's Play/Pause and skip keys are
-	// Start/Select inputs, not music transport commands.
-	if (gearboyplay_handle_key(key)) {
-		return;
-	}
-
 	// A book owns Previous and Next while it is on screen. Play/Pause remains
 	// an audio command, so background music can still be stopped without
 	// putting the book down.
@@ -654,12 +641,6 @@ void gui_init(gui_config_t *cfg) {
 	filespage_screen = lv_obj_create(NULL);
 	textview_screen = lv_obj_create(NULL);
 	pictureview_screen = lv_obj_create(NULL);
-	gearboypage_screen = lv_obj_create(NULL);
-	gearboyplay_screen = lv_obj_create(NULL);
-	flappybird_screen = lv_obj_create(NULL);
-	calculator_screen = lv_obj_create(NULL);
-	notes_screen = lv_obj_create(NULL);
-	noteeditor_screen = lv_obj_create(NULL);
 
 	// Persistent topbar that stays above every screen.
 	topbar_init(cfg);
@@ -698,10 +679,6 @@ void gui_init(gui_config_t *cfg) {
 	radiopage_init(cfg);
 	dacpage_init(cfg);
 	// After dacpage: the More section points at its pages.
-	gearboyplay_init(cfg);  // before the list: one of its rows leads here
-	gearboysettings_init(cfg); // before the page: its gear opens this
-	gearboypage_init(cfg);
-	flappybird_init(cfg);
 	// before morepage: the books tile opens the shelf, and the shelf opens the
 	// reader.
 	ebookreader_init(cfg);
@@ -709,10 +686,6 @@ void gui_init(gui_config_t *cfg) {
 	ebookmarkspage_init(cfg);
 	ebooksettings_init(cfg); // likewise: the other corner button opens this
 	ebookpage_init(cfg);
-	// Before morepage: the More menu points at both of them.
-	calculator_init(cfg);
-	noteeditor_init(cfg); // before notes: a row of the shelf opens it
-	notes_init(cfg);
 	morepage_init(cfg);
 	textview_init(cfg); // before filespage: a text file tapped there opens here
 	pictureview_init(cfg); // likewise, for JPEG and PNG pictures
@@ -782,7 +755,7 @@ void gui_init(gui_config_t *cfg) {
 		wifisettings_screen,
 		btsettings_screen, btaudio_screen,	 airpodspage_screen, airplay_screen,   streaming_screen,
 		radiopage_screen,  radiolist_screen, radiosearch_screen,
-		dlna_screen,	   sonixlink_screen,	 morepage_screen,	  gearboypage_screen,
+		dlna_screen,	   sonixlink_screen,	 morepage_screen,
 	};
 	for (size_t i = 0; i < sizeof(back_swipe_screens) / sizeof(back_swipe_screens[0]); i++) {
 		switcher_attach_back_gesture(back_swipe_screens[i]);

@@ -117,7 +117,6 @@ ICONS = [
     # not there: they ride inside the 72 px thumbnail box on a library row and
     # the 56 px one on a search hit.
     ("music-2.svg", "music2", 32),
-    ("bird.svg", "bird", 32),  # Flappy Bird's monochrome Tokyo Night glyph
     ("tidal-mark.svg", "tidal_mark", 32),  # Tokyo Night's letter-only streaming mark
     ("qobuz-mark.svg", "qobuz_mark", 32),
     ("artist.svg", "artist", 32),
@@ -370,15 +369,6 @@ ICONS = [
     # because the animation grows it to 1:1 and no further.
     ("heart.svg", "heart", 160),
 
-    # The calculator page: its destination in the More list, and the notes
-    # shelf beside it. The enter glyph is the accent key while a note is being
-    # written, at the size of the keyboard's other accent keys.
-    # The note editor's way from reading a note to writing it, and the corner
-    # button the browser and the shelf use for the same thing.
-    ("pencil.svg", "pencil", 36),
-    ("calculator.svg", "calculator", 32),
-    ("notes.svg", "notes", 32),
-    ("enter.svg", "enter", 34),
     ("year.svg", "year", 32),
     ("most-played.svg", "most_played", 32),
 ]
@@ -439,12 +429,8 @@ COLOR_ICONS = [
     ("more.png", "menu_more", MAIN_MENU_ICON_SIZE),
     # What lives inside "More", at section size.
     ("dac.png", "menu_dac", SECTION_ICON_SIZE),
-    ("gearboy.png", "menu_gearboy", SECTION_ICON_SIZE),
-    ("flappy-bird.png", "menu_flappy_bird", SECTION_ICON_SIZE),
     ("ebook.png", "menu_books", SECTION_ICON_SIZE),
     ("file-explorer.png", "menu_file_explorer", SECTION_ICON_SIZE),
-    ("calculator.png", "menu_calculator", SECTION_ICON_SIZE),
-    ("notes.png", "menu_notes", SECTION_ICON_SIZE),
 
     # The service badges in the player's top right corner, where the radio puts
     # its LIVE mark. They sit over the cover art, so these are the outlined

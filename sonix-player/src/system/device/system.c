@@ -32,7 +32,6 @@
 #include "src/system/library/audiobookdb.h"
 #include "src/system/audio/eq.h"
 #include "src/system/remote/dlna.h"
-#include "src/system/gearboy/gbdb.h"
 #include "src/system/input/hookclicks.h"
 #include "src/system/input/keymap.h"
 #include "src/system/core/panel.h"
@@ -851,7 +850,6 @@ static void card_databases_attach(const char *root) {
 	podcastcache_set_root(root);
 	podcastsubs_set_root(root);
 	dlna_set_root(root);
-	gbdb_set_root(root);
 
 	// The log, from the setting rather than from a remembered flag: a flag does
 	// not survive two remove events, and a failed reopen consumes it for good.

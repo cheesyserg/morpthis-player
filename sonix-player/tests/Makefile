@@ -69,28 +69,6 @@ $(BUILD)/test_wifi: $(WIFI_SRC) $(ROOT)/src/system/net/wifi.h \
 	@mkdir -p $(BUILD)
 	$(CC) $(CPPFLAGS) -Istubs $(CFLAGS) -o $@ test_wifi.c $(ROOT)/src/system/net/wifi.c $(LDFLAGS) $(LDLIBS)
 
-# The Calculator page's arithmetic and the notes folder's rules: the two new
-# pages' plain-C halves, with no LVGL and no screen. The calculator model and
-# the notes store (with the shared text layer under it) are linked as they are
-# built into the player.
-CALC_SRC = test_calculator.c $(ROOT)/src/gui/calculator/calcmodel.c
-.PHONY: calculator
-calculator: $(BUILD)/test_calculator
-	$(BUILD)/test_calculator
-
-$(BUILD)/test_calculator: $(CALC_SRC) $(ROOT)/src/gui/calculator/calcmodel.h
-	@mkdir -p $(BUILD)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(CALC_SRC) $(LDFLAGS) $(LDLIBS)
-
-NOTES_SRC = test_notes.c $(ROOT)/src/system/notes/notesstore.c $(ROOT)/src/system/text/textfile.c
-.PHONY: notes
-notes: $(BUILD)/test_notes
-	$(BUILD)/test_notes
-
-$(BUILD)/test_notes: $(NOTES_SRC) $(ROOT)/src/system/notes/notesstore.h $(ROOT)/src/system/text/textfile.h
-	@mkdir -p $(BUILD)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(NOTES_SRC) $(LDFLAGS) $(LDLIBS)
-
 # Optional real-codec integration: the usual host development packages are
 # sufficient. No fake MP3/FLAC/Opus decoder is used. See tests/README.md.
 CODEC = $(filter-out %/wavpackdec.c %/opusdec.c,$(wildcard $(ROOT)/src/system/decode/*.c)) \
@@ -149,38 +127,18 @@ SAVER_SRC = $(ROOT)/tests/ui/test_screensaver.c $(ROOT)/src/gui/settings/screens
 SAVER_OBJ = $(patsubst $(ROOT)/%.c,$(BUILD)/ui/%.o,$(SAVER_SRC)) \
             $(patsubst $(ROOT)/%.c,$(BUILD)/ui/%.o,$(UI_LVGL_SRC))
 
-# The Calculator and Notes pages on the same renderer, at both panel sizes:
-# every key, every row and every note inside the panel they are drawn on.
-TOOLS_SRC = $(ROOT)/tests/ui/test_tools_pages.c \
-            $(ROOT)/src/gui/calculator/calculator.c $(ROOT)/src/gui/calculator/calcmodel.c \
-            $(ROOT)/src/gui/notes/notes.c $(ROOT)/src/gui/notes/noteeditor.c \
-            $(ROOT)/src/system/notes/notesstore.c $(ROOT)/src/system/text/textfile.c \
-            $(ROOT)/src/gui/library/textview.c $(ROOT)/src/gui/library/pictureview.c \
-            $(ROOT)/src/gui/shell/morepage.c $(ROOT)/src/gui/shell/gridpage.c \
-            $(ROOT)/src/gui/shell/settingsrow.c $(ROOT)/src/gui/shell/keyboard.c \
-            $(ROOT)/src/gui/shell/popover.c $(ROOT)/src/system/input/kblayout.c \
-            $(ROOT)/src/gui/shell/theme.c $(ROOT)/src/gui/shell/icons.c \
-            $(ROOT)/src/gui/board_profile.c \
-            $(ROOT)/src/system/core/config.c $(ROOT)/src/system/core/lang.c
-TOOLS_OBJ = $(patsubst $(ROOT)/%.c,$(BUILD)/ui/%.o,$(TOOLS_SRC)) \
-            $(patsubst $(ROOT)/%.c,$(BUILD)/ui/%.o,$(UI_LVGL_SRC))
-
 .PHONY: ui
-ui: $(BUILD)/test_main_menu $(BUILD)/test_screensaver $(BUILD)/test_tools_pages $(BUILD)/test_wifi_pages
+ui: $(BUILD)/test_main_menu $(BUILD)/test_screensaver $(BUILD)/test_wifi_pages
 	BOARD=tempotec_v1 $(BUILD)/test_main_menu ../../sonix-packer/assets/V1/usr/resource/sonix/language
 	BOARD=tempotec_v1 $(BUILD)/test_main_menu ../../sonix-packer/assets/V1/usr/resource/sonix/language saved
 	BOARD=tempotec_v1 $(BUILD)/test_screensaver ../../sonix-packer/assets/V1/usr/resource/sonix/language
 	BOARD=tempotec_v1 $(BUILD)/test_screensaver ../../sonix-packer/assets/V1/usr/resource/sonix/language saved
-	BOARD=tempotec_v1 $(BUILD)/test_tools_pages ../../sonix-packer/assets/V1/usr/resource/sonix/language
 	BOARD=tempotec_v1 $(BUILD)/test_wifi_pages ../../sonix-packer/assets/V1/usr/resource/sonix/language
 
 $(BUILD)/test_main_menu: $(UI_OBJ)
 	$(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
 $(BUILD)/test_screensaver: $(SAVER_OBJ)
-	$(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS)
-
-$(BUILD)/test_tools_pages: $(TOOLS_OBJ)
 	$(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS)
 
 $(BUILD)/test_wifi_pages: $(WIFIPAGE_OBJ)

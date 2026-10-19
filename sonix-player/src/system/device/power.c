@@ -42,7 +42,6 @@
 #include "src/system/core/logging.h"
 #include "src/system/device/usb.h"
 #include "src/system/audio/usbdac.h"
-#include "src/system/gearboy/gearboy.h"
 #include "src/system/device/led.h"
 #include "src/system/device/sysinfo.h"
 #include "src/system/device/axpcharge.h"
@@ -797,7 +796,6 @@ static bool player_is_busy(bool playing, uint32_t input_idle) {
 		   input_idle < POWER_TICK_MS * 4 ||	   // a key just pressed
 		   usbdac_is_active() ||				   // a computer feeding the DAC
 		   usb_storage_active() ||				   // the card exported over USB
-		   gearboy_running() ||					   // the emulator
 		   library_scan_running() ||			   // a scan, which is also writing to the card
 		   audiobookdb_scan_running() || wifitransfer_running() || dlna_running() || airplay_running() ||
 		   sonixlink_is_connected() || // a phone driving the player, not a switch left on

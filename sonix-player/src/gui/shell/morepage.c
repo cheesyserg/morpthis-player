@@ -6,12 +6,8 @@
 
 #include "src/gui/audio/dacpage.h"
 #include "src/gui/board_profile.h"
-#include "src/gui/calculator/calculator.h"
 #include "src/gui/ebook/ebookpage.h"
-#include "src/gui/flappybird/flappybird.h"
-#include "src/gui/gearboy/gearboypage.h"
 #include "src/gui/library/filespage.h"
-#include "src/gui/notes/notes.h"
 #include "src/gui/nowplaying/player.h"
 #include "src/gui/shell/gridpage.h"
 #include "src/gui/shell/icons.h"
@@ -38,24 +34,12 @@ static bool more_tokyo_icon(const char *label, const lv_image_dsc_t **icon, them
 	if (strcmp(label, "dac") == 0) {
 		*icon = &icon_usbaudioout;
 		*tone = THEME_SEMANTIC_CYAN;
-	} else if (strcmp(label, "gearboy") == 0) {
-		*icon = &icon_files_game;
-		*tone = THEME_SEMANTIC_GREEN;
 	} else if (strcmp(label, "books") == 0) {
 		*icon = &icon_files_book;
 		*tone = THEME_SEMANTIC_AMBER;
 	} else if (strcmp(label, "file_explorer") == 0) {
 		*icon = &icon_folder;
 		*tone = THEME_SEMANTIC_BLUE;
-	} else if (strcmp(label, "flappy_bird") == 0) {
-		*icon = &icon_bird;
-		*tone = THEME_SEMANTIC_PURPLE;
-	} else if (strcmp(label, "calculator") == 0) {
-		*icon = &icon_calculator;
-		*tone = THEME_SEMANTIC_CYAN;
-	} else if (strcmp(label, "notes") == 0) {
-		*icon = &icon_notes;
-		*tone = THEME_SEMANTIC_PURPLE;
 	} else {
 		return false;
 	}
@@ -97,22 +81,9 @@ static void more_list_build(gui_config_t *cfg, const grid_entry_t *entries, int 
 	}
 }
 
-// The shape of the tiled page.
-//
-// Every other tiled page in the player holds six destinations and is drawn as
-// the two-column, three-row page the main menu uses. More is the one page that
-// grew: with the calculator and the notes shelf it holds seven, and a seventh
-// tile in a 2x3 grid would be laid out past the bottom of an unscrollable page
-// -- visible to nobody. So the shape follows the count: six or fewer stay as
-// they are, and seven or more move to a third column.
-//
-// Three columns are what a 240 px V1 can afford without shrinking the tiles
-// below the size the rest of the interface draws them: at 72 px the 46 px
-// pictogram still fits above a one-line caption, and on a 480-pixel player the
-// tiles stay big enough for the 112 px menu art.
+// The shape of the tiled page. More holds three destinations, which fits the
+// two-column grid the main menu uses.
 #define MORE_GRID_ROWS 3
-
-static int more_grid_columns(int count) { return count > 2 * MORE_GRID_ROWS ? 3 : 2; }
 
 static void more_refresh_theme(void) {
 	bool tokyo_v1 = bp_is_tempotec_v1() && theme_uses_function_glyphs();
@@ -127,11 +98,6 @@ static void more_refresh_theme(void) {
 void morepage_init(gui_config_t *cfg) {
 	const grid_entry_t entries[] = {
 		{"dac", &icon_menu_dac, &dacpage_screen, NULL},
-#if GB_CORE
-		// The Game Boy emulator. Present only when the binary was built with
-		// GB=1 (see the Makefile).
-		{"gearboy", &icon_menu_gearboy, &gearboypage_screen, NULL},
-#endif
 		// An action rather than a screen: the shelf reads the Ebook folder again
 		// every time it is opened, so a book copied onto the card turns up
 		// without a restart.
@@ -140,19 +106,12 @@ void morepage_init(gui_config_t *cfg) {
 		// when the page is entered, so a card that changed under the player
 		// shows what is on it now.
 		{"file_explorer", &icon_menu_file_explorer, NULL, filespage_open},
-		// An action: the artwork is read from the resource tree on the way in.
-		{"flappy_bird", &icon_menu_flappy_bird, NULL, flappybird_open},
-		// Both of these are actions rather than screens for the file
-		// manager's reason: the calculator repaints its display from the sum
-		// it was left holding, and the notes shelf reads the card.
-		{"calculator", &icon_menu_calculator, NULL, calculator_open},
-		{"notes", &icon_menu_notes, NULL, notes_open},
 	};
 
 	// Dark and Light retain the established two-column grid. Tokyo Night uses a
 	// compact, single-column list whose rows share the Settings list styling.
 	int count = (int)(sizeof(entries) / sizeof(entries[0]));
-	more_grid = gridpage_build(morepage_screen, cfg, entries, count, more_grid_columns(count), MORE_GRID_ROWS, true);
+	more_grid = gridpage_build(morepage_screen, cfg, entries, count, 2, MORE_GRID_ROWS, true);
 	if (bp_is_tempotec_v1()) {
 		more_list_build(cfg, entries, count);
 	} else {

@@ -6,8 +6,6 @@ Run from the repository root on a Linux host:
 make -C sonix-player/tests test
 make -C sonix-player/tests sanitize
 make -C sonix-player/tests swvolume
-make -C sonix-player/tests calculator
-make -C sonix-player/tests notes
 ```
 
 These require only a C compiler, Make and Python 3 (plus standard pthread/dl/math libraries). They **do not require LVGL, ALSA, a MIPS toolchain, a music server, a real account, or downloaded audio**.
@@ -163,70 +161,6 @@ screens as ignored `.ppm` files, for example:
 ```sh
 SONIX_SCREENSAVER_SNAPSHOTS=.build/saver make -C sonix-player/tests ui
 ```
-
-## Calculator arithmetic and the notes folder
-
-`make -C sonix-player/tests calculator` and `make -C sonix-player/tests notes`
-build and run the two new pages' plain-C halves: no LVGL, no screen, the same
-files the firmware compiles.
-
-The harness supplies two font metrics, a small one and a larger one, so the
-page can be checked to draw the calculator's symbols a step up instead of
-merely differently styled.
-
-`test_calculator` drives the model through the twenty keys: the display
-following every key, a digit after a result starting a new sum, chained
-operators applied as they are pressed, the sign on a result and on a number
-being typed, percent, backspace to zero, ten digits and no more, the decimal
-point entered once, division by zero reported and cleared, and a number too
-wide for the display rounded down through the fallback formats instead of
-being cut off.
-
-`test_notes` covers the folder on a temporary card: what counts as a note
-(including the folder wearing a note's name and the `.tmp` left by a write
-that was interrupted), the A-Z, case-insensitive, digit-aware order, the name
-a note is written under, names that must not reach the filesystem, the next
-free name for a new note, what the editor will hold -- counted in characters
-rather than bytes, so a note of three-byte letters is measured by the letters
--- and reading the files a computer leaves behind: UTF-8 with a byte order
-mark, UTF-16, CRLF, tabs, Windows-1252 accents, control characters, an empty
-file, and a file too long for the editor.
-
-## Headless calculator and notes page tests
-
-The `ui` target also builds `test_tools_pages`, which lays the two new pages
-out on the real renderer at both panel sizes, with the Game Boy core compiled
-in as the firmware does, so the More menu is laid out with the seven entries
-the device has.
-
-It checks that both destinations are on the More page in every theme -- the
-tiles of Dark and Light, and the V1's single-column list under the palettes
-built on function glyphs -- that nothing on either page is drawn outside the
-panel, that every key is at least the size of the shell's own corner buttons
-and every notes row a finger target, that the calculator's symbol keys are
-drawn in the larger, bold font while its digits and the decimal point are not
-and that every caption stays inside the key it is drawn on, that the calculator's display follows the
-keys actually tapped and comes back holding the sum it was left with, that the
-error state is drawn in the language's own words, that a note opens with its
-file's text and its name as the title, that opening one is reading it -- no
-keyboard, no caret, a tap on the text that changes nothing, and nothing
-written to the card -- that the corner pencil is what turns the page into an
-editor and the keyboard comes up with it, that leaving the editor with writing
-unsaved leaves the writing on the card, that a note at the editor's ceiling
-opens in the editor in a fraction of a second and whole, that a note past it
-is shown by the text viewer instead, and that a new note is written and listed
-before a single character is typed into it. Every language file is also
-required to carry the two pages' strings: `tr()` falls back to the key it was
-given, so a missing translation shows the tag itself rather than failing.
-
-To inspect the pages, set `SONIX_PAGE_SNAPSHOTS` to an output prefix:
-
-```sh
-SONIX_PAGE_SNAPSHOTS=.build/page make -C sonix-player/tests ui
-```
-
-This writes ignored `.build/page-<board>-<page>-<theme>.ppm` files: one per
-page, per More-page shape, per theme that draws one and per panel size.
 
 ## Screensaver folder rules
 

@@ -26,7 +26,6 @@
 #include "src/gui/shell/topbar.h"
 #include "src/system/device/power.h"
 #include "src/system/playback/sleeptimer.h"
-#include "src/system/gearboy/gearboy.h"
 #include "src/system/streaming/radio.h"
 #include "src/system/audio/audio.h"
 #include "src/system/playback/audiobook.h"
@@ -765,15 +764,14 @@ static void audiobook_seek_by(double delta, const device_state_t *state) {
 // the card, Tidal, Qobuz -- is one thing and gets one timer.
 //
 // Three sources are none of them, and for the same reason: they do not go
-// through the player's transport at all. The radio, the Game Boy and the
-// Bluetooth receiver push their sound out through the external path, and there
-// is no pause to give them -- stopping a station is a disconnection, stopping
-// the emulator is stopping the game, and stopping the receiver is silence in a
-// room where somebody else's phone is still playing. Only the radio ever
-// reports playing here; the other two are written down so that it stays true if
-// they ever start to.
+// through the player's transport at all. The radio and the Bluetooth receiver
+// push their sound out through the external path, and there is no pause to give
+// them -- stopping a station is a disconnection, and stopping the receiver is
+// silence in a room where somebody else's phone is still playing. Only the
+// radio ever reports playing here; the receiver is written down so that it
+// stays true if it ever starts to.
 static sleeptimer_kind_t sleeptimer_kind_playing(void) {
-	if (radio_is_active() || gearboy_running() || btreceiver_is_active()) {
+	if (radio_is_active() || btreceiver_is_active()) {
 		return SLEEPTIMER_COUNT;
 	}
 	if (audiobook_is_playing()) {

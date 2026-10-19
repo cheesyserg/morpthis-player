@@ -44,8 +44,6 @@
 #include "src/system/streaming/qobuz.h"
 #include "src/system/streaming/tidal.h"
 #include "src/system/remote/dlna.h"
-#include "src/system/gearboy/gbdb.h"
-#include "src/system/gearboy/gearboy.h"
 #include "src/system/remote/sonixlink.h"
 #include "src/system/core/panel.h"
 #include "src/system/streaming/qobuzcache.h"
@@ -1252,8 +1250,7 @@ bool display_get_rotated(void) { return host_rotated; }
 void display_set_rotated(bool rotated) { host_rotated = rotated; }
 
 // The touch panel on the simulator is the mouse inside the SDL window: there
-// is no evdev node to hand over, and nothing to switch off.
-void panel_touch_enable(bool enabled) { (void)enabled; }
+// is no evdev node to hand over.
 const char *panel_touch_device(void) { return NULL; }
 
 // There is no framebuffer to read on the simulator, but the SDL renderer can
@@ -1645,22 +1642,12 @@ static void free_rot_pages_cb(void *unused) {
 
 bool display_rotation_supported(void) { return fb_display != NULL; }
 
-// The node lv_evdev_create() actually opened. Remembered because the emulator
-// must open exactly that one instead of guessing: touch is event1 on this
-// device, but the event0 fallback exists because that is not guaranteed.
+// The node lv_evdev_create() actually opened, for the diagnostics page: touch
+// is event1 on this device, but the event0 fallback exists because that is not
+// guaranteed.
 static char fb_touch_node[32];
 
 const char *panel_touch_device(void) { return fb_touch_node[0] ? fb_touch_node : NULL; }
-
-// Hands the touch panel over and takes it back. While disabled the indev is
-// not polled and stops reading the node, so events pile up unread in the
-// kernel queue. Whatever re-enables it must wait a moment before trusting the
-// first touch (see gearboyplay.c).
-void panel_touch_enable(bool enabled) {
-	if (fb_touch) {
-		lv_indev_enable(fb_touch, enabled);
-	}
-}
 
 bool display_get_rotated(void) { return fb_rotated; }
 
@@ -2230,14 +2217,6 @@ int main(int argc, char **argv) {
 	podcastsubs_set_root(card_root && card_root[0] ? card_root : gui_cfg.sd_root_path);
 	// And where a track arriving over DLNA lands: same card, same reason.
 	dlna_set_root(card_root && card_root[0] ? card_root : gui_cfg.sd_root_path);
-	// And where the emulator looks for Games/GB and Games/GBC. Unlike the
-	// lines above this uses gui_cfg.sd_root_path and not storage_sd_root():
-	// those write a cache, which belongs on the real card, while games are
-	// the user's own files and live where the user's music lives. On the
-	// device the two are the same (see how gui_cfg is filled in); on the
-	// simulator they are not, which is what makes the page testable without
-	// the device.
-	gbdb_set_root(gui_cfg.sd_root_path);
 
 	// Rows pointing into the stream caches are dropped once at boot: a cache
 	// file may be gone, and starring a streamed track goes to the account
