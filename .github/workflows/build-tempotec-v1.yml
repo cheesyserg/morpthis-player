@@ -32,10 +32,10 @@ on:
   pull_request:
     paths:
       - .github/workflows/build-tempotec-v1.yml
-      - sonix-packer/**
-      - sonix-player/Makefile
-      - sonix-player/rockboxdev/**
-      - sonix-player/src/**
+      - morpthis-packer/**
+      - morpthis-player/Makefile
+      - morpthis-player/rockboxdev/**
+      - morpthis-player/src/**
   # Working branches build themselves: the image is the only way to try a
   # layout change on the device, and a dispatch needs a token that can write
   # to Actions. No path filter here on purpose - a session branch has to be
@@ -145,10 +145,10 @@ jobs:
         id: stock
         run: |
           set -euo pipefail
-          chmod +x sonix-packer/*.sh
-          sonix-packer/prepare_v1_stock.sh \
-            "$RUNNER_TEMP/v1-stock-download" sonix-packer
-          sonix-packer/verify_upt.sh sonix-packer/v1_original.upt \
+          chmod +x morpthis-packer/*.sh
+          morpthis-packer/prepare_v1_stock.sh \
+            "$RUNNER_TEMP/v1-stock-download" morpthis-packer
+          morpthis-packer/verify_upt.sh morpthis-packer/v1_original.upt \
             | tee "$RUNNER_TEMP/v1-stock-validation.txt"
           kernel_sha256="$(sed -n 's/^Kernel SHA-256: //p' "$RUNNER_TEMP/v1-stock-validation.txt")"
           test -n "$kernel_sha256"
@@ -158,29 +158,29 @@ jobs:
         uses: actions/cache@v5
         with:
           path: |
-            sonix-player/rockbox-toolchain
-            sonix-player/freetype-target
-            sonix-player/audio-target
-            sonix-player/*.tar.gz
-            sonix-player/*.tar.bz2
-            sonix-player/*.tar.xz
-          key: v2-mips-target-${{ runner.os }}-${{ hashFiles('sonix-player/Makefile', 'sonix-player/rockboxdev/**') }}
+            morpthis-player/rockbox-toolchain
+            morpthis-player/freetype-target
+            morpthis-player/audio-target
+            morpthis-player/*.tar.gz
+            morpthis-player/*.tar.bz2
+            morpthis-player/*.tar.xz
+          key: v2-mips-target-${{ runner.os }}-${{ hashFiles('morpthis-player/Makefile', 'morpthis-player/rockboxdev/**') }}
           restore-keys: |
             v2-mips-target-${{ runner.os }}-
 
       - name: Build TempoTec V1 target binaries
-        working-directory: sonix-player
+        working-directory: morpthis-player
         run: make target -j"$(nproc)"
 
       - name: Build v1.upt
         run: |
-          install -m 0755 sonix-player/morpthis_player sonix-packer/morpthis_player
-          install -m 0755 sonix-player/morpthis_launch sonix-packer/morpthis_launch
-          sonix-packer/morpthis_firmware_packer.sh
+          install -m 0755 morpthis-player/morpthis_player morpthis-packer/morpthis_player
+          install -m 0755 morpthis-player/morpthis_launch morpthis-packer/morpthis_launch
+          morpthis-packer/morpthis_firmware_packer.sh
 
       - name: Validate generated firmware and unchanged kernel
         run: |
-          sonix-packer/verify_upt.sh sonix-packer/v1.upt \
+          morpthis-packer/verify_upt.sh morpthis-packer/v1.upt \
             --morpthis-v1 --kernel-sha256 '${{ steps.stock.outputs.kernel_sha256 }}' \
             | tee "$RUNNER_TEMP/v1-output-validation.txt"
 
@@ -191,11 +191,11 @@ jobs:
           mkdir -p "$out"
           # The artifact holds only what a user flashes and the checksum that
           # goes with it.
-          cp sonix-packer/v1.upt sonix-packer/v1_md5.txt "$out/"
+          cp morpthis-packer/v1.upt morpthis-packer/v1_md5.txt "$out/"
           # What the packer found in the stock boot script and what it put
           # there stays in the run summary rather than in the artifact.
-          if [ -f sonix-packer/boot-script-report.txt ]; then
-            { echo "## Boot script patch report"; echo '```'; cat sonix-packer/boot-script-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          if [ -f morpthis-packer/boot-script-report.txt ]; then
+            { echo "## Boot script patch report"; echo '```'; cat morpthis-packer/boot-script-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload firmware artifact
@@ -234,8 +234,8 @@ jobs:
             echo "Create the release, then run this workflow again with publish_release_tag=$RELEASE_TAG."
             exit 0
           fi
-          gh release upload "$RELEASE_TAG" sonix-packer/v1.upt sonix-packer/v1_md5.txt --clobber
-          local_size="$(stat -c%s sonix-packer/v1.upt)"
+          gh release upload "$RELEASE_TAG" morpthis-packer/v1.upt morpthis-packer/v1_md5.txt --clobber
+          local_size="$(stat -c%s morpthis-packer/v1.upt)"
           remote_size="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" \
             --jq '.assets[] | select(.name == "v1.upt") | .size')"
           [ "$local_size" = "$remote_size" ] || {
@@ -254,9 +254,9 @@ jobs:
       - name: Publish the boot-script report to the branch
         if: github.ref_type == 'branch' && github.ref_name != 'main' && inputs.build_ref == ''
         run: |
-          [ -f sonix-packer/boot-script-report.txt ] || exit 0
+          [ -f morpthis-packer/boot-script-report.txt ] || exit 0
           mkdir -p docs/ci
-          cp sonix-packer/boot-script-report.txt docs/ci/boot-script-report.txt
+          cp morpthis-packer/boot-script-report.txt docs/ci/boot-script-report.txt
           git config user.name "morpthis-ci"
           git config user.email "morpthis-ci@users.noreply.github.com"
           git add docs/ci/boot-script-report.txt
