@@ -142,7 +142,7 @@ a self-signed certificate), and HLS.
 
 ## Settings
 
-- **Appearance** - dark and light; twelve accent colors, clock position, a dynamic tint that borrows the accent's hue for backgrounds and cards, and a toggle to show/hide the battery percentage.
+- **Appearance** - dark and light, and a layout **Style**: **Classic (TempoTec V1)**, the original tile layout and the default, or **Sonix**, the compact layout with function-matched icons; twelve accent colors, clock position, a dynamic tint that borrows the accent's hue for backgrounds and cards, and a toggle to show/hide the battery percentage.
 - **Appearance → Browse on home screen** - replaces the Music tile with Browse, opening the card’s file browser in the card’s `Music` folder directly; a card without that folder still opens at its root. The chevron and the root button still walk up to the rest of the card. Off by default; Music remains available when switched off.
 - **Appearance → Show Books on home screen** - replaces the Audiobooks tile with Books, opening the EPUB shelf directly from home. Off by default; Audiobooks remain available when switched off.
 - **Appearance → Main menu icons only** - optionally hide the six main-menu tile labels and show larger, centered icons. Dedicated native-pixel art avoids stretching small toolbar glyphs or repeatedly filtering the colored illustrations. Applies immediately in every theme and is saved across restarts; other menus, the status bar and the now-playing strip are unchanged. Off by default.

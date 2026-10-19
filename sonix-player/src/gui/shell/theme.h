@@ -13,6 +13,22 @@ typedef enum {
 
 #define THEME_KIND_COUNT 2
 
+// The layout style, chosen independently of the palette.
+//
+//   classic  the V1's original interface: tiled menu pages, plain settings
+//            rows, the blurred strip on the screensaver. The default, and
+//            what a clean boot shows.
+//   sonix    the compact layout built around function-matched icons: the
+//            single-column More list, captioned settings rows, the compact
+//            home page.
+//
+typedef enum {
+	THEME_STYLE_CLASSIC = 0,
+	THEME_STYLE_SONIX = 1,
+} theme_style_t;
+
+#define THEME_STYLE_COUNT 2
+
 // Semantic accents for the V1's function-matched glyphs. Dark and Light
 // resolve every role to the chosen accent (or secondary text for muted), so
 // the glyphs still carry the destination's meaning through the layout.
@@ -125,9 +141,15 @@ bool theme_is_tokyo_night(void);
 bool theme_is_amber_on_black(void);
 bool theme_is_oled(void);
 bool theme_is_monochrome(void);
-// True: the function-matched icons and the compact V1 layouts are the only
-// ones this tree draws. They used to be tied to the removed palettes.
+// True when the Sonix style is chosen: the function-matched icons and the
+// compact layouts. Independent of the palette.
 bool theme_uses_function_glyphs(void);
+
+// The layout style in force, and how to change it. Changing it saves the
+// choice and repaints; the pages that lay themselves out differently are told
+// through the usual refresh callbacks.
+theme_style_t theme_get_style(void);
+void theme_set_style(theme_style_t style);
 theme_kind_t theme_get_kind(void);
 
 // Dark and Light resolve every icon role to the chosen accent, with muted

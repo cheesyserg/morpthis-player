@@ -23,6 +23,7 @@
 lv_obj_t *appearance_screen;
 
 static lv_obj_t *theme_buttons[THEME_KIND_COUNT];
+static lv_obj_t *style_buttons[THEME_STYLE_COUNT];
 static lv_obj_t *btn_boot[4]; // Stock / Retrospace / Space / Travelling in space
 static lv_obj_t *btn_clock[4]; // left / centre / right / hidden
 static lv_obj_t *btn_accent[THEME_ACCENT_COUNT]; // the coloured circles
@@ -176,17 +177,15 @@ static void font_pills_reload_cb(lv_event_t *e) {
 	font_pills_rebuild();
 }
 
-// Paints the active theme choice. The V1's compact appearance card uses the
-// quieter outlined selected pill.
-static void refresh_buttons(void) {
-	theme_kind_t active_kind = theme_get_kind();
-	for (int i = 0; i < THEME_KIND_COUNT; i++) {
-		lv_obj_t *button = theme_buttons[i];
+// Paints one row of choices: the active one outlined, the rest flat.
+static void refresh_choice_row(lv_obj_t **buttons, int count, int active_index) {
+	for (int i = 0; i < count; i++) {
+		lv_obj_t *button = buttons[i];
 		if (!button) {
 			continue;
 		}
 		lv_obj_t *label = lv_obj_get_child(button, 0);
-		bool active = i == (int)active_kind;
+		bool active = i == active_index;
 		if (active) {
 			lv_color_t fill = lv_color_mix(theme()->accent, theme()->surface, (lv_opa_t)64);
 			lv_obj_set_style_bg_color(button, fill, 0);
@@ -201,6 +200,13 @@ static void refresh_buttons(void) {
 		}
 		lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
 	}
+}
+
+// Paints the active theme choice.
+static void refresh_buttons(void) { refresh_choice_row(theme_buttons, THEME_KIND_COUNT, (int)theme_get_kind()); }
+
+static void refresh_style_buttons(void) {
+	refresh_choice_row(style_buttons, THEME_STYLE_COUNT, (int)theme_get_style());
 }
 
 // The active circle wears a ring in the text colour; the rest sit flat.
@@ -296,6 +302,12 @@ static void theme_pick_cb(lv_event_t *e) {
 	refresh_buttons();
 }
 
+static void style_pick_cb(lv_event_t *e) {
+	theme_style_t style = (theme_style_t)(intptr_t)lv_event_get_user_data(e);
+	theme_set_style(style);
+	refresh_style_buttons();
+}
+
 // ---------------------------------------------------------------------------
 // The boot screen: the picture the next power-on opens with
 //
@@ -366,11 +378,29 @@ static lv_obj_t *make_theme_choice(lv_obj_t *parent, const char *text, theme_kin
 	return btn;
 }
 
+static lv_obj_t *make_style_choice(lv_obj_t *parent, const char *text, theme_style_t style, bool compact) {
+	lv_obj_t *btn = lv_btn_create(parent);
+	lv_obj_set_size(btn, compact ? lv_pct(48) : LV_SIZE_CONTENT, compact ? 34 : 64);
+	lv_obj_set_style_pad_hor(btn, compact ? 5 : 34, 0);
+	lv_obj_set_style_radius(btn, compact ? 7 : LV_RADIUS_CIRCLE, 0);
+	lv_obj_set_style_shadow_width(btn, 0, 0);
+	lv_obj_set_style_border_width(btn, 0, 0);
+	lv_obj_set_flex_grow(btn, 0);
+	lv_obj_add_event_cb(btn, style_pick_cb, LV_EVENT_CLICKED, (void *)(intptr_t)style);
+
+	lv_obj_t *label = lv_label_create(btn);
+	lv_label_set_text(label, tr(text));
+	lv_obj_set_style_text_font(label, compact ? &font_ui_14 : &font_ui_24, 0);
+	lv_obj_center(label);
+
+	return btn;
+}
+
 void appearance_init(gui_config_t *cfg) {
 	const bool compact = cfg->screen_width < 320;
 	lv_obj_t *container = settingsrow_page(appearance_screen, cfg, "appearance");
 
-	// One tall card: the option's name on top, the two choices under it.
+	// One tall card: the theme on top, the layout style and its note below it.
 	lv_obj_t *card = lv_obj_create(container);
 	lv_obj_set_width(card, lv_pct(100));
 	lv_obj_set_height(card, LV_SIZE_CONTENT);
@@ -403,6 +433,35 @@ void appearance_init(gui_config_t *cfg) {
 
 	theme_buttons[THEME_KIND_DARK] = make_theme_choice(row, "appearance_dark", THEME_KIND_DARK, compact);
 	theme_buttons[THEME_KIND_LIGHT] = make_theme_choice(row, "appearance_light", THEME_KIND_LIGHT, compact);
+
+	// The layout style: independent of the palette, and the V1's original
+	// interface is the default.
+	lv_obj_t *style_name = lv_label_create(card);
+	lv_label_set_text(style_name, tr("appearance_style"));
+	lv_obj_add_style(style_name, &theme_style_text, 0);
+	lv_obj_set_style_text_font(style_name, compact ? &font_ui_18 : &font_ui_24, 0);
+
+	lv_obj_t *style_row = lv_obj_create(card);
+	lv_obj_set_size(style_row, lv_pct(100), LV_SIZE_CONTENT);
+	lv_obj_set_style_bg_opa(style_row, 0, 0);
+	lv_obj_set_style_border_width(style_row, 0, 0);
+	lv_obj_set_style_pad_all(style_row, 0, 0);
+	lv_obj_set_style_pad_gap(style_row, compact ? 4 : 14, 0);
+	lv_obj_set_scrollable(style_row, false);
+	lv_obj_set_event_bubble(style_row, true);
+	lv_obj_set_flex_flow(style_row, LV_FLEX_FLOW_ROW_WRAP);
+	lv_obj_set_flex_align(style_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+
+	style_buttons[THEME_STYLE_CLASSIC] =
+		make_style_choice(style_row, "appearance_style_classic", THEME_STYLE_CLASSIC, compact);
+	style_buttons[THEME_STYLE_SONIX] = make_style_choice(style_row, "appearance_style_sonix", THEME_STYLE_SONIX, compact);
+
+	lv_obj_t *style_note = lv_label_create(card);
+	lv_label_set_long_mode(style_note, LV_LABEL_LONG_WRAP);
+	lv_obj_set_width(style_note, lv_pct(100));
+	lv_obj_add_style(style_note, &theme_style_text_dim, 0);
+	lv_obj_set_style_text_font(style_note, &font_ui_22, 0);
+	lv_label_set_text(style_note, tr("appearance_style_note"));
 
 	settingsrow_toggle(container, "appearance_main_menu_icons_only", &main_menu_icons_toggle, main_menu_icons_cb);
 	if (main_menu_icons_only()) {
@@ -602,6 +661,7 @@ void appearance_init(gui_config_t *cfg) {
 	refresh_accent_buttons();
 	refresh_text_size_pills();
 	theme_register_refresh(refresh_buttons);
+	theme_register_refresh(refresh_style_buttons);
 	theme_register_refresh(refresh_boot_buttons);
 	theme_register_refresh(refresh_text_size_pills);
 	theme_register_refresh(refresh_clock_buttons);

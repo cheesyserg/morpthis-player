@@ -66,6 +66,10 @@ bool theme_color_is_light(lv_color_t c) {
 // `active` at a derived copy rather than at either preset.
 static theme_kind_t selected_kind = THEME_KIND_DARK;
 
+// The layout style, chosen separately from the palette and defaulting to the
+// V1's original interface.
+static theme_style_t selected_style = THEME_STYLE_CLASSIC;
+
 static theme_palette_t *selected_palette(void) {
 	switch (selected_kind) {
 	case THEME_KIND_LIGHT:
@@ -317,6 +321,20 @@ void theme_init(void) {
 		selected_kind = config_get_bool("ui", "dark_theme", true) ? THEME_KIND_DARK : THEME_KIND_LIGHT;
 	}
 
+	// The layout style. A clean boot gets the V1's original interface. A config
+	// written before the styles existed kept its layout in the theme name: the
+	// three palettes that used the compact one map to Sonix, so an existing
+	// device keeps the look it had.
+	const char *saved_style = config_get("ui", "style", NULL);
+	if (saved_style && strcmp(saved_style, "sonix") == 0) {
+		selected_style = THEME_STYLE_SONIX;
+	} else if (saved_style && strcmp(saved_style, "classic") == 0) {
+		selected_style = THEME_STYLE_CLASSIC;
+	} else if (saved_theme && (strcmp(saved_theme, "tokyo-night") == 0 ||
+							  strcmp(saved_theme, "amber-on-black") == 0 || strcmp(saved_theme, "oled") == 0)) {
+		selected_style = THEME_STYLE_SONIX;
+	}
+
 	// The marker the boot script reads has to agree with the setting too, not
 	// only with the theme.
 	bootlogo_set(theme_boot_screen(), selected_palette()->dark);
@@ -409,9 +427,11 @@ bool theme_is_oled(void) { return false; }
 
 bool theme_is_monochrome(void) { return false; }
 
-// The compact V1 layout and the function-matched glyphs are what this tree
-// draws, for either palette.
-bool theme_uses_function_glyphs(void) { return true; }
+// The compact V1 layout and the function-matched glyphs belong to the Sonix
+// style alone; the palette has no say.
+bool theme_uses_function_glyphs(void) { return selected_style == THEME_STYLE_SONIX; }
+
+theme_style_t theme_get_style(void) { return selected_style; }
 
 lv_color_t theme_ink_on(lv_color_t fill) { return theme_color_is_light(fill) ? lv_color_black() : lv_color_white(); }
 
@@ -567,6 +587,20 @@ void theme_set_kind(theme_kind_t kind) {
 }
 
 void theme_toggle(void) { theme_set_kind(active->dark ? THEME_KIND_LIGHT : THEME_KIND_DARK); }
+
+void theme_set_style(theme_style_t style) {
+	if (style < THEME_STYLE_CLASSIC || style >= THEME_STYLE_COUNT || selected_style == style) {
+		return;
+	}
+
+	selected_style = style;
+	config_set("ui", "style", style == THEME_STYLE_SONIX ? "sonix" : "classic");
+	config_save();
+
+	// The pages that lay themselves out differently listen through the refresh
+	// callbacks registered with the theme; refresh_all() walks them.
+	refresh_all();
+}
 
 void theme_set_accent(int index) {
 	if (index < 0 || index >= THEME_ACCENT_COUNT) {
