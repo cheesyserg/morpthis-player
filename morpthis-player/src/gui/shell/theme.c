@@ -245,13 +245,12 @@ static void apply_palette(void) {
 }
 
 // Which picture the next power-on shows (Appearance > Boot screen): the
-// stock light/dark pair, Retrospace, Space or Travelling in space. Retrospace
-// is the default, and it is also what a device with no marker at all draws,
-// because the stock script's fallback file is the one that carries it -- see
-// bootlogo.h.
+// stock light/dark pair or Retrospace. Retrospace is the default, and it is
+// also what a device with no marker at all draws, because the stock script's
+// fallback file is the one that carries it -- see bootlogo.h.
 int theme_boot_screen(void) {
 	int choice = (int)config_get_int("ui", "boot_screen", BOOTLOGO_RETROSPACE);
-	if (choice < BOOTLOGO_STOCK || choice > BOOTLOGO_TRAVELLING) {
+	if (choice < BOOTLOGO_STOCK || choice > BOOTLOGO_RETROSPACE) {
 		choice = BOOTLOGO_RETROSPACE; // a config written by a newer firmware
 	}
 	return choice;
@@ -260,7 +259,7 @@ int theme_boot_screen(void) {
 // Remembers the choice and moves the flash marker now rather than at the next
 // theme switch: the setting is only worth anything from the next boot on.
 void theme_set_boot_screen(int choice) {
-	if (choice < BOOTLOGO_STOCK || choice > BOOTLOGO_TRAVELLING) {
+	if (choice < BOOTLOGO_STOCK || choice > BOOTLOGO_RETROSPACE) {
 		return;
 	}
 

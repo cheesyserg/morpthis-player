@@ -24,7 +24,7 @@ lv_obj_t *appearance_screen;
 
 static lv_obj_t *theme_buttons[THEME_KIND_COUNT];
 static lv_obj_t *style_buttons[THEME_STYLE_COUNT];
-static lv_obj_t *btn_boot[4]; // Stock / Retrospace / Space / Travelling in space
+static lv_obj_t *btn_boot[BOOTLOGO_RETROSPACE + 1]; // Stock / Retrospace
 static lv_obj_t *btn_clock[4]; // left / centre / right / hidden
 static lv_obj_t *btn_accent[THEME_ACCENT_COUNT]; // the coloured circles
 static lv_obj_t *tint_toggle;
@@ -305,17 +305,16 @@ static void style_pick_cb(lv_event_t *e) {
 // ---------------------------------------------------------------------------
 // The boot screen: the picture the next power-on opens with
 //
-// Four choices -- Stock, Retrospace, Space and Travelling in space -- painted
-// like the theme pair above. The choice is the one setting on this page that
-// is not only a config value: it also goes into the flash marker the boot
-// script reads, because that script runs before any filesystem a config could
-// live on is mounted. What is picked here is therefore what the next boot
-// shows, and nothing before it.
+// Two choices -- Stock and Retrospace -- painted like the theme pair above.
+// The choice is the one setting on this page that is not only a config value:
+// it also goes into the flash marker the boot script reads, because that
+// script runs before any filesystem a config could live on is mounted. What
+// is picked here is therefore what the next boot shows, and nothing before it.
 // ---------------------------------------------------------------------------
 
 static void refresh_boot_buttons(void) {
 	int choice = theme_boot_screen();
-	for (int i = 0; i < 4; i++) {
+	for (int i = 0; i <= BOOTLOGO_RETROSPACE; i++) {
 		if (!btn_boot[i]) {
 			continue;
 		}
@@ -502,17 +501,13 @@ void appearance_init(gui_config_t *cfg) {
 	lv_obj_set_style_pad_gap(boot_row, compact ? 6 : 14, 0);
 	lv_obj_set_scrollable(boot_row, false);
 	lv_obj_set_event_bubble(boot_row, true);
-	// Wrapped like the clock row: four pills, two of them long words, do not
-	// fit across one line on either panel, and a pill that does not fit is
-	// drawn off the card rather than shrunk.
+	// Wrapped like the clock row: a pill that does not fit is drawn off the
+	// card rather than shrunk.
 	lv_obj_set_flex_flow(boot_row, LV_FLEX_FLOW_ROW_WRAP);
 	lv_obj_set_flex_align(boot_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
 
 	btn_boot[BOOTLOGO_STOCK] = make_boot_choice(boot_row, "Stock", BOOTLOGO_STOCK, compact);
 	btn_boot[BOOTLOGO_RETROSPACE] = make_boot_choice(boot_row, "Retrospace", BOOTLOGO_RETROSPACE, compact);
-	btn_boot[BOOTLOGO_SPACE] = make_boot_choice(boot_row, "Space", BOOTLOGO_SPACE, compact);
-	btn_boot[BOOTLOGO_TRAVELLING] =
-		make_boot_choice(boot_row, "Travelling in space", BOOTLOGO_TRAVELLING, compact);
 
 	// Under the card, like the other notes on this page: when the change
 	// becomes visible.

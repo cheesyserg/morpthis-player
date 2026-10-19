@@ -26,22 +26,12 @@
 // logo1 is the pale one and logo2 the dark one, which is why light theme
 // writes 1 and dark writes 2.
 //
-// Four boot screens do not fit in three branches, so the marker carries two
-// fields and the firmware packer puts a small block of our own into that
-// script, just before its first cmd_jpeg_display:
-//
-//     boot_sel=$(nanddump -q -s 0x20008 -l 6 /dev/mtd5 -a 2>/dev/null)
-//     if [ "$boot_sel" = "logo:2" ] && [ -f /etc/logo_space.jpeg ]; then ...
-//     if [ "$boot_sel" = "logo:3" ] && [ -f /etc/logo_travelling.jpeg ]; then ...
-//
-// reading the second field at byte 8 of the same block. The marker this player
-// writes is therefore "theme:N logo:M", fourteen bytes: the stock pair follows
-// the theme in the first field as it always did, Retrospace is theme:3 with
-// logo:1 -- the stock script's fallback file is the one that carries it -- and
-// Space and Travelling in space are logo:2 and logo:3, drawn by the added
-// block before the stock chain is ever reached. A device whose script has no
-// added block, an older firmware included, draws logo.jpeg for those two: the
-// graceful end of the same idea.
+// Two boot screens fit the stock script's three branches: Stock follows the
+// theme in the first field, and Retrospace is theme:3, the value that falls
+// through to /etc/logo.jpeg. The marker this player writes is still
+// "theme:N logo:M", fourteen bytes, so the second field records the choice for
+// the boot trace the firmware packer leaves in /tmp; the stock script never
+// looks past its own seven-byte read.
 //
 // Two things this module is careful about, because raw flash is not a file:
 // it reads the marker first and does nothing when it already agrees (NAND has
@@ -54,11 +44,9 @@
 // script's fallback file is the one that carries it.
 #define BOOTLOGO_STOCK      0
 #define BOOTLOGO_RETROSPACE 1
-#define BOOTLOGO_SPACE      2
-#define BOOTLOGO_TRAVELLING 3
 
 // Points the boot logo at the theme and at the chosen boot screen: the stock
-// pair follows the palette, the other three are one picture either way.
+// pair follows the palette, Retrospace is one picture either way.
 // Returns immediately; the flash work happens on a worker. A no-op when the
 // marker already agrees, when the device has no /dev/mtd5, or on the host
 // build.

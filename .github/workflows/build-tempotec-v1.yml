@@ -164,13 +164,37 @@ jobs:
             morpthis-player/*.tar.gz
             morpthis-player/*.tar.bz2
             morpthis-player/*.tar.xz
-          key: v2-mips-target-${{ runner.os }}-${{ hashFiles('morpthis-player/Makefile', 'morpthis-player/rockboxdev/**') }}
+          # The directory name is part of the key on purpose. The cross
+          # compiler is configured with --with-sysroot pointing at an absolute
+          # path inside this tree, so a cache written for another directory
+          # name cannot be used from here. Without it, restore-keys would
+          # restore the old tree under its old name, the build would not find
+          # it, and the whole toolchain would be rebuilt anyway.
+          key: v3-mips-target-${{ runner.os }}-morpthis-${{ hashFiles('morpthis-player/Makefile', 'morpthis-player/rockboxdev/**') }}
           restore-keys: |
-            v2-mips-target-${{ runner.os }}-
+            v3-mips-target-${{ runner.os }}-morpthis-
 
       - name: Build TempoTec V1 target binaries
         working-directory: morpthis-player
-        run: make target -j"$(nproc)"
+        run: |
+          set -euo pipefail
+          # A cache miss means rockboxdev.sh builds binutils, gcc, glibc and
+          # the rest from scratch, and it sends each tool's make output to
+          # tmp/rbdev-build/build-<tool>.log. Without this, the job shows only
+          # "ROCKBOXDEV: glibc-2.27/make" for ten minutes and looks hung.
+          (
+            while :; do
+              log="$(ls -t tmp/rbdev-build/*.log 2>/dev/null | head -n 1 || true)"
+              if [ -n "$log" ]; then
+                echo "--- $log (last 5 lines)"
+                tail -n 5 "$log"
+              fi
+              sleep 30
+            done
+          ) &
+          watcher=$!
+          trap 'kill "$watcher" 2>/dev/null || true' EXIT
+          make target -j"$(nproc)"
 
       - name: Build v1.upt
         run: |

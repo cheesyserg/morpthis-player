@@ -94,7 +94,7 @@ Local audio decoder inputs include WAV, FLAC, MP3, Ogg Vorbis, Opus, M4A/M4B/MP4
 
 The interface font is a setting (Settings → Appearance → Font): MiSans, Neon 80s, Roboto, Roboto Condensed, Inter and Barlow Semi Condensed, plus any `.ttf`/`.otf` file put in the `Fonts` folder on the card. Whatever a face is missing — Cyrillic, Greek, Hangul, kanji, Arabic — is drawn by MiSans behind it, so the whole interface stays legible in every language. The four added families are under the SIL Open Font License; see [`sonix-player/assets/fonts/FONT-LICENSES.txt`](sonix-player/assets/fonts/FONT-LICENSES.txt) for the copyright notices and the exact files.
 
-The boot screen is a setting too (Settings → Appearance → Boot screen): **Retrospace**, the default, **Space**, **Travelling in space**, or **Stock**, the firmware's own light and dark pictures. The choice cannot live in the config — the script that draws the logo runs before any filesystem holding a config is mounted — so it is written to the same flash marker the theme uses, and appears from the next power-on.
+The boot screen is a setting too (Settings → Appearance → Boot screen): **Retrospace**, the default, or **Stock**, the firmware's own light and dark pictures. The choice cannot live in the config — the script that draws the logo runs before any filesystem holding a config is mounted — so it is written to the same flash marker the theme uses, and appears from the next power-on.
 
 See [FEATURES.md](FEATURES.md) for a longer feature list. Streaming services also require valid credentials and may depend on third-party service availability.
 

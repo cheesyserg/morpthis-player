@@ -161,7 +161,7 @@ const char *bootlogo_status(void) {
 }
 
 void bootlogo_set(int choice, bool dark) {
-	if (choice < BOOTLOGO_STOCK || choice > BOOTLOGO_TRAVELLING) {
+	if (choice < BOOTLOGO_STOCK || choice > BOOTLOGO_RETROSPACE) {
 		choice = BOOTLOGO_RETROSPACE;
 	}
 

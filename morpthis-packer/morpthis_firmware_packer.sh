@@ -328,16 +328,18 @@ build_one() {
 
 	# The streaming keys go in sealed, as streaming-keys.bin. One left in the
 	# ==========================================================================
-	# 5a. The boot script learns the extra boot screens
+	# 5a. The boot script records the boot screen choice
 	# ==========================================================================
 	#
 	# The script that draws the logo picks one of three files from one field of
-	# the flash marker, and four boot screens do not fit in three branches. So
-	# a block of our own goes in just before the vendor's display logic: it
-	# reads the marker's second field, at byte 8 of the same block, draws Space
-	# or Travelling in space with the vendor's own display command, and exits;
-	# every other marker leaves the stock chain untouched. Inserted rather than
-	# shipped whole because the script is the vendor's and stays the vendor's.
+	# the flash marker. Stock follows the theme in that field, and Retrospace is
+	# theme:3, the value that falls through to /etc/logo.jpeg, so the stock
+	# chain already draws both. What the script cannot do is say which one it
+	# drew: a block of our own goes in just before the vendor's display logic,
+	# reads the marker's second field, at byte 8 of the same block, and leaves
+	# the trace the Developer options page shows after a boot. Inserted rather
+	# than shipped whole because the script is the vendor's and stays the
+	# vendor's.
 	#
 	# Nothing about that script is assumed -- not its name, not its display
 	# command, not the shape of its branches. The script is whichever under
@@ -346,11 +348,7 @@ build_one() {
 	# first line that mentions one. And everything found is written to
 	# boot-script-report.txt, because a patch that silently does not apply is
 	# worse than one that shouts.
-	#
-	# The [ -f ] guards and the && exit are the fallback: a missing picture, or
-	# a display command that fails, hands control back to the stock chain, so
-	# what a device can lose is the choice, not the boot.
-	step "[$MODEL_NAME] teaching the boot script the extra boot screens"
+	step "[$MODEL_NAME] recording the boot screen choice"
 
 	REPORT="$SCRIPT_DIR/boot-script-report.txt"
 	{
@@ -433,24 +431,6 @@ build_one() {
 		fi
 		[ -n "$DISPLAY_CMD" ] || DISPLAY_CMD="cmd_jpeg_display"
 
-		# How the block leaves the vendor script running. The V1 display logic
-		# lives in a function that, after drawing, raises the panel backlight;
-		# an exit there would draw our picture onto a dark panel. So a display
-		# command that is a plain name is shadowed with a no-op function once
-		# ours has drawn: the vendor's own branches then run to the end,
-		# backlight and all, and draw nothing over ours. A command that is a
-		# path cannot be shadowed -- a function cannot wear a slash -- and
-		# exits instead, keeping the picture at the cost of the vendor's tail.
-		# A path cannot be a function name, so a display command that is one
-		# exits after drawing instead of shadowing, at the cost of whatever
-		# the vendor script does after its branches -- on the V1, that is the
-		# backlight, which is why the plain name matters.
-		if [ "${DISPLAY_CMD#/}" = "$DISPLAY_CMD" ]; then
-			LEAVE="$DISPLAY_CMD() { :; }"
-		else
-			LEAVE="exit 0"
-		fi
-
 		# The second field is read as part of one aligned 14-byte read, the same
 		# call shape the vendor's own read uses, and split in the shell: an
 		# unaligned -s is one more thing a vendor nanddump could stumble over,
@@ -460,9 +440,7 @@ build_one() {
 boot_raw=\$(nanddump -q -s 0x20000 -l 14 /dev/mtd5 -a 2>/dev/null)
 boot_sel=\${boot_raw#* }
 echo \"sel=\$boot_sel raw=\$boot_raw\" > /tmp/.bootlogo_trace 2>/dev/null
-if [ \"\$boot_sel\" = \"logo:2\" ] && [ -f /etc/logo_space.jpeg ]; then $DISPLAY_CMD /etc/logo_space.jpeg && { echo \"drawn=space\" >> /tmp/.bootlogo_trace; boot_drawn=1; $LEAVE; }; fi
-if [ \"\$boot_sel\" = \"logo:3\" ] && [ -f /etc/logo_travelling.jpeg ]; then $DISPLAY_CMD /etc/logo_travelling.jpeg && { echo \"drawn=travelling\" >> /tmp/.bootlogo_trace; boot_drawn=1; $LEAVE; }; fi
-[ -n \"\$boot_drawn\" ] || echo \"drawn=stock-chain\" >> /tmp/.bootlogo_trace 2>/dev/null
+echo \"drawn=stock-chain\" >> /tmp/.bootlogo_trace 2>/dev/null
 # --- end morpthis boot screen choice ---
 "
 		# The anchor: the line that reads the marker, a plain assignment at the
