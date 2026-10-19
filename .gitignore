@@ -1,13 +1,13 @@
 .DS_Store
 
-sonix-player/morpthis_player
-sonix-player/morpthis_player_debug
-sonix-player/morpthis_player_host
-sonix-player/morpthis_launch
+morpthis-player/morpthis_player
+morpthis-player/morpthis_player_debug
+morpthis-player/morpthis_player_host
+morpthis-player/morpthis_launch
 
-sonix-player/build_target
-sonix-player/build_host
-sonix-player/build_gen
+morpthis-player/build_target
+morpthis-player/build_host
+morpthis-player/build_gen
 
 # The streaming keys: in the clear, the key that seals them, and the sealed
 # file, which only a player built with that key can open.
@@ -15,41 +15,41 @@ streaming-keys.ini
 streaming-keys.key
 streaming-keys.bin
 
-sonix-player/audio-target
+morpthis-player/audio-target
 
-sonix-player/compile_commands.json
-sonix-player/rockbox-toolchain
+morpthis-player/compile_commands.json
+morpthis-player/rockbox-toolchain
 
-sonix-player/lvgl/
+morpthis-player/lvgl/
 # The LVGL checkout, as a symlink to wherever it was cloned.
-sonix-player/lvgl
-sonix-player/opus-1.4/
-sonix-player/wavpack-*
-sonix-player/opusfile-*
-sonix-player/libogg-*
-sonix-player/freetype-*
+morpthis-player/lvgl
+morpthis-player/opus-1.4/
+morpthis-player/wavpack-*
+morpthis-player/opusfile-*
+morpthis-player/libogg-*
+morpthis-player/freetype-*
 
-sonix-player/opus-1.4.tar.gz
-sonix-player/opusfile-0.12.tar.gz
-sonix-player/wavpack-5.6.0.tar.bz2
-sonix-player/libogg-1.3.5.tar.gz
-sonix-player/freetype-2.13.3.tar.xz
+morpthis-player/opus-1.4.tar.gz
+morpthis-player/opusfile-0.12.tar.gz
+morpthis-player/wavpack-5.6.0.tar.bz2
+morpthis-player/libogg-1.3.5.tar.gz
+morpthis-player/freetype-2.13.3.tar.xz
 
-sonix-packer/r3proii.upt
-sonix-packer/r1.upt
-sonix-packer/v1.upt
-sonix-packer/v1_md5.txt
-sonix-packer/morpthis_player
-sonix-packer/r3proii_original.upt
-sonix-packer/r1_original.upt
-sonix-packer/v1_original.upt
-sonix-packer/v1_md5_original.txt
-sonix-packer/morpthis_launch
-sonix-packer/boot-script-report.txt
+morpthis-packer/r3proii.upt
+morpthis-packer/r1.upt
+morpthis-packer/v1.upt
+morpthis-packer/v1_md5.txt
+morpthis-packer/morpthis_player
+morpthis-packer/r3proii_original.upt
+morpthis-packer/r1_original.upt
+morpthis-packer/v1_original.upt
+morpthis-packer/v1_md5_original.txt
+morpthis-packer/morpthis_launch
+morpthis-packer/boot-script-report.txt
 
 # Optional, device-local Subsonic account (contains a password).
 subsonic-credentials.json
 subsonic-credentials.json.tmp
-sonix-player/tests/.build/
-sonix-player/tests/__pycache__/
-sonix-player/tools/__pycache__/
+morpthis-player/tests/.build/
+morpthis-player/tests/__pycache__/
+morpthis-player/tools/__pycache__/

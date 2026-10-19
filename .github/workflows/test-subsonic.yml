@@ -5,15 +5,15 @@ on:
   pull_request:
     paths:
       - .github/workflows/test-subsonic.yml
-      - sonix-player/src/system/**
-      - sonix-player/src/gui/streaming/subsonicpage.*
-      - sonix-player/tests/**
+      - morpthis-player/src/system/**
+      - morpthis-player/src/gui/streaming/subsonicpage.*
+      - morpthis-player/tests/**
   push:
     paths:
       - .github/workflows/test-subsonic.yml
-      - sonix-player/src/system/**
-      - sonix-player/src/gui/streaming/subsonicpage.*
-      - sonix-player/tests/**
+      - morpthis-player/src/system/**
+      - morpthis-player/src/gui/streaming/subsonicpage.*
+      - morpthis-player/tests/**
 
 permissions:
   contents: read
@@ -34,10 +34,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential python3 pkg-config libopusfile-dev libwavpack-dev
       - name: HTTP, REST, buffering, playlist and ownership
-        run: make -C sonix-player/tests test
+        run: make -C morpthis-player/tests test
       - name: Real MP3, FLAC and Opus stream decoding
-        run: make -C sonix-player/tests codecs
+        run: make -C morpthis-player/tests codecs
       - name: Address and undefined-behavior sanitizers
         run: |
-          make -C sonix-player/tests sanitize
-          make -C sonix-player/tests sanitize-codecs
+          make -C morpthis-player/tests sanitize
+          make -C morpthis-player/tests sanitize-codecs

@@ -26,8 +26,11 @@ CROSS_CC ?= $(ROCKBOX_TOOLCHAIN_DIR)/bin/mipsel-rockbox-linux-gnu-gcc
 # lv_event_private.h, lv_roller_private.h and others) from src/.
 LVGL_VER = 9.6.0
 
-# Self-bootstrap: clone LVGL if it doesn't exist yet before evaluating variables
-ifeq ($(wildcard $(LVGL_DIR)),)
+# Self-bootstrap: clone LVGL if its sources aren't there yet, before evaluating
+# variables. Checking for lvgl/src rather than lvgl/ matters on a fresh checkout:
+# an empty lvgl/ directory (for example a stale submodule entry) would otherwise
+# suppress the clone and leave LVGL_SRCS empty.
+ifeq ($(wildcard $(LVGL_DIR)/src),)
 $(info Cloning LVGL v$(LVGL_VER)...)
 $(shell git clone --depth 1 -b v$(LVGL_VER) https://github.com/lvgl/lvgl.git)
 endif
@@ -336,7 +339,7 @@ $(TARGET_BIN): $(FREETYPE_PREFIX)/lib/libfreetype.a $(AUDIO_LIBS)
 
 $(CROSS_CC):
 	@echo "Building Rockbox toolchain..."
-	RBDEV_MORPTHIS_MINIMAL=1 ./rockboxdev/rockboxdev.sh
+	RBDEV_MORPTHIS_MINIMAL=1 bash ./rockboxdev/rockboxdev.sh
 
 # The flags FreeType and the audio libraries are built with. -march and -mplt as
 # in TARGET_CFLAGS: they are static, so they end up in the same executable. They
