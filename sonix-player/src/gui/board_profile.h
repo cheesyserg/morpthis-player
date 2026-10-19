@@ -1,10 +1,9 @@
 // board_profile.h -- the small set of dimensions that differ on the
 // TempoTec V1.
 //
-// The V1 uses the same Linux/LVGL application shape as the HiBy targets but
-// has a much smaller 240x320 panel.  Keep that distinction in one place so a
-// V1 build can still be tested on the host and the same source remains usable
-// on the 480-pixel HiBy players.
+// This tree targets the V1 and its 240x320 panel. The profile stays behind a
+// query so the pages which were written for a larger panel still compile and
+// can be exercised on the host, but on the device there is only one answer.
 
 #ifndef SRC_GUI_BOARD_PROFILE_H_
 #define SRC_GUI_BOARD_PROFILE_H_
@@ -13,9 +12,9 @@
 
 #include "lvgl/lvgl.h"
 
-// BOARD=tempotec_v1 selects the profile.  BOARD=hiby_r1/hiby_r3proii forces
-// the regular profile.  BOARD_DEFAULT_TEMPOTEC_V1 may be defined by a dedicated
-// firmware build.  SONIX_PANEL=240x320 also selects it for host simulation.
+// True for the V1 profile. BOARD=tempotec_v1 selects it for the host build;
+// BOARD_DEFAULT_TEMPOTEC_V1 is defined by the target build, so the device
+// always takes it. SONIX_PANEL=240x320 also selects it for host simulation.
 bool bp_is_tempotec_v1(void);
 
 int bp_screen_w(void);

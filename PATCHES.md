@@ -9,9 +9,8 @@
 ## TempoTec V1 240×320 interface profile
 
 The target build of this fork defaults to the TempoTec V1 profile. At runtime,
-`BOARD=tempotec_v1` (also `tempotec-v1` or `tv1`) selects it explicitly, while
-`BOARD=hiby_r1` or `BOARD=hiby_r3proii` forces the regular layout. For the host
-simulator, this is enough to exercise the V1 path:
+`BOARD=tempotec_v1` (also `tempotec-v1` or `tv1`) selects it explicitly, and the
+host simulator can be told either way:
 
 ```bash
 SONIX_PANEL=240x320 ./sonix_player_host
@@ -633,11 +632,10 @@ python3 tools/cst8xx_multitouch_patch.py
 python3 tools/cst8xx_multitouch_patch.py --revert
 ```
 
-and a directory can be named instead, to work straight on an unpacked rootfs or
-on the packer's assets:
+and a directory can be named instead, to work straight on an unpacked rootfs:
 
 ```bash
-python3 tools/cst8xx_multitouch_patch.py assets/R1/module_driver
+python3 tools/cst8xx_multitouch_patch.py squashfs-root/module_driver
 ```
 
 Both files are copied to `*.orig` beside themselves before the first write, and

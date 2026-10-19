@@ -78,4 +78,4 @@ These are host tests, not hardware certification. Before shipping a firmware bui
 - a self-signed HTTPS server with the certificate switch off (refused), on (plays), and with a certificate that names another server or has expired (refused either way);
 - screen-off playback, automatic Wi-Fi/suspend policy, RAM and CPU use, ALSA underrun logs, and battery drain against a local-playback baseline.
 
-The repository's regular target build/packer discovers the new C sources automatically. The V1 inherits the R1 common language assets; strings are supplied in both the R1 and R3PII language trees.
+The repository's regular target build/packer discovers the new C sources automatically. The V1 tree carries its own language assets, in `sonix-packer/assets/V1/usr/resource/sonix/language`.

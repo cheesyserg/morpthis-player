@@ -25,11 +25,6 @@ bool bp_is_tempotec_v1(void) {
 		cached = 1;
 		return true;
 	}
-	if (value_is(board, "hiby_r1") || value_is(board, "hiby-r1") || value_is(board, "hiby_r3proii") ||
-		value_is(board, "hiby-r3proii")) {
-		cached = 0;
-		return false;
-	}
 
 	// Convenient and unambiguous for the simulator.  On target BOARD should be
 	// exported by the launcher, but honouring this also makes a hand-written

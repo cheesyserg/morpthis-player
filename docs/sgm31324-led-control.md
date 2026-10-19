@@ -24,8 +24,8 @@ The routines below do exactly that, from a shell on the device:
 rmmod leds_sgm31324_add
 ```
 
-The boot script *adds* the module (`sonix-packer/assets/R3PII/module_driver/leds_sgm31324_add.sh`),
-so `rmmod` is what releases it. Unloading does not reset the chip - it keeps
+The boot script *adds* the module (`module_driver/leds_sgm31324_add.sh` in the
+stock firmware), so `rmmod` is what releases it. Unloading does not reset the chip - it keeps
 running on the last register values it was given - which is why the routines
 below program every register they depend on.
 

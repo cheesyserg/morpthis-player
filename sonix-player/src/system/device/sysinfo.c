@@ -22,38 +22,10 @@ static char ota_repo[128];
 // printed on the box.
 static const sysinfo_model_t MODELS[] = {
 	{
-		.name = "HiBy R3 Pro II",
-		.panel_width = 480,
-		.panel_height = 720,
-		.update_stem = "r3proii",
-		.serial_prefix = "R3PII",
-		.pmic_charger = false,
-		.sgm31324_led = true,
-		.cs43131 = false,
-		.tap_wake = true,
-		.one_flank = false,
-		.media_keys_swapped = true,
-		.headset_switch_idle_one = false,
-	},
-	{
-		.name = "HiBy R1",
-		.panel_width = 480,
-		.panel_height = 800,
-		.update_stem = "r1",
-		.serial_prefix = "R1",
-		.pmic_charger = true,
-		.sgm31324_led = false,
-		.cs43131 = true,
-		.tap_wake = false,
-		.one_flank = true,
-		.media_keys_swapped = false,
-		.headset_switch_idle_one = false,
-	},
-	{
 		// The Variations V1 has two CS43131s and both 3.5 mm and 4.4 mm
-		// outputs. It must not take the R1's single-DAC shortcut even though
-		// the converter model matches: the regular route logic is the only
-		// path that can select its balanced socket.
+		// outputs. It takes the regular route logic rather than a single-DAC
+		// shortcut: that is the only path which can select the balanced
+		// socket.
 		.name = "TempoTec V1",
 		.panel_width = 240,
 		.panel_height = 320,
@@ -65,14 +37,14 @@ static const sysinfo_model_t MODELS[] = {
 		.tap_wake = false,
 		.one_flank = true,
 		// The V1 kernel labels the physical next and previous keys in the
-		// opposite order, like the R3 Pro II. Without this correction the
-		// physical next key is dispatched through the previous-key handler;
-		// after the restart threshold that handler seeks back to zero instead
-		// of advancing the queue.
+		// opposite order. Without this correction the physical next key is
+		// dispatched through the previous-key handler; after the restart
+		// threshold that handler seeks back to zero instead of advancing the
+		// queue.
 		.media_keys_swapped = true,
 		// Measured on the device: /sys/class/switch holds only `headset`, no
-		// `balance`, and its state reads 1 with both sockets empty. Read as
-		// the HiBy nodes are, that is a 3.5 mm plug that is never pulled out.
+		// `balance`, and its state reads 1 with both sockets empty. Read the
+		// other way, that is a 3.5 mm plug that is never pulled out.
 		.headset_switch_idle_one = true,
 	},
 };
