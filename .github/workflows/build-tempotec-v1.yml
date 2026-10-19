@@ -185,44 +185,18 @@ jobs:
             | tee "$RUNNER_TEMP/v1-output-validation.txt"
 
       - name: Assemble downloadable artifact
-        env:
-          KERNEL_SHA256: ${{ steps.stock.outputs.kernel_sha256 }}
-          BUILT_SHA: ${{ steps.source.outputs.sha }}
-          BUILT_REF: ${{ github.ref_type }} ${{ inputs.build_ref || github.ref_name }}
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/sonix-tempotec-v1"
           mkdir -p "$out"
+          # The artifact holds only what a user flashes and the checksum that
+          # goes with it.
           cp sonix-packer/v1.upt sonix-packer/v1_md5.txt "$out/"
-          cp sonix-player/sonix_player sonix-player/sonix_player_debug \
-             sonix-player/sonix_launch "$out/"
-          cp "$RUNNER_TEMP/v1-stock-validation.txt" "$out/STOCK-VALIDATION.txt"
-          cp "$RUNNER_TEMP/v1-output-validation.txt" "$out/OUTPUT-VALIDATION.txt"
           # What the packer found in the stock boot script and what it put
-          # there: the one page that tells a boot-screen patch story straight.
+          # there stays in the run summary rather than in the artifact.
           if [ -f sonix-packer/boot-script-report.txt ]; then
-            cp sonix-packer/boot-script-report.txt "$out/BOOT-SCRIPT-REPORT.txt"
             { echo "## Boot script patch report"; echo '```'; cat sonix-packer/boot-script-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           fi
-          image_sha256="$(sha256sum sonix-packer/v1.upt | awk '{print $1}')"
-          image_md5="$(md5sum sonix-packer/v1.upt | awk '{print $1}')"
-          cat > "$out/BUILD-REPORT.txt" <<EOF
-          COMMUNITY TEMPOTEC V1 FIRMWARE BUILD
-
-          Commit: ${BUILT_SHA}
-          Built from: ${BUILT_REF}
-          Actions run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
-          Stock firmware source: ${STOCK_FIRMWARE_URL}
-          Stock/output kernel SHA-256: ${KERNEL_SHA256}
-          v1.upt SHA-256: ${image_sha256}
-          v1.upt MD5: ${image_md5}
-
-          The package structure, rootfs hash chain, Sonix installation, model
-          identity, and unchanged stock kernel were checked automatically.
-          This workflow does not install or re-test the generated image on
-          physical hardware. Keep the official stock firmware and its matching
-          checksum available before installing it.
-          EOF
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v5
