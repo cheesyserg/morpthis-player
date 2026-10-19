@@ -101,9 +101,6 @@ ICONS = [
     ("battery.svg", "battery", 38),
     ("battery-charging-body.svg", "battery_charging_body", 38),
     ("battery-charging-bolt.svg", "battery_charging_bolt", 38),
-    # The same cell for the ebook reader's footer strip, where the text is 16
-    # and the status bar's cell would be twice the height of its line.
-    ("battery.svg", "battery_small", 26),
     # Volume: three states of the same glyph, picked by level.
     ("volume.svg", "volume_mute", 30),
     ("headphones.svg", "headphones", 26), # jack indicator beside the volume
@@ -231,7 +228,6 @@ ICONS = [
     ("files-text.svg", "files_text", 32),
     ("files-update.svg", "files_update", 32),
     ("files-gamepad.svg", "files_game", 32),
-    ("files-book.svg", "files_book", 32),
     # The bin in a file's action menu. Not icon_delete, which despite the name
     # is the keyboard's backspace arrow.
     ("trash.svg", "trash", 34),
@@ -348,22 +344,7 @@ ICONS = [
     ("transparency.svg", "airpods_transparency", 32),
     ("adaptive.svg", "airpods_adaptive", 32),
 
-    # The EPUB reader. The first three are the bar that opens on a long press
-    # in the middle of the page, at 44 px because they are finger targets. The
-    # three after are the page-turn styles in the theme settings, beside a name
-    # at the size of a line of text.
-    ("chapter.svg", "ebook_chapter", 44),
-    ("font-settings.svg", "ebook_font", 44),
-    ("book-theme.svg", "ebook_theme", 44),
-    ("fast-turn.svg", "ebook_turn_fast", 34),
-    ("scroll-turn.svg", "ebook_turn_slide", 34),
-    ("vertical-turn.svg", "ebook_turn_vertical", 34),
-    # The shelf's placeholder, in a 300 px tall tile and beside a row.
-    ("ebook-cover.svg", "ebook_cover", 96),
-    ("ebook-cover.svg", "ebook_cover_small", 40),
-    # Bookmarks: the Books page's corner button, and the glyph in the popup
-    # that confirms a save.
-    ("bookmark.svg", "bookmark", 36),
+    # The glyph in the popup that confirms an audiobook bookmark save.
     ("bookmark-check.svg", "bookmark_check", 64),
     # The heart that jumps out when the coffee QR code is closed. 160 px
     # because the animation grows it to 1:1 and no further.
@@ -429,7 +410,6 @@ COLOR_ICONS = [
     ("more.png", "menu_more", MAIN_MENU_ICON_SIZE),
     # What lives inside "More", at section size.
     ("dac.png", "menu_dac", SECTION_ICON_SIZE),
-    ("ebook.png", "menu_books", SECTION_ICON_SIZE),
     ("file-explorer.png", "menu_file_explorer", SECTION_ICON_SIZE),
 
     # The service badges in the player's top right corner, where the radio puts

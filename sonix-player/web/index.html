@@ -611,11 +611,10 @@ var PLAYLIST  = ["M3U","M3U8","CUE"];
 var IMAGE     = ["BMP","PNG","JPG","JPEG","GIF","WEBP"];
 var TEXT      = ["LRC","TXT","T","INI","NFO"];
 var FIRMWARE  = ["UPT"];
-/* Le rom del Game Boy e i loro salvataggi, i libri, e i caratteri che il
-   lettore di EPUB prende da .local/fonts: roba che il player usa davvero, e
-   che finiva sotto l'avviso "non e' un formato che il player legge". */
+/* Le rom del Game Boy e i loro salvataggi, e i caratteri che il player
+   prende da .local/fonts: roba che il player usa davvero, e che finiva sotto
+   l'avviso "non e' un formato che il player legge". */
 var GAME      = ["GB","GBC","SAV"];
-var EBOOK     = ["EPUB"];
 var FONT      = ["TTF","OTF"];
 
 var path = CARD;
@@ -654,13 +653,12 @@ function glyphFor(entry) {
   if (TEXT.indexOf(e) >= 0)      { return "file-text"; }
   if (FIRMWARE.indexOf(e) >= 0)  { return "update-file"; }
   if (GAME.indexOf(e) >= 0)      { return "gamepad"; }
-  if (EBOOK.indexOf(e) >= 0)     { return "book"; }
   return "file";
 }
 
 function isKnown(name) {
   var e = ext(name);
-  return AUDIO.concat(AUDIOBOOK, PLAYLIST, IMAGE, TEXT, FIRMWARE, GAME, EBOOK, FONT).indexOf(e) >= 0;
+  return AUDIO.concat(AUDIOBOOK, PLAYLIST, IMAGE, TEXT, FIRMWARE, GAME, FONT).indexOf(e) >= 0;
 }
 
 /* The player's own way of putting a size on screen. */

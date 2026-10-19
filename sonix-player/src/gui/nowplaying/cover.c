@@ -1288,23 +1288,6 @@ bool cover_load_image_file(const char *path, int box_w, int box_h, cover_fit_t f
 	return ok;
 }
 
-// A picture that is already in memory. The EPUB shelf is the caller: a book's
-// cover is a member of its ZIP, so there is no file to open -- and writing one
-// out just to read it back would put a temporary file on the card for every
-// book on the shelf.
-bool cover_load_image_memory(const void *data, size_t size, int box_w, int box_h, cover_fit_t fit,
-							 cover_image_t *out) {
-	if (!out) {
-		return false;
-	}
-	memset(out, 0, sizeof(*out));
-	if (!data || !size || size > ALBUMART_MAX_BYTES) {
-		return false;
-	}
-
-	image_request_t req = {.w = box_w, .h = box_h, .fit = fit, .backdrop = false};
-	return build_images_safely((const uint8_t *)data, size, &req, 1, out);
-}
 
 bool cover_load_screensaver_images(const char *path, int w, int h, cover_image_t *image_out, int strip_w,
 								  int strip_h, cover_image_t *strip_out) {

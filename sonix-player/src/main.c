@@ -1923,26 +1923,6 @@ int main(int argc, char **argv) {
 	factoryreset_clear_stock_data(first_start);
 #endif
 
-	// The reader's own file, beside the settings. SONIX_EBOOK_CONFIG moves it for
-	// the host build the same way SONIX_CONFIG moves the other one; with neither
-	// set on the host both stay unset and the reader keeps its state in memory
-	// for the session.
-	const char *ebook_file = getenv("SONIX_EBOOK_CONFIG");
-#ifndef HOST_BUILD
-	if (!ebook_file) {
-		ebook_file = "/usr/data/ebook_config.ini";
-	}
-#endif
-	config_store_init(config_ebook_store(), ebook_file);
-
-	// A player updated in place has its reading positions in the main settings
-	// file. They are moved once, here, and both files are written: leaving them
-	// behind would reset every book on the shelf to its first page.
-	if (config_store_move_section(config_main_store(), config_ebook_store(), "ebook") > 0) {
-		config_store_save(config_ebook_store());
-		config_save();
-	}
-
 	// The interface's own text, before any of it is built. SONIX_LANG_DIR points
 	// it somewhere else for the host build, the same way SONIX_CONFIG does.
 	const char *lang_dir = getenv("SONIX_LANG_DIR");

@@ -6,7 +6,6 @@
 
 #include "src/gui/audio/dacpage.h"
 #include "src/gui/board_profile.h"
-#include "src/gui/ebook/ebookpage.h"
 #include "src/gui/library/filespage.h"
 #include "src/gui/nowplaying/player.h"
 #include "src/gui/shell/gridpage.h"
@@ -34,9 +33,6 @@ static bool more_tokyo_icon(const char *label, const lv_image_dsc_t **icon, them
 	if (strcmp(label, "dac") == 0) {
 		*icon = &icon_usbaudioout;
 		*tone = THEME_SEMANTIC_CYAN;
-	} else if (strcmp(label, "books") == 0) {
-		*icon = &icon_files_book;
-		*tone = THEME_SEMANTIC_AMBER;
 	} else if (strcmp(label, "file_explorer") == 0) {
 		*icon = &icon_folder;
 		*tone = THEME_SEMANTIC_BLUE;
@@ -81,8 +77,8 @@ static void more_list_build(gui_config_t *cfg, const grid_entry_t *entries, int 
 	}
 }
 
-// The shape of the tiled page. More holds three destinations, which fits the
-// two-column grid the main menu uses.
+// The shape of the tiled page. More holds two destinations; keep the
+// three-row tile size other sections use rather than stretching them.
 #define MORE_GRID_ROWS 3
 
 static void more_refresh_theme(void) {
@@ -98,13 +94,9 @@ static void more_refresh_theme(void) {
 void morepage_init(gui_config_t *cfg) {
 	const grid_entry_t entries[] = {
 		{"dac", &icon_menu_dac, &dacpage_screen, NULL},
-		// An action rather than a screen: the shelf reads the Ebook folder again
-		// every time it is opened, so a book copied onto the card turns up
-		// without a restart.
-		{"books", &icon_menu_books, NULL, ebookpage_open},
-		// An action for the same reason the shelf is one: the listing is read
-		// when the page is entered, so a card that changed under the player
-		// shows what is on it now.
+		// An action rather than a screen: the listing is read when the page is
+		// entered, so a card that changed under the player shows what is on it
+		// now.
 		{"file_explorer", &icon_menu_file_explorer, NULL, filespage_open},
 	};
 

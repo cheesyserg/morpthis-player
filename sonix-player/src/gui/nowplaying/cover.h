@@ -43,12 +43,6 @@ bool cover_load_for_dir(const char *dirpath, int box_w, int box_h, cover_fit_t f
 // phone sent to /tmp/cover-<md5>.jpg and hands over that path.
 bool cover_load_image_file(const char *path, int box_w, int box_h, cover_fit_t fit, cover_image_t *out);
 
-// The same from bytes already in memory, for a picture that has no path of its
-// own: the cover of an EPUB, which lives inside the book's ZIP and would have
-// to be written to the card first for the call above to reach it.
-bool cover_load_image_memory(const void *data, size_t size, int box_w, int box_h, cover_fit_t fit,
-							 cover_image_t *out);
-
 // What the artwork for this file IS, as one number, without decoding it.
 //
 // The player asks this before it throws a cover away: two tracks of the same

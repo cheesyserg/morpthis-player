@@ -185,7 +185,6 @@ if [ -f /usr/data/device_config.ini ]; then
 	ls -l /usr/data/device_config.ini
 	redact </usr/data/device_config.ini
 fi
-run 'ls -l /usr/data/ebook_config.ini'
 
 section "network"
 run 'ip link show'

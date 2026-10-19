@@ -535,7 +535,7 @@ void settings_init(gui_config_t *cfg) {
 	build_other_page(cfg);
 
 	lv_obj_t *appearance_row = settingsrow_add(container, "appearance", NULL, switch_screen_cb, appearance_screen);
-	settingsrow_add_icon(appearance_row, &icon_ebook_theme, THEME_SEMANTIC_PURPLE);
+	settingsrow_add_icon(appearance_row, &icon_sun, THEME_SEMANTIC_PURPLE);
 	settingsrow_add_caption(appearance_row, "settings_appearance_detail");
 	lv_obj_t *screen_row = settingsrow_add(container, "settings_screen", NULL, switch_screen_cb, screensettings_screen);
 	settingsrow_add_icon(screen_row, &icon_monitor, THEME_SEMANTIC_CYAN);

@@ -80,11 +80,6 @@
 // the script is deliberate: on a rootfs missing the two pieces above, the reset
 // still amounts to "settings are back to new", the part the user notices most.
 #define CONFIG_FILE "/usr/data/device_config.ini"
-// And the reader's, which is a second file for the reason config.h explains.
-// Listed here because a reset that leaves every book open at the page it was on
-// is not a reset -- and because a file nobody deletes is a file that outlives
-// the thing that made it.
-#define EBOOK_CONFIG_FILE "/usr/data/ebook_config.ini"
 
 // The two functions below serve only the real procedure, which the host build
 // does not have; without this guard the compiler reports them as defined but
@@ -147,8 +142,7 @@ bool factoryreset_supported(void) {
 
 void factoryreset_run(void) {
 #ifdef HOST_BUILD
-	printf("factoryreset: (build host) would delete %s and %s, write the note and reboot\n", CONFIG_FILE,
-		   EBOOK_CONFIG_FILE);
+	printf("factoryreset: (build host) would delete %s, write the note and reboot\n", CONFIG_FILE);
 #else
 	printf("factoryreset: starting the reset\n");
 
@@ -188,7 +182,7 @@ void factoryreset_run(void) {
 	unmount_card();
 
 	// This player's configuration goes now, without waiting for the reboot.
-	static const char *const OURS[] = {CONFIG_FILE, EBOOK_CONFIG_FILE};
+	static const char *const OURS[] = {CONFIG_FILE};
 	for (size_t i = 0; i < sizeof(OURS) / sizeof(OURS[0]); i++) {
 		if (unlink(OURS[i]) == 0) {
 			printf("factoryreset: %s deleted\n", OURS[i]);
@@ -243,8 +237,6 @@ static const char *const KEEP[] = {
 	"bt_macaddr.txt",
 	"device_config.ini",
 	"device_config.ini.tmp",
-	"ebook_config.ini",
-	"ebook_config.ini.tmp",
 	"tidal_session.ini",
 	"lastfm.session",
 };

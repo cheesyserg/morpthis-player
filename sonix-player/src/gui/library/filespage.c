@@ -49,10 +49,9 @@ static bool gesture_not_tap(void) {
 #define MAX_ENTRIES 2000
 #define PATH_MAX_LEN 640
 
-// The listing is built a screenful at a time, for the reason the chapter list
-// gives in ebookreader.c: every row is a card with a glyph and two labels, and
-// LVGL measures all of them before it can draw the first. What the reader is
-// waiting for is the first six.
+// The listing is built a screenful at a time: every row is a card with a
+// glyph and two labels, and LVGL measures all of them before it can draw the
+// first. What somebody is waiting for is the first six.
 //
 // It matters more here than there, because a row also costs a stat() on the
 // card to find out how big the file is -- and a stat on a slow card, two
@@ -189,7 +188,6 @@ static const char *const EXT_PICTURE[] = {"png", "jpg", "jpeg", NULL};
 static const char *const EXT_TEXT[] = {"lrc", "txt", "t", "ini", "nfo", NULL};
 static const char *const EXT_FIRMWARE[] = {"upt", NULL};
 static const char *const EXT_GAME[] = {"gb", "gbc", "sav", NULL};
-static const char *const EXT_BOOK[] = {"epub", NULL};
 
 static const lv_image_dsc_t *glyph_for(const entry_t *entry) {
 	if (entry->dir) {
@@ -217,9 +215,6 @@ static const lv_image_dsc_t *glyph_for(const entry_t *entry) {
 	if (ext_in(ext, EXT_GAME)) {
 		return &icon_files_game;
 	}
-	if (ext_in(ext, EXT_BOOK)) {
-		return &icon_files_book;
-	}
 	return &icon_file;
 }
 
@@ -231,7 +226,7 @@ static bool ext_is_known(const char *name) {
 	const char *ext = ext_of(name);
 	return ext[0] && (ext_in(ext, EXT_AUDIO) || ext_in(ext, EXT_AUDIOBOOK) || ext_in(ext, EXT_PLAYLIST) ||
 					  ext_in(ext, EXT_IMAGE) || ext_in(ext, EXT_TEXT) || ext_in(ext, EXT_FIRMWARE) ||
-					  ext_in(ext, EXT_GAME) || ext_in(ext, EXT_BOOK));
+					  ext_in(ext, EXT_GAME));
 }
 
 // The player's own way of putting a size on screen, the same one the transfer

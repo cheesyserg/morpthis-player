@@ -14,16 +14,8 @@
 // stick -- the switch moves, the value is never stored, and the getter keeps
 // returning its default. So the size is counted rather than guessed: 126 keys
 // written as literals in the source, plus band0..9 for the equaliser and v0..9
-// for MSEB, is about 146 fixed entries. The only thing that would grow on top
-// of that is the EPUB reader, which stores one entry per book opened and has a
-// file of its own (see below), so 384 leaves room to spare.
+// for MSEB, is about 146 fixed entries. 384 leaves room to spare.
 #define CONFIG_MAX_ENTRIES 384
-
-// The reader's own file. Its entries are one per book ever opened, so it grows
-// with the shelf rather than with the player, which is the whole reason it is
-// not in the table above. Five hundred books is a shelf nobody has on a
-// forty-gigabyte card, and the table costs 192 bytes an entry.
-#define EBOOK_MAX_ENTRIES 512
 
 #define CONFIG_SECTION_LEN 32
 #define CONFIG_KEY_LEN 32
@@ -35,11 +27,8 @@ typedef struct {
 	char value[CONFIG_VALUE_LEN];
 } config_entry_t;
 
-// Two files, one piece of code. The settings and the reader's per-book state
-// have nothing to do with each other and no reason to share a table, but they
-// have exactly the same shape on disk -- so the store is a struct and the
-// functions everything else calls are the same functions pointed at the main
-// one.
+// The store is a struct so the functions everything else calls always address
+// the main table through the same code path.
 struct config_store {
 	config_entry_t *entries;
 	int capacity;
@@ -50,18 +39,10 @@ struct config_store {
 };
 
 static config_entry_t main_entries[CONFIG_MAX_ENTRIES];
-static config_entry_t ebook_entries[EBOOK_MAX_ENTRIES];
 
 static config_store_t g_main = {main_entries, CONFIG_MAX_ENTRIES, 0, "", false, "config"};
-static config_store_t g_ebook = {ebook_entries, EBOOK_MAX_ENTRIES, 0, "", false, "ebook config"};
-
-config_store_t *config_main_store(void) { return &g_main; }
-config_store_t *config_ebook_store(void) { return &g_ebook; }
 
 const char *config_path(void) { return g_main.path[0] ? g_main.path : NULL; }
-const char *config_store_path(const config_store_t *store) {
-	return store && store->path[0] ? store->path : NULL;
-}
 
 // Trims leading and trailing whitespace in place, returning the new start.
 static char *trim(char *s) {
@@ -218,33 +199,6 @@ void config_set_bool(const char *section, const char *key, bool value) {
 	config_set(section, key, value ? "1" : "0");
 }
 
-// Moves a whole section from one store to the other, leaving nothing behind.
-// One use: the reader's settings that a config written by an older build still
-// holds in device_config.ini, which would otherwise be lost -- every reading
-// position and every choice -- now that the reader has a file of its own.
-int config_store_move_section(config_store_t *from, config_store_t *to, const char *section) {
-	if (!from || !to || !section) {
-		return 0;
-	}
-	int moved = 0;
-	int kept = 0;
-	for (int i = 0; i < from->count; i++) {
-		if (strcmp(from->entries[i].section, section) == 0) {
-			config_store_set(to, section, from->entries[i].key, from->entries[i].value);
-			moved++;
-			continue;
-		}
-		if (kept != i) {
-			from->entries[kept] = from->entries[i];
-		}
-		kept++;
-	}
-	if (moved) {
-		from->count = kept;
-		from->dirty = true;
-	}
-	return moved;
-}
 
 bool config_store_save(config_store_t *store) {
 	if (!store || !store->path[0] || !store->dirty) {

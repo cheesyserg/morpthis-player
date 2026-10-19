@@ -8,7 +8,6 @@
 
 #include "src/gui/board_profile.h"
 #include "src/gui/fonts/fonts.h"
-#include "src/gui/ebook/ebookpage.h"
 #include "src/gui/library/audiobooks.h"
 #include "src/gui/library/libraryscan.h"
 #include "src/gui/library/medialist.h"
@@ -42,7 +41,7 @@
 
 lv_obj_t *streaming_screen, *wireless_screen;
 lv_obj_t *audiobooks_screen, *morepage_screen, *settings_screen, *player_screen;
-lv_obj_t *ebookpage_screen, *browser_screen, *musicsettings_screen;
+lv_obj_t *browser_screen, *musicsettings_screen;
 
 lv_font_t font_ui_14, font_ui_16, font_ui_18, font_ui_20, font_ui_20_bold;
 lv_font_t font_ui_22, font_ui_22_bold, font_ui_24, font_ui_24_bold;
@@ -97,7 +96,6 @@ void switch_screen(lv_obj_t *screen) { lv_screen_load(screen); }
 void switch_screen_cb(lv_event_t *e) { switch_screen(lv_event_get_user_data(e)); }
 static bool browser_music_started;
 void browser_start_in_music_folder(void) { browser_music_started = true; }
-void ebookpage_open(void) { switch_screen(ebookpage_screen); }
 void switcher_attach_back_gesture(lv_obj_t *obj) { (void)obj; }
 bool switcher_back_drag_active(void) { return false; }
 void player_sheet_attach_drag(lv_obj_t *obj, bool opening) { (void)obj; (void)opening; }
@@ -370,7 +368,6 @@ int main(int argc, char **argv) {
 	streaming_screen = lv_obj_create(NULL);
 	wireless_screen = lv_obj_create(NULL);
 	audiobooks_screen = lv_obj_create(NULL);
-	ebookpage_screen = lv_obj_create(NULL);
 	browser_screen = lv_obj_create(NULL);
 	morepage_screen = lv_obj_create(NULL);
 	settings_screen = lv_obj_create(NULL);
@@ -388,20 +385,6 @@ int main(int argc, char **argv) {
 	menu_toggle = child_of_type(lv_obj_get_parent(toggle_label), &lv_switch_class);
 	assert(lv_obj_has_state(menu_toggle, LV_STATE_CHECKED) == saved_icons_only);
 
-	assert(!main_menu_books());
-	assert(find_label(lv_obj_get_child(grid, 3), tr("audiobooks")));
-	lv_obj_t *books_label = find_label(appearance_screen, tr("appearance_home_books"));
-	assert(books_label);
-	lv_obj_t *books_toggle = child_of_type(lv_obj_get_parent(books_label), &lv_switch_class);
-	assert(!lv_obj_has_state(books_toggle, LV_STATE_CHECKED));
-	lv_obj_set_state(books_toggle, LV_STATE_CHECKED, true);
-	lv_obj_send_event(books_toggle, LV_EVENT_VALUE_CHANGED, NULL);
-	assert(main_menu_books());
-	assert(find_label(lv_obj_get_child(grid, 3), tr("books")));
-	assert(config_get_bool("ui", "home_books", false));
-	lv_obj_set_state(books_toggle, LV_STATE_CHECKED, false);
-	lv_obj_send_event(books_toggle, LV_EVENT_VALUE_CHANGED, NULL);
-	assert(!main_menu_books());
 	assert(find_label(lv_obj_get_child(grid, 3), tr("audiobooks")));
 
 	assert(!main_menu_browse());

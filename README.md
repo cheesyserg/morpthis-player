@@ -86,7 +86,7 @@ The player UI is built with LVGL 9.6 and adapted for the V1's small display. The
 
 ## Features
 
-The project includes a local music library and file browser, album artwork, playlists, lyrics, audiobooks, DSP controls and an EPUB reader. The player also contains code for streaming and network features such as Bluetooth audio, AirPlay, DLNA and Wi-Fi file transfer.
+The project includes a local music library and file browser, album artwork, playlists, lyrics, audiobooks and DSP controls. The player also contains code for streaming and network features such as Bluetooth audio, AirPlay, DLNA and Wi-Fi file transfer.
 
 Local audio decoder inputs include WAV, FLAC, MP3, Ogg Vorbis, Opus, M4A/M4B/MP4, AAC, ALAC, WavPack, APE, AIFF/AIFC, CAF and DSD (DSF/DFF) files. DSP features include a 10-band graphic equalizer, parametric EQ, MSEB, crossfeed, channel balance and ReplayGain.
 
@@ -204,7 +204,7 @@ Third-party components carried in the tree, or fetched by the build, keep their 
 | [LVGL](https://github.com/lvgl/lvgl) 9.6 | the whole interface |
 | [dr_libs](https://github.com/mackron/dr_libs) by David Reid | FLAC and MP3 decoding |
 | [stb](https://github.com/nothings/stb) by Sean Barrett | cover art and image read/write |
-| [miniz](https://github.com/richgel999/miniz) (RAD Game Tools, Valve, Rich Geldreich) | inflate for covers and EPUB |
+| [miniz](https://github.com/richgel999/miniz) (RAD Game Tools, Valve, Rich Geldreich) | inflate for covers |
 | TJpgDec by ChaN | JPEG decoding on the target |
 | [SQLite](https://sqlite.org) | the library index |
 | [FreeType](https://freetype.org) | fonts at runtime |

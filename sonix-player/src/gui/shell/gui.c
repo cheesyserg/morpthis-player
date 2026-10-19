@@ -23,10 +23,6 @@
 #include "src/gui/library/audiobookextras.h"
 #include "src/gui/library/audiobooks.h"
 #include "src/gui/settings/devoptions.h"
-#include "src/gui/ebook/ebookmarkspage.h"
-#include "src/gui/ebook/ebookpage.h"
-#include "src/gui/ebook/ebookreader.h"
-#include "src/gui/ebook/ebooksettings.h"
 #include "src/gui/settings/processespage.h"
 #include "src/gui/settings/language.h"
 #include "src/gui/library/libraryscan.h"
@@ -494,12 +490,6 @@ static void modal_init(gui_config_t *cfg) {
 static void key_async_cb(void *user_data) {
 	gui_key_t key = (gui_key_t)(uintptr_t)user_data;
 
-	// A book owns Previous and Next while it is on screen. Play/Pause remains
-	// an audio command, so background music can still be stopped without
-	// putting the book down.
-	if (ebookreader_handle_key(key)) {
-		return;
-	}
 
 	// The side keys act on the local transport, and there are states in which
 	// that transport is not what the device is doing. Pressing them then does
@@ -679,13 +669,6 @@ void gui_init(gui_config_t *cfg) {
 	radiopage_init(cfg);
 	dacpage_init(cfg);
 	// After dacpage: the More section points at its pages.
-	// before morepage: the books tile opens the shelf, and the shelf opens the
-	// reader.
-	ebookreader_init(cfg);
-	// before ebookpage: its corner button opens the bookmarks
-	ebookmarkspage_init(cfg);
-	ebooksettings_init(cfg); // likewise: the other corner button opens this
-	ebookpage_init(cfg);
 	morepage_init(cfg);
 	textview_init(cfg); // before filespage: a text file tapped there opens here
 	pictureview_init(cfg); // likewise, for JPEG and PNG pictures

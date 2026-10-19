@@ -124,27 +124,10 @@ a self-signed certificate), and HLS.
 - Stop at the end of a chapter, and rewind a few seconds after a pause.
 - **Sleep timer** - set a timer with the desired duration and the playback is paused automatically after it elapses.
 
-## EPUB reader
-
-> `.epub` files need to be inside the `Ebook` folder.
-
-- Support for EPUB 2 and 3.
-- Headings, emphasis, lists, quotes, rules, images, alignment and the table of
-  contents.
-- Text size from 14 to 50, line spacing, word spacing, margins, three reading themes (Paper,
-  Sepia, Night) and three page-turn animations.
-- **Bookmarks** - double-tap the top of a page; up to 64 per book.
-- A **reading bar** along the bottom with chapter, page, progress, battery and
-  clock, each one optional.
-- **Hardware page keys** - Previous and Next turn pages while a book is open;
-  in vertical mode they move one screen at a time and cross chapter boundaries
-  at the ends. Play/Pause and volume remain available for background audio.
-
 ## Settings
 
 - **Appearance** - dark and light, and a layout **Style**: **Classic (TempoTec V1)**, the original tile layout and the default, or **Sonix**, the compact layout with function-matched icons; twelve accent colors, clock position, a dynamic tint that borrows the accent's hue for backgrounds and cards, and a toggle to show/hide the battery percentage.
 - **Appearance → Browse on home screen** - replaces the Music tile with Browse, opening the card’s file browser in the card’s `Music` folder directly; a card without that folder still opens at its root. The chevron and the root button still walk up to the rest of the card. Off by default; Music remains available when switched off.
-- **Appearance → Show Books on home screen** - replaces the Audiobooks tile with Books, opening the EPUB shelf directly from home. Off by default; Audiobooks remain available when switched off.
 - **Appearance → Main menu icons only** - optionally hide the six main-menu tile labels and show larger, centered icons. Dedicated native-pixel art avoids stretching small toolbar glyphs or repeatedly filtering the colored illustrations. Applies immediately in every theme and is saved across restarts; other menus, the status bar and the now-playing strip are unchanged. Off by default.
 - **Appearance → Boot screen** - the picture the next power-on opens with: Retrospace (the default), Space, Travelling in space, or Stock, the firmware's own light and dark pictures. The choice is written to the flash marker the boot script reads, so it takes effect at the next boot.
 - **Appearance → Font** - the face the whole interface is drawn with: MiSans (the default), Neon 80s and, where the image carries them, Roboto Mono, Roboto Condensed, Inter and Barlow Semi Condensed. Text can also be sized Normal or Large. Any `.ttf` or `.otf` file put in the `Fonts` folder on the card is offered beside those, so people can install their own; a face without Cyrillic, Hangul, kanji or Greek still draws the whole interface, because MiSans stays behind it for the letters it does not have.

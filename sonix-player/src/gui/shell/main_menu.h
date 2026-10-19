@@ -14,9 +14,7 @@ void main_menu_init(gui_config_t *cfg);
 bool main_menu_icons_only(void);
 void main_menu_set_icons_only(bool enabled);
 
-bool main_menu_books(void);
 bool main_menu_browse(void);
-void main_menu_set_books(bool enabled);
 void main_menu_set_browse(bool enabled);
 
 #endif

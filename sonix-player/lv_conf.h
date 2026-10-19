@@ -131,8 +131,7 @@
 #define LV_USE_MSGBOX 0
 #define LV_USE_SCALE 0
 /* Runs of different faces flowing as one wrapped paragraph, which a label
- * cannot do. The ebook reader paginates against the height lv_spangroup
- * reports before drawing (lv_spangroup_get_expand_height). */
+ * cannot do. The firmware update page draws its release notes this way. */
 #define LV_USE_SPAN 1
 #define LV_USE_SPINBOX 0
 /* The spinner on screen is this player's own: src/gui/shell/spinner.c turns

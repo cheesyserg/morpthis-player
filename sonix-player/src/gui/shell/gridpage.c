@@ -245,7 +245,6 @@ static bool gridpage_tokyo_icon(const char *label, const lv_image_dsc_t **icon, 
 		{"audiobook_authors", &icon_artist, THEME_SEMANTIC_BLUE},
 		{"audiobook_continue", &icon_play, THEME_SEMANTIC_GREEN},
 		{"dac", &icon_usbaudioout, THEME_SEMANTIC_CYAN},
-		{"books", &icon_files_book, THEME_SEMANTIC_AMBER},
 		{"file_explorer", &icon_folder, THEME_SEMANTIC_BLUE},
 	};
 
