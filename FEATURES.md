@@ -104,7 +104,7 @@ a self-signed certificate), and HLS.
   network by name, since it never appears in the scan list.
 - **Wi-Fi transfer** - a browser on the same network gets the card: upload
   files and whole folders, rename, move, delete, download, show hidden files.
-  Reachable at `sonix-transfer.local`.
+  Reachable at `morpthis-transfer.local`.
 - **SonixLink** - a control protocol for a phone: the phone fetches the index
   once and queries it locally instead of paging over the wire. Playback state,
   queue, favourites, artwork and commands.
@@ -126,7 +126,7 @@ a self-signed certificate), and HLS.
 
 ## Settings
 
-- **Appearance** - dark and light, and a layout **Style**: **Classic (TempoTec V1)**, the original tile layout and the default, or **Sonix**, the compact layout with function-matched icons; twelve accent colors, clock position, a dynamic tint that borrows the accent's hue for backgrounds and cards, and a toggle to show/hide the battery percentage.
+- **Appearance** - dark and light, and a layout **Style**: **Classic (TempoTec V1)**, the original tile layout and the default, or **Morpthis**, the compact layout with function-matched icons; twelve accent colors, clock position, a dynamic tint that borrows the accent's hue for backgrounds and cards, and a toggle to show/hide the battery percentage.
 - **Appearance → Browse on home screen** - replaces the Music tile with Browse, opening the card’s file browser in the card’s `Music` folder directly; a card without that folder still opens at its root. The chevron and the root button still walk up to the rest of the card. Off by default; Music remains available when switched off.
 - **Appearance → Main menu icons only** - optionally hide the six main-menu tile labels and show larger, centered icons. Dedicated native-pixel art avoids stretching small toolbar glyphs or repeatedly filtering the colored illustrations. Applies immediately in every theme and is saved across restarts; other menus, the status bar and the now-playing strip are unchanged. Off by default.
 - **Appearance → Boot screen** - the picture the next power-on opens with: Retrospace (the default), Space, Travelling in space, or Stock, the firmware's own light and dark pictures. The choice is written to the flash marker the boot script reads, so it takes effect at the next boot.

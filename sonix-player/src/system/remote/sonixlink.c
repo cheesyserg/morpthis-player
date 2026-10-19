@@ -61,7 +61,7 @@
 #define SERVICE_TYPE "_sonixlink._tcp.local"
 
 #define NAME_PATH RESOURCE_DIR "/bt_name"
-#define DEFAULT_NAME "Sonix Player"
+#define DEFAULT_NAME "Morpthis"
 
 #define CMD_QUEUE_LEN 16
 // One more than a phone polling over Wi-Fi needs at once, plus the Bluetooth

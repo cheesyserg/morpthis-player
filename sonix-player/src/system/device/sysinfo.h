@@ -12,7 +12,7 @@
 // versions
 // ---------------------------------------------------------------------------
 //
-// Not compiled into the binary but read from /usr/resource/sonix/components/system-info.json, a
+// Not compiled into the binary but read from /usr/resource/morpthis/components/system-info.json, a
 // text file next to the language directory:
 //
 //     {
@@ -20,7 +20,7 @@
 //         "dac-info": "Dual Cirrus Logic CS43198",
 //         "OS_version": "1.0",
 //         "Build_version": "182",
-//         "ota-repo": "Jepl4r/sonix-player"
+//         "ota-repo": "mr-f0xx/morpthis-tempotec-v1"
 //     }
 //
 // This way updating the build number does not mean rebuilding, and whoever

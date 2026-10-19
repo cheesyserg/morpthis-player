@@ -259,7 +259,7 @@ static int count_leading_zeros(int32_t input)
     }
     return i;
 }
-/* --- MODIFICA LOCALE (sonix_player) -------------------------------------
+/* --- MODIFICA LOCALE (morpthis_player) -------------------------------------
  * Aggiunto questo ramo, e nient'altro: il resto del file e' l'originale di
  * David Hammerton. Contare gli zeri iniziali e' una singola istruzione su
  * MIPS32r2 (clz), e su ogni altro bersaglio che gcc conosca, mentre il
@@ -452,7 +452,7 @@ void entropy_rice_decode(alac_file* alac,
 			// note: blockSize is always 16bit
 			blockSize = entropy_decode_value(alac, 16, k, rice_kmodifier_mask);
 			
-			/* --- MODIFICA LOCALE (sonix_player) ------------------------
+			/* --- MODIFICA LOCALE (morpthis_player) ------------------------
 			 * blockSize arriva dal file e l'originale lo passa a memset senza
 			 * mai confrontarlo con outputSize: un blocco di zeri dichiarato
 			 * piu' lungo di quello che resta nel frame scrive oltre la fine di
@@ -812,7 +812,7 @@ void decode_frame(alac_file *alac,
             /* now read the number of samples,
              * as a 32bit integer */
             outputsamples = readbits(alac, 32);
-            /* --- MODIFICA LOCALE (sonix_player) ------------------------
+            /* --- MODIFICA LOCALE (morpthis_player) ------------------------
              * Questo conteggio arriva dal file e nell'originale non viene
              * controllato: un .m4a corrotto (o costruito apposta) puo' dire
              * "questo frame ha due miliardi di campioni" e il decoder scrive
@@ -1001,7 +1001,7 @@ void decode_frame(alac_file *alac,
             /* now read the number of samples,
              * as a 32bit integer */
             outputsamples = readbits(alac, 32);
-            /* --- MODIFICA LOCALE (sonix_player) ------------------------
+            /* --- MODIFICA LOCALE (morpthis_player) ------------------------
              * Questo conteggio arriva dal file e nell'originale non viene
              * controllato: un .m4a corrotto (o costruito apposta) puo' dire
              * "questo frame ha due miliardi di campioni" e il decoder scrive
@@ -1211,7 +1211,7 @@ void decode_frame(alac_file *alac,
 
 alac_file *create_alac(int samplesize, int numchannels)
 {
-    /* --- MODIFICA LOCALE (sonix_player): malloc -> calloc, piu' il
+    /* --- MODIFICA LOCALE (morpthis_player): malloc -> calloc, piu' il
      * controllo del ritorno. Serve a free_alac() qui sotto: azzerando la
      * struttura i sei puntatori ai buffer partono NULL, quindi liberare un
      * decoder su cui alac_set_info() non e' mai stato chiamato e' innocuo
@@ -1229,7 +1229,7 @@ alac_file *create_alac(int samplesize, int numchannels)
     return newfile;
 }
 
-/* --- MODIFICA LOCALE (sonix_player) -------------------------------------
+/* --- MODIFICA LOCALE (morpthis_player) -------------------------------------
  * L'originale non ha nessuna funzione per liberare: allocate_buffers() prende
  * sei blocchi da setinfo_max_samples_per_frame*4 byte e nessuno li restituisce
  * mai. Nel programma da riga di comando dell'autore non si notava -- apriva un

@@ -1976,7 +1976,7 @@ typedef struct
       stbi_uc *linebuf;
       short   *coeff;   // progressive only
       int      coeff_w, coeff_h; // number of 8x8 coefficient blocks
-      // LOCAL PATCH (Sonix Player): reduced-coefficient progressive mode.
+      // LOCAL PATCH (Morpthis): reduced-coefficient progressive mode.
       // nz holds two words per block, one bit per coefficient, recording which
       // coefficients are non-zero. See scale_keep below.
       void          *raw_nz;
@@ -1989,7 +1989,7 @@ typedef struct
    int            nomore;      // flag if we saw a marker so must stop
 
    int            progressive;
-   // LOCAL PATCH (Sonix Player): how many coefficients per row and column of
+   // LOCAL PATCH (Morpthis): how many coefficients per row and column of
    // an 8x8 block are kept while decoding a progressive image. 8 is upstream
    // behaviour -- every coefficient, a full-resolution decode. 1, 2 or 4 keep
    // only the top-left corner and produce a 1/8, 1/4 or 1/2 scale image, for a
@@ -2275,7 +2275,7 @@ static int stbi__jpeg_decode_block(stbi__jpeg *j, short data[64], stbi__huffman 
    return 1;
 }
 
-// LOCAL PATCH (Sonix Player) -- reduced-coefficient progressive decoding.
+// LOCAL PATCH (Morpthis) -- reduced-coefficient progressive decoding.
 //
 // A progressive JPEG cannot be decoded a piece at a time: a coefficient arrives
 // spread over several scans, so the whole coefficient plane has to be held until
@@ -3159,7 +3159,7 @@ static void stbi__jpeg_dequantize(short *data, stbi__uint16 *dequant)
       data[i] *= dequant[i];
 }
 
-// LOCAL PATCH (Sonix Player): turning a corner of coefficients into KxK
+// LOCAL PATCH (Morpthis): turning a corner of coefficients into KxK
 // samples.
 //
 // The first attempt ran a KxK inverse transform straight over the kept KxK
@@ -3232,7 +3232,7 @@ static void stbi__jpeg_finish(stbi__jpeg *z)
             }
          }
       }
-      // LOCAL PATCH (Sonix Player): release the coefficient planes here
+      // LOCAL PATCH (Morpthis): release the coefficient planes here
       // instead of leaving them to stbi__free_jpeg_components at the end of the
       // load. This is their last use -- the IDCT above has moved everything into
       // img_comp[].data -- and upstream they stay allocated across the output
@@ -3415,7 +3415,7 @@ static int stbi__free_jpeg_components(stbi__jpeg *z, int ncomp, int why)
          STBI_FREE(z->img_comp[i].linebuf);
          z->img_comp[i].linebuf = NULL;
       }
-      // LOCAL PATCH (Sonix Player): the non-zero bitmap of the reduced
+      // LOCAL PATCH (Morpthis): the non-zero bitmap of the reduced
       // progressive mode. stbi__jpeg_finish releases it too, but only a decode
       // that runs all the way through reaches that -- a truncated scan, a bad
       // Huffman code, a marker stb does not know, or an allocation that fails
@@ -3507,7 +3507,7 @@ static int stbi__process_frame_header(stbi__jpeg *z, int scan)
       z->img_comp[i].nz = 0;
       z->img_comp[i].raw_nz = 0;
       z->img_comp[i].linebuf = NULL;
-      // LOCAL PATCH (Sonix Player): in reduced mode every 8x8 block becomes
+      // LOCAL PATCH (Morpthis): in reduced mode every 8x8 block becomes
       // a KxK one, so the sample plane and the number of real samples in it
       // shrink with it. The block counts do not: they are what the entropy
       // decoder walks, and it walks the whole image whatever is kept.
@@ -3529,7 +3529,7 @@ static int stbi__process_frame_header(stbi__jpeg *z, int scan)
          return stbi__free_jpeg_components(z, i+1, stbi__err("outofmem", "Out of memory"));
       // align blocks for idct using mmx/sse
       z->img_comp[i].data = (stbi_uc*) (((size_t) z->img_comp[i].raw_data + 15) & ~15);
-      // LOCAL PATCH (Sonix Player): a progressive file writes its samples
+      // LOCAL PATCH (Morpthis): a progressive file writes its samples
       // only in stbi__jpeg_finish, and there are paths out of the decoder that
       // never reach it -- a truncated file, a marker stb does not recognise. The
       // planes are then read as they came from malloc. It is in bounds, but it
@@ -4081,7 +4081,7 @@ static stbi_uc stbi__blinn_8x8(stbi_uc x, stbi_uc y)
 
 static stbi_uc *load_jpeg_image(stbi__jpeg *z, int *out_x, int *out_y, int *comp, int req_comp)
 {
-   // LOCAL PATCH (Sonix Player): this function's resampler walks the sample
+   // LOCAL PATCH (Morpthis): this function's resampler walks the sample
    // planes with the full-resolution row count and the plane's own stride, which
    // in reduced mode are no longer the same scale -- it would read several times
    // past the end of the buffer. Reduced decodes go through jpeg_planes_decode()

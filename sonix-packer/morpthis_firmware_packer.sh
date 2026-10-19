@@ -1,14 +1,14 @@
 #!/bin/bash
 #
-# Builds a TempoTec V1 firmware image that boots Sonix Player instead of the
+# Builds a TempoTec V1 firmware image that boots Morpthis instead of the
 # stock music player. This tree builds one model: the V1.
 #
 # Everything it needs sits next to it:
 #
-#   sonix_firmware_packer.sh   this script
+#   morpthis_firmware_packer.sh   this script
 #   v1_original.upt            the stock firmware of the TempoTec V1
-#   sonix_player               the binary to install
-#   sonix_launch               waits for the player and reboots when it exits
+#   morpthis_player               the binary to install
+#   morpthis_launch               waits for the player and reboots when it exits
 #                              (optional: without it the launcher's shell does)
 #   assets/
 #       V1/                    the whole overlay, kernel-facing files included
@@ -41,8 +41,8 @@ die()  { echo -e "${RED}Error:${NC} $*" >&2; exit 1; }
 # ==========================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
-PLAYER_BIN="$SCRIPT_DIR/sonix_player"
-LAUNCH_BIN="$SCRIPT_DIR/sonix_launch"
+PLAYER_BIN="$SCRIPT_DIR/morpthis_player"
+LAUNCH_BIN="$SCRIPT_DIR/morpthis_launch"
 
 # The model this tree builds: the assets folder, the stock firmware to start
 # from, the image to write, and the device-name the player reads from
@@ -63,15 +63,15 @@ MERGED_SQUASHFS="$SCRIPT_DIR/rootfs_original.squashfs"
 # Paths inside the rootfs.
 STOCK_PLAYER="usr/bin/hiby_player"
 STOCK_LAUNCHER="usr/bin/hiby_player.sh"
-NEW_LAUNCHER="usr/bin/sonix_player.sh"
+NEW_LAUNCHER="usr/bin/morpthis_player.sh"
 INIT_SCRIPT="etc/init.d/S92_03_start_music_player"
-SYSTEM_INFO="usr/resource/sonix/components/system-info.json"
+SYSTEM_INFO="usr/resource/morpthis/components/system-info.json"
 
 # The stock interface's own resources. Nothing on the device reads them once
 # the player is replaced, and they are several megabytes of an image that has
 # to fit in flash.
 #
-# Note what is NOT in this list: usr/resource/sonix, which is where the assets
+# Note what is NOT in this list: usr/resource/morpthis, which is where the assets
 # folder lands. The stock fonts and strings live one level above it and go;
 # ours stay.
 STOCK_UI_DIRS=(usr/resource/litegui usr/resource/layout usr/resource/str usr/resource/fonts)
@@ -81,7 +81,7 @@ cleanup() { rm -rf "$WORK_DIR" "$SQUASH_DIR" "$MERGED_SQUASHFS" 2>/dev/null || t
 trap cleanup EXIT
 
 say "${BLUE}###############################################${NC}"
-say "${BLUE}###   SONIX PLAYER -- FIRMWARE PACKER       ###${NC}"
+say "${BLUE}###   MORPTHIS PLAYER -- FIRMWARE PACKER       ###${NC}"
 say "${BLUE}###############################################${NC}"
 say ""
 
@@ -118,24 +118,24 @@ sed_file() {
 # and counting lines would report that as one.
 count_in() { tr -c '[:alnum:]_./' '\n' < "$2" | grep -c -- "$1" || true; }
 
-# Replaces every hiby_player with sonix_player, and proves it: the count before,
+# Replaces every hiby_player with morpthis_player, and proves it: the count before,
 # every resulting line printed, and a hard stop if anything survived.
 #
 # One substitution covers both spellings -- a reference to `hiby_player` becomes
-# `sonix_player`, and one to `hiby_player.sh` becomes `sonix_player.sh`, which
+# `morpthis_player`, and one to `hiby_player.sh` becomes `morpthis_player.sh`, which
 # is the name the launcher has just been given.
 rename_player_in() {
 	local file="$1" label="$2"
 	local before
 	before="$(count_in "hiby_player" "$file")"
 
-	sed_file "s/hiby_player/sonix_player/g" "$file"
+	sed_file "s/hiby_player/morpthis_player/g" "$file"
 
 	if grep -q "hiby_player" "$file"; then
 		die "$label still mentions hiby_player after the rewrite."
 	fi
 	say "    $label: $before occurrence(s) of hiby_player replaced"
-	grep -n "sonix_player" "$file" | sed 's/^/        /'
+	grep -n "morpthis_player" "$file" | sed 's/^/        /'
 }
 
 # ==========================================================================
@@ -165,7 +165,7 @@ if [ -n "$MISSING" ]; then
   macOS:          brew install p7zip squashfs cdrtools"
 fi
 
-[ -f "$PLAYER_BIN" ] || die "sonix_player is not next to this script."
+[ -f "$PLAYER_BIN" ] || die "morpthis_player is not next to this script."
 
 ASSETS_DIR="$SCRIPT_DIR/assets"
 [ -d "$ASSETS_DIR" ] || die "there is no assets folder next to this script."
@@ -193,22 +193,22 @@ done
 
 BUILD_STAMP="$(get_stamp "$PLAYER_BIN")"
 TODAY="$(date +%d%m%Y)"
-say "    binary:  sonix_player, $(get_size "$PLAYER_BIN") bytes, built $BUILD_STAMP"
+say "    binary:  morpthis_player, $(get_size "$PLAYER_BIN") bytes, built $BUILD_STAMP"
 if [ "${BUILD_STAMP:0:8}" != "$TODAY" ]; then
-	warn "sonix_player was not built today; build_version will still say when it was."
+	warn "morpthis_player was not built today; build_version will still say when it was."
 fi
 
-# sonix_launch has to be a 32-bit little-endian MIPS executable: the launcher
+# morpthis_launch has to be a 32-bit little-endian MIPS executable: the launcher
 # execs it, and a busybox shell that cannot exec it exits without starting the
 # player. The first 20 bytes of the ELF header say so.
 if [ -f "$LAUNCH_BIN" ]; then
 	ELF_HEAD="$(od -An -tx1 -N20 "$LAUNCH_BIN" | tr -d ' \n')"
 	[ "${ELF_HEAD:0:12}" = "7f454c460101" ] && [ "${ELF_HEAD:32:8}" = "02000800" ] ||
-		die "sonix_launch is not a 32-bit little-endian MIPS executable.
-	  Build it with \`make target\` (or \`make sonix_launch\`) in sonix-player."
-	say "    launch:  sonix_launch, $(get_size "$LAUNCH_BIN") bytes"
+		die "morpthis_launch is not a 32-bit little-endian MIPS executable.
+	  Build it with \`make target\` (or \`make morpthis_launch\`) in sonix-player."
+	say "    launch:  morpthis_launch, $(get_size "$LAUNCH_BIN") bytes"
 else
-	warn "sonix_launch is not next to this script: the launcher keeps its shell for the whole session."
+	warn "morpthis_launch is not next to this script: the launcher keeps its shell for the whole session."
 fi
 say ""
 
@@ -260,7 +260,7 @@ build_one() {
 	# ==========================================================================
 	# 2. The binary
 	# ==========================================================================
-	step "[$MODEL_NAME] installing sonix_player"
+	step "[$MODEL_NAME] installing morpthis_player"
 
 	chmod 777 "$PLAYER_BIN"
 
@@ -271,9 +271,9 @@ build_one() {
 		warn "$STOCK_PLAYER was not there to begin with"
 	fi
 
-	cp -f "$PLAYER_BIN" "$SQUASH_DIR/usr/bin/sonix_player"
-	chmod 777 "$SQUASH_DIR/usr/bin/sonix_player"
-	say "    usr/bin/sonix_player installed (777)"
+	cp -f "$PLAYER_BIN" "$SQUASH_DIR/usr/bin/morpthis_player"
+	chmod 777 "$SQUASH_DIR/usr/bin/morpthis_player"
+	say "    usr/bin/morpthis_player installed (777)"
 	say ""
 
 	# ==========================================================================
@@ -316,12 +316,12 @@ build_one() {
 	# The streaming keys go in sealed, as streaming-keys.bin. One left in the
 	# clear in the assets is not shipped: an image is unpacked by anyone who
 	# downloads it. See tools/seal_streamkeys.py in sonix-player.
-	PLAIN_KEYS="usr/resource/sonix/components/streaming-keys.ini"
+	PLAIN_KEYS="usr/resource/morpthis/components/streaming-keys.ini"
 	if [ -f "$SQUASH_DIR/$PLAIN_KEYS" ]; then
 		rm -f "$SQUASH_DIR/$PLAIN_KEYS"
 		warn "$MODEL_DIR/$PLAIN_KEYS is in the clear and was left out; seal it with tools/seal_streamkeys.py"
 	fi
-	if [ ! -f "$SQUASH_DIR/usr/resource/sonix/components/streaming-keys.bin" ]; then
+	if [ ! -f "$SQUASH_DIR/usr/resource/morpthis/components/streaming-keys.bin" ]; then
 		warn "no streaming-keys.bin in $MODEL_DIR: Tidal, Qobuz, podcasts and Last.fm stay off"
 		warn "whoever installs it can still turn them on: streaming-keys.ini at the card's root is read at boot"
 	fi
@@ -382,7 +382,7 @@ build_one() {
 		warn "no init script mentions a logo jpeg or the marker here."
 		warn "the boot screen setting will only offer what the stock script can draw."
 		echo "-- no boot script found; nothing patched." >> "$REPORT"
-	elif grep -q "sonix boot screen choice" "$BOOT_SCRIPT"; then
+	elif grep -q "morpthis boot screen choice" "$BOOT_SCRIPT"; then
 		say "    $(basename "$BOOT_SCRIPT") already carries the choice block"
 		echo "-- $(basename "$BOOT_SCRIPT"): already carried the choice block." >> "$REPORT"
 	else
@@ -456,14 +456,14 @@ build_one() {
 		# unaligned -s is one more thing a vendor nanddump could stumble over,
 		# and this has been wrong often enough to owe us a trace. The trace
 		# file is what the player's Developer options page shows after a boot.
-		BOOT_BLOCK="# --- sonix boot screen choice (added by the firmware packer) ---
+		BOOT_BLOCK="# --- morpthis boot screen choice (added by the firmware packer) ---
 boot_raw=\$(nanddump -q -s 0x20000 -l 14 /dev/mtd5 -a 2>/dev/null)
 boot_sel=\${boot_raw#* }
 echo \"sel=\$boot_sel raw=\$boot_raw\" > /tmp/.bootlogo_trace 2>/dev/null
 if [ \"\$boot_sel\" = \"logo:2\" ] && [ -f /etc/logo_space.jpeg ]; then $DISPLAY_CMD /etc/logo_space.jpeg && { echo \"drawn=space\" >> /tmp/.bootlogo_trace; boot_drawn=1; $LEAVE; }; fi
 if [ \"\$boot_sel\" = \"logo:3\" ] && [ -f /etc/logo_travelling.jpeg ]; then $DISPLAY_CMD /etc/logo_travelling.jpeg && { echo \"drawn=travelling\" >> /tmp/.bootlogo_trace; boot_drawn=1; $LEAVE; }; fi
 [ -n \"\$boot_drawn\" ] || echo \"drawn=stock-chain\" >> /tmp/.bootlogo_trace 2>/dev/null
-# --- end sonix boot screen choice ---
+# --- end morpthis boot screen choice ---
 "
 		# The anchor: the line that reads the marker, a plain assignment at the
 		# top of the script and a statement boundary in every shape a shell
@@ -479,7 +479,7 @@ if [ \"\$boot_sel\" = \"logo:3\" ] && [ -f /etc/logo_travelling.jpeg ]; then $DI
 			{ print }
 		' "$BOOT_SCRIPT" > "$BOOT_SCRIPT.packer.tmp"
 
-		grep -q "sonix boot screen choice" "$BOOT_SCRIPT.packer.tmp" ||
+		grep -q "morpthis boot screen choice" "$BOOT_SCRIPT.packer.tmp" ||
 			die "the choice block was not inserted into $(basename "$BOOT_SCRIPT")."
 
 		# cat onto the file rather than mv over it: the init script's mode and
@@ -509,7 +509,7 @@ if [ \"\$boot_sel\" = \"logo:3\" ] && [ -f /etc/logo_travelling.jpeg ]; then $DI
 	#
 	# This is not housekeeping. The init script is
 	#
-	#     PL01=/usr/bin/sonix_player.sh
+	#     PL01=/usr/bin/morpthis_player.sh
 	#     [ -f $PL01 ] && ( $PL01 & ) || echo "file <$PL01> don't exist."
 	#
 	# and `-f` asks whether the file EXISTS, not whether it can be run. A
@@ -542,36 +542,36 @@ if [ \"\$boot_sel\" = \"logo:3\" ] && [ -f /etc/logo_travelling.jpeg ]; then $DI
 	say ""
 
 	# ==========================================================================
-	# 5c. sonix_launch
+	# 5c. morpthis_launch
 	# ==========================================================================
 	#
-	# The launcher execs sonix_launch just before the line that starts the
+	# The launcher execs morpthis_launch just before the line that starts the
 	# player, so the shell is replaced by a process of a few kB that does what
 	# the rest of the script does: runs the player, then `sleep 1; reboot`. The
 	# original lines stay under it and still run on a rootfs without the binary.
 	if [ -f "$LAUNCH_BIN" ]; then
-		step "[$MODEL_NAME] starting the player through sonix_launch"
+		step "[$MODEL_NAME] starting the player through morpthis_launch"
 
-		cp -f "$LAUNCH_BIN" "$SQUASH_DIR/usr/bin/sonix_launch"
-		chmod 755 "$SQUASH_DIR/usr/bin/sonix_launch"
-		say "    usr/bin/sonix_launch installed (755)"
+		cp -f "$LAUNCH_BIN" "$SQUASH_DIR/usr/bin/morpthis_launch"
+		chmod 755 "$SQUASH_DIR/usr/bin/morpthis_launch"
+		say "    usr/bin/morpthis_launch installed (755)"
 
 		LAUNCHER_FILE="$SQUASH_DIR/$NEW_LAUNCHER"
-		if grep -q "sonix_launch" "$LAUNCHER_FILE"; then
+		if grep -q "morpthis_launch" "$LAUNCHER_FILE"; then
 			say "    $NEW_LAUNCHER already calls it"
 		else
-			PLAYER_LINES="$(grep -c '^/usr/bin/sonix_player$' "$LAUNCHER_FILE" || true)"
+			PLAYER_LINES="$(grep -c '^/usr/bin/morpthis_player$' "$LAUNCHER_FILE" || true)"
 			if [ "$PLAYER_LINES" = "1" ]; then
-				awk '$0 == "/usr/bin/sonix_player" { print "[ -x /usr/bin/sonix_launch ] && exec /usr/bin/sonix_launch /usr/bin/sonix_player" } { print }' \
+				awk '$0 == "/usr/bin/morpthis_player" { print "[ -x /usr/bin/morpthis_launch ] && exec /usr/bin/morpthis_launch /usr/bin/morpthis_player" } { print }' \
 					"$LAUNCHER_FILE" > "$LAUNCHER_FILE.new"
 				mv -f "$LAUNCHER_FILE.new" "$LAUNCHER_FILE"
 				chmod 755 "$LAUNCHER_FILE"
-				grep -q "exec /usr/bin/sonix_launch" "$LAUNCHER_FILE" || die "$NEW_LAUNCHER was not rewritten."
-				say "    $NEW_LAUNCHER execs sonix_launch"
+				grep -q "exec /usr/bin/morpthis_launch" "$LAUNCHER_FILE" || die "$NEW_LAUNCHER was not rewritten."
+				say "    $NEW_LAUNCHER execs morpthis_launch"
 			else
-				rm -f "$SQUASH_DIR/usr/bin/sonix_launch"
-				warn "$NEW_LAUNCHER has $PLAYER_LINES lines that are exactly /usr/bin/sonix_player, not one:
-	  left as it is, and sonix_launch not installed."
+				rm -f "$SQUASH_DIR/usr/bin/morpthis_launch"
+				warn "$NEW_LAUNCHER has $PLAYER_LINES lines that are exactly /usr/bin/morpthis_player, not one:
+	  left as it is, and morpthis_launch not installed."
 			fi
 		fi
 		say ""

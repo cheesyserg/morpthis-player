@@ -335,7 +335,7 @@ static bool request_url(const char *endpoint, const char *key, const char *value
 		return false;
 	}
 	http_url_encode(value, encoded, sizeof(encoded));
-	int n = snprintf(out, size, "%s/rest/%s.view?u=%s&t=%s&s=%s&v=1.16.1&c=sonix&f=json%s%s%s",
+	int n = snprintf(out, size, "%s/rest/%s.view?u=%s&t=%s&s=%s&v=1.16.1&c=morpthis&f=json%s%s%s",
 					 c.server, endpoint, user, token, salt, key ? "&" : "", key ? key : "", key ? "=" : "");
 	bool ok = n > 0 && (size_t)n < size;
 	if (ok && key) {

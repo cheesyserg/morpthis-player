@@ -217,7 +217,7 @@ bool config_store_save(config_store_t *store) {
 		return false;
 	}
 
-	fprintf(f, "# sonix_player settings. Rewritten by the player; hand edits are read back.\n");
+	fprintf(f, "# morpthis_player settings. Rewritten by the player; hand edits are read back.\n");
 
 	// Grouped by section, in the order the sections first appear.
 	for (int i = 0; i < store->count; i++) {

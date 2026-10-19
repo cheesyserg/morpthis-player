@@ -294,7 +294,7 @@ static void wake(void) {
 
 /* Optional real-renderer snapshots for review, kept out of Git. */
 static void dump_snapshot(const char *name) {
-	const char *prefix = getenv("SONIX_SCREENSAVER_SNAPSHOTS");
+	const char *prefix = getenv("MORPTHIS_SCREENSAVER_SNAPSHOTS");
 	if (!prefix || !prefix[0]) {
 		return;
 	}
@@ -576,7 +576,7 @@ int main(int argc, char **argv) {
 	assert(argc == 2 || argc == 3);
 	bool saved_framed = argc == 3 && strcmp(argv[2], "saved") == 0;
 
-	char dir[] = "/tmp/sonix-screensaver-test-XXXXXX";
+	char dir[] = "/tmp/morpthis-screensaver-test-XXXXXX";
 	assert(mkdtemp(dir));
 	char config[256];
 	snprintf(config, sizeof(config), "%s/device_config.ini", dir);

@@ -25,7 +25,7 @@
 
 // Where the log goes when it is on: beside everything else the player writes.
 #define LOG_SUBDIR ".local"
-#define LOG_FILE_NAME "sonix_player.log"
+#define LOG_FILE_NAME "morpthis_player.log"
 
 // The player prints a good deal before the card is mounted: which block device
 // it found, what the battery reported, whether the clock survived. That cannot
@@ -45,8 +45,8 @@
 // reaches the buffer at all. In the USB path the same failure also leaves
 // descriptors 1 and 2 open on the card, which keeps it busy and defeats the
 // unmount that logging_suspend_for_usb() exists to allow.
-#define EARLY_HELD_PATH "/tmp/sonix-log-early"
-#define USB_HELD_PATH "/tmp/sonix-log-usb"
+#define EARLY_HELD_PATH "/tmp/morpthis-log-early"
+#define USB_HELD_PATH "/tmp/morpthis-log-usb"
 
 static FILE *early_stream;
 
@@ -549,7 +549,7 @@ void logging_init(void) {
 	stamp_install();
 	queue_start();
 
-	const char *override = getenv("SONIX_LOG");
+	const char *override = getenv("MORPTHIS_LOG");
 	if (override && override[0]) {
 		FILE *file = fopen(override, "w");
 		if (file && redirect_to(file)) {
@@ -626,7 +626,7 @@ static void open_null_log(void) {
 }
 
 static void logging_attach_sd_locked(const char *sd_root) {
-	if (getenv("SONIX_LOG")) {
+	if (getenv("MORPTHIS_LOG")) {
 		return; // an explicit path wins over everything
 	}
 

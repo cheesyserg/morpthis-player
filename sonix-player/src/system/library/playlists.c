@@ -119,12 +119,12 @@ static void resolve_entry(const char *line, const char *base, char *out, size_t 
 #define MARKER_HEADER "#EXTM3U\n#" PLAYLISTS_MARKER "\n"
 
 // True for the marker line, written as a comment or bare.
-static bool is_marker_line(const char *line) {
+static bool marker_matches(const char *line, const char *marker) {
 	while (*line == '#' || *line == ' ' || *line == '\t') {
 		line++;
 	}
-	size_t len = strlen(PLAYLISTS_MARKER);
-	if (strncasecmp(line, PLAYLISTS_MARKER, len) != 0) {
+	size_t len = strlen(marker);
+	if (strncasecmp(line, marker, len) != 0) {
 		return false;
 	}
 	for (const char *rest = line + len; *rest; rest++) {
@@ -133,6 +133,10 @@ static bool is_marker_line(const char *line) {
 		}
 	}
 	return true;
+}
+
+static bool is_marker_line(const char *line) {
+	return marker_matches(line, PLAYLISTS_MARKER) || marker_matches(line, PLAYLISTS_MARKER_LEGACY);
 }
 
 // Whether a playlist file carries the marker.

@@ -39,8 +39,8 @@ static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static volatile bool running;
 static volatile bool stop_requested;
 
-static char host_label[64];	 // "sonix-transfer"
-static char host_full[80];	 // "sonix-transfer.local"
+static char host_label[64];	 // "morpthis-transfer"
+static char host_full[80];	 // "morpthis-transfer.local"
 static uint16_t host_port;	 // only used in the log line
 
 // ---------------------------------------------------------------------------
@@ -129,7 +129,7 @@ static int read_name(const uint8_t *buf, int len, int at, char *out, int out_siz
 	return -1;
 }
 
-// Writes "sonix-transfer.local" as the wire format: one length-prefixed label
+// Writes "morpthis-transfer.local" as the wire format: one length-prefixed label
 // per dotted part, then a zero. No compression -- the saving would be a dozen
 // bytes on a packet nothing is counting.
 static int write_name(uint8_t *buf, int size, int at, const char *name) {

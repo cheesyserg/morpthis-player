@@ -535,7 +535,7 @@ static bool mount_is_writable(const char *mount_point) {
 	// statvfs is not the whole answer -- a FUSE filesystem can report a
 	// writable superblock and still refuse -- so a file is actually created.
 	char probe[600];
-	snprintf(probe, sizeof(probe), "%s/.sonix-write-test", mount_point);
+	snprintf(probe, sizeof(probe), "%s/.morpthis-write-test", mount_point);
 	int fd = open(probe, O_WRONLY | O_CREAT | O_EXCL, 0644);
 	if (fd < 0) {
 		return false;
@@ -668,7 +668,7 @@ static int mount_sd(storage_config_t *storage_cfg, const system_runtime_t *runti
 	const char *mount_point = pick_sd_root(storage_cfg);
 	snprintf(sd_root, sizeof(sd_root), "%s", mount_point);
 
-	if (!storage_cfg->manage_mount || getenv("SONIX_NO_MOUNT")) {
+	if (!storage_cfg->manage_mount || getenv("MORPTHIS_NO_MOUNT")) {
 		return mount_settled(mount_point); // somebody else owns the mount, see storage_config_t
 	}
 
@@ -725,7 +725,7 @@ static int mount_sd(storage_config_t *storage_cfg, const system_runtime_t *runti
 
 	// Only then HiBy OS's own mount daemon, which shells out to busybox
 	// `mount` and so can reach the exFAT/NTFS userspace helpers that the
-	// syscall cannot. SONIX_NO_SYSSERVER=1 skips it entirely.
+	// syscall cannot. MORPTHIS_NO_SYSSERVER=1 skips it entirely.
 	if (sysserver_mount(device, mount_point) == 0 && is_mounted(mount_point)) {
 		printf("storage: mounted via sys_server (%d entries)\n", count_entries(mount_point));
 		return mount_settled(mount_point);
@@ -889,7 +889,7 @@ static system_runtime_t *g_runtime;
 static bool card_released; // under card_lock: set for the power-off, never cleared
 
 void storage_recheck_card(void) {
-	if (!g_storage_cfg || !g_storage_cfg->manage_mount || getenv("SONIX_NO_MOUNT")) {
+	if (!g_storage_cfg || !g_storage_cfg->manage_mount || getenv("MORPTHIS_NO_MOUNT")) {
 		return;
 	}
 	// A USB export has the card handed to the host on purpose. Taking it back

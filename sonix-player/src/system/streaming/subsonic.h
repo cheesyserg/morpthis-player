@@ -84,7 +84,7 @@ int subsonic_browse(subsonic_browse_t browse, const char *id, int offset,
 					char *error, size_t error_size);
 
 // URL construction only, no network. Fresh /dev/urandom salt, token auth,
-// v=1.16.1, c=sonix, f=json; no plaintext password in a URL or a log.
+// v=1.16.1, c=morpthis, f=json; no plaintext password in a URL or a log.
 bool subsonic_stream_url(const char *id, subsonic_quality_t quality,
 						 char *out, size_t size, char *error, size_t error_size);
 

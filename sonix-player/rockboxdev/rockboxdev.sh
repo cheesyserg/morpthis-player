@@ -430,13 +430,13 @@ build_hiby_toolchain() {
     buildtool "alsa-lib" "$alsalib_ver" \
         "--host=$target --disable-python" "" "install DESTDIR=$sysroot"
 
-    # Sonix links only libc, libstdc++ and ALSA from this sysroot. The remaining
-    # libraries below are for Rockbox/HiBy utilities that Sonix neither builds
+    # Morpthis links only libc, libstdc++ and ALSA from this sysroot. The remaining
+    # libraries below are for Rockbox/HiBy utilities that Morpthis neither builds
     # nor ships. Skipping them avoids making an ordinary `make target` depend
     # on old GLib 2.46 building successfully on a modern host; direct users of
     # rockboxdev.sh still get the historical complete sysroot by default.
-    if [ "${RBDEV_SONIX_MINIMAL:-}" = "1" ]; then
-        echo "ROCKBOXDEV: Sonix minimal toolchain complete (skipping libffi, zlib, GLib, expat and D-Bus)."
+    if [ "${RBDEV_MORPTHIS_MINIMAL:-}" = "1" ]; then
+        echo "ROCKBOXDEV: Morpthis minimal toolchain complete (skipping libffi, zlib, GLib, expat and D-Bus)."
         return
     fi
 

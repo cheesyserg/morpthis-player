@@ -66,7 +66,7 @@ def ogg_page(packet, sequence, granule, flags=0):
 def opus():
     count, preskip, trim = 120, 312, 120
     head = b"OpusHead" + struct.pack("<BBHIhB", 1, 2, preskip, 48000, 0, 0)
-    tags = b"OpusTags" + struct.pack("<I", 5) + b"sonix" + struct.pack("<I", 0)
+    tags = b"OpusTags" + struct.pack("<I", len(b"morpthis")) + b"morpthis" + struct.pack("<I", 0)
     pages = [ogg_page(head, 0, 0, 2), ogg_page(tags, 1, 0)]
     for i in range(count):
         final = i == count - 1

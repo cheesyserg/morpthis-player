@@ -20,7 +20,7 @@
 // an ordinary extended M3U, the same thing the stock player reads and writes:
 //
 //   #EXTM3U
-//   #[Sonix Playlist]
+//   #[Morpthis Playlist]
 //   #EXTINF:213,Artist - Title
 //   /mnt/sd/Music/Album/01 Title.flac
 //
@@ -28,7 +28,9 @@
 // file as written by this player. It is a comment, so every other player still
 // reads the file, and it is read back either way, so a marker added by hand
 // without the '#' is still understood and never counted as a track.
-#define PLAYLISTS_MARKER "[Sonix Playlist]"
+#define PLAYLISTS_MARKER "[Morpthis Playlist]"
+// Written by builds before the rebrand; still read so those playlists survive.
+#define PLAYLISTS_MARKER_LEGACY "[Sonix Playlist]"
 
 // The card, and with it where backups live: <sd_root>/Playlist. Called once at
 // startup, and again whenever a card is mounted.

@@ -10,7 +10,7 @@
 #include <strings.h>
 #include <sys/statvfs.h>
 
-#define SYSINFO_FILE SONIX_RESOURCE_DIR "/components/system-info.json"
+#define SYSINFO_FILE MORPTHIS_RESOURCE_DIR "/components/system-info.json"
 
 static char os_version[64];
 static char build_version[64];

@@ -31,7 +31,7 @@
 // The player's agent. NoInputNoOutput because the device has neither a keypad
 // nor a display the other end can be asked to compare a number on: pairing is
 // Just Works, which is what every pair of headphones expects anyway.
-#define AGENT_PATH "/org/sonix/bluetooth/agent"
+#define AGENT_PATH "/org/morpthis/bluetooth/agent"
 #define AGENT_CAPABILITY "NoInputNoOutput"
 
 // The A2DP sink UUID, which is what separates a pair of headphones from a phone

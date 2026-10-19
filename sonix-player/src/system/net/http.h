@@ -28,7 +28,7 @@
 
 // What the server is told this client is. radio-browser.info asks for a
 // descriptive agent of the form appname/version.
-#define HTTP_USER_AGENT "SonixPlayer/1.0"
+#define HTTP_USER_AGENT "Morpthis/1.0"
 
 // Fetches `url` into a freshly malloc'd, NUL-terminated buffer. The caller
 // frees it. `out_len` may be NULL. Redirects (301/302/303/307/308) are

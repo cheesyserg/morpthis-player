@@ -3814,7 +3814,7 @@ static int start_decoder(vorb *f) {
 	// return between their allocation and their release has to hand them back
 	// -- vorbis_deinit walks the codebook and never sees them. (c->codewords
 	// is temporary too, but deinit does free that one.)
-#define SONIX_CODEBOOK_ERROR(code)                                          \
+#define MORPTHIS_CODEBOOK_ERROR(code)                                          \
 	do {                                                                  \
 		if (c->sparse) {                                                  \
 			if (values)                                                   \
@@ -3874,9 +3874,9 @@ static int start_decoder(vorb *f) {
 				int limit = c->entries - current_entry;
 				int n = get_bits(f, ilog(limit));
 				if (current_length >= 32)
-					SONIX_CODEBOOK_ERROR(VORBIS_invalid_setup);
+					MORPTHIS_CODEBOOK_ERROR(VORBIS_invalid_setup);
 				if (current_entry + n > (int)c->entries) {
-					SONIX_CODEBOOK_ERROR(VORBIS_invalid_setup);
+					MORPTHIS_CODEBOOK_ERROR(VORBIS_invalid_setup);
 				}
 				memset(lengths + current_entry, current_length, n);
 				current_entry += n;
@@ -3889,7 +3889,7 @@ static int start_decoder(vorb *f) {
 					lengths[j] = get_bits(f, 5) + 1;
 					++total;
 					if (lengths[j] == 32)
-						SONIX_CODEBOOK_ERROR(VORBIS_invalid_setup);
+						MORPTHIS_CODEBOOK_ERROR(VORBIS_invalid_setup);
 				} else {
 					lengths[j] = NO_CODE;
 				}
@@ -3903,7 +3903,7 @@ static int start_decoder(vorb *f) {
 
 			c->codeword_lengths = (uint8 *)setup_malloc(f, c->entries);
 			if (c->codeword_lengths == NULL)
-				SONIX_CODEBOOK_ERROR(VORBIS_outofmem);
+				MORPTHIS_CODEBOOK_ERROR(VORBIS_outofmem);
 			memcpy(c->codeword_lengths, lengths, c->entries);
 			setup_temp_free(f, lengths, c->entries); // note this is only safe if there have been no intervening temp mallocs!
 			lengths = c->codeword_lengths;
@@ -3929,19 +3929,19 @@ static int start_decoder(vorb *f) {
 		if (!c->sparse) {
 			c->codewords = (uint32 *)setup_malloc(f, sizeof(c->codewords[0]) * c->entries);
 			if (!c->codewords)
-				SONIX_CODEBOOK_ERROR(VORBIS_outofmem);
+				MORPTHIS_CODEBOOK_ERROR(VORBIS_outofmem);
 		} else {
 			unsigned int size;
 			if (c->sorted_entries) {
 				c->codeword_lengths = (uint8 *)setup_malloc(f, c->sorted_entries);
 				if (!c->codeword_lengths)
-					SONIX_CODEBOOK_ERROR(VORBIS_outofmem);
+					MORPTHIS_CODEBOOK_ERROR(VORBIS_outofmem);
 				c->codewords = (uint32 *)setup_temp_malloc(f, sizeof(*c->codewords) * c->sorted_entries);
 				if (!c->codewords)
-					SONIX_CODEBOOK_ERROR(VORBIS_outofmem);
+					MORPTHIS_CODEBOOK_ERROR(VORBIS_outofmem);
 				values = (uint32 *)setup_temp_malloc(f, sizeof(*values) * c->sorted_entries);
 				if (!values)
-					SONIX_CODEBOOK_ERROR(VORBIS_outofmem);
+					MORPTHIS_CODEBOOK_ERROR(VORBIS_outofmem);
 			}
 			size = c->entries + (sizeof(*c->codewords) + sizeof(*values)) * c->sorted_entries;
 			if (size > f->setup_temp_memory_required)
@@ -3949,19 +3949,19 @@ static int start_decoder(vorb *f) {
 		}
 
 		if (!compute_codewords(c, lengths, c->entries, values)) {
-			SONIX_CODEBOOK_ERROR(VORBIS_invalid_setup);
+			MORPTHIS_CODEBOOK_ERROR(VORBIS_invalid_setup);
 		}
 
 		if (c->sorted_entries) {
 			// allocate an extra slot for sentinels
 			c->sorted_codewords = (uint32 *)setup_malloc(f, sizeof(*c->sorted_codewords) * (c->sorted_entries + 1));
 			if (c->sorted_codewords == NULL)
-				SONIX_CODEBOOK_ERROR(VORBIS_outofmem);
+				MORPTHIS_CODEBOOK_ERROR(VORBIS_outofmem);
 			// allocate an extra slot at the front so that c->sorted_values[-1] is defined
 			// so that we can catch that case without an extra if
 			c->sorted_values = (int *)setup_malloc(f, sizeof(*c->sorted_values) * (c->sorted_entries + 1));
 			if (c->sorted_values == NULL)
-				SONIX_CODEBOOK_ERROR(VORBIS_outofmem);
+				MORPTHIS_CODEBOOK_ERROR(VORBIS_outofmem);
 			++c->sorted_values;
 			c->sorted_values[-1] = -1;
 			compute_sorted_huffman(c, lengths, values);
@@ -4071,7 +4071,7 @@ static int start_decoder(vorb *f) {
 		}
 		CHECK(f);
 	}
-#undef SONIX_CODEBOOK_ERROR
+#undef MORPTHIS_CODEBOOK_ERROR
 
 	// time domain transfers (notused)
 

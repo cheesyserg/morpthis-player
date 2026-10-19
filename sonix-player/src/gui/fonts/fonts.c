@@ -34,7 +34,7 @@
 // screen and only copied in once it is complete, so a face that will not open
 // leaves the interface as it is.
 
-#define FONT_DIR SONIX_RESOURCE_DIR "/fonts"
+#define FONT_DIR MORPTHIS_RESOURCE_DIR "/fonts"
 
 // Host fallback: the copies in the repository, when there is no resource tree.
 #ifdef HOST_BUILD
@@ -105,7 +105,7 @@ static const ui_face_t faces[] = {
 // One copy per font in use; it is removed as soon as the font is left behind.
 // ---------------------------------------------------------------------------
 #define CARD_DIR "Fonts"
-#define CARD_COPY_PREFIX "/tmp/sonix-font-"
+#define CARD_COPY_PREFIX "/tmp/morpthis-font-"
 #define CARD_NAME_MAX 96
 #define CARD_LABEL_MAX 24 // what a pill can say before it is cut short
 #define CARD_LIST_MAX 16                   // how many the picker lists
@@ -1061,7 +1061,7 @@ bool fonts_init(void) {
 	// which happens after this; the simulator is told where to look instead.
 	// fonts_set_card_root() picks up a card face chosen before the player
 	// started, as soon as the root is there.
-	const char *root = getenv("SONIX_SD_ROOT");
+	const char *root = getenv("MORPTHIS_SD_ROOT");
 	if (root) {
 		snprintf(card_root, sizeof(card_root), "%s", root);
 	}

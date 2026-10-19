@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 # Structural validation for a HiByOS/TempoTec UPT. This cannot prove hardware
 # compatibility, but it catches corrupt ISO output, broken chunk/hash chains,
-# changed kernels, and a missing Sonix install before an artifact is published.
+# changed kernels, and a missing Morpthis install before an artifact is published.
 set -euo pipefail
 
 usage() {
-	echo "Usage: verify_upt.sh IMAGE.upt [--sonix-v1] [--kernel-sha256 HASH]" >&2
+	echo "Usage: verify_upt.sh IMAGE.upt [--morpthis-v1] [--kernel-sha256 HASH]" >&2
 	exit 2
 }
 
 [ "$#" -ge 1 ] || usage
 UPT="$1"
 shift
-EXPECT_SONIX=false
+EXPECT_MORPTHIS=false
 EXPECTED_KERNEL=""
 while [ "$#" -gt 0 ]; do
 	case "$1" in
-		--sonix-v1) EXPECT_SONIX=true ;;
+		--morpthis-v1) EXPECT_MORPTHIS=true ;;
 		--kernel-sha256)
 			shift
 			[ "$#" -gt 0 ] || usage
@@ -33,7 +33,7 @@ done
 [ -f "$UPT" ] || { echo "Error: $UPT does not exist." >&2; exit 1; }
 UPT="$(cd "$(dirname "$UPT")" && pwd)/$(basename "$UPT")"
 
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/sonix-verify-upt.XXXXXX")"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/morpthis-verify-upt.XXXXXX")"
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 
@@ -115,22 +115,22 @@ if [ -n "$EXPECTED_KERNEL" ] && [ "$KERNEL_SHA256" != "$EXPECTED_KERNEL" ]; then
 fi
 printf 'Kernel SHA-256: %s\n' "$KERNEL_SHA256"
 
-if $EXPECT_SONIX; then
+if $EXPECT_MORPTHIS; then
 	LISTING="$WORK/rootfs.list"
 	unsquashfs -ll "$WORK/rootfs.squashfs" > "$LISTING"
-	grep -qE 'squashfs-root/usr/bin/sonix_player$' "$LISTING" || {
-		echo "Error: rootfs has no usr/bin/sonix_player." >&2; exit 1;
+	grep -qE 'squashfs-root/usr/bin/morpthis_player$' "$LISTING" || {
+		echo "Error: rootfs has no usr/bin/morpthis_player." >&2; exit 1;
 	}
 	if grep -qE 'squashfs-root/usr/bin/hiby_player$' "$LISTING"; then
 		echo "Error: stock usr/bin/hiby_player remains in the rootfs." >&2
 		exit 1
 	fi
 	INFO="$WORK/system-info.json"
-	unsquashfs -cat "$WORK/rootfs.squashfs" usr/resource/sonix/components/system-info.json > "$INFO"
+	unsquashfs -cat "$WORK/rootfs.squashfs" usr/resource/morpthis/components/system-info.json > "$INFO"
 	grep -qE '"device-name"[[:space:]]*:[[:space:]]*"TempoTec V1"' "$INFO" || {
 		echo "Error: system-info.json does not identify TempoTec V1." >&2; exit 1;
 	}
-	printf 'Verified Sonix player and TempoTec V1 identity in rootfs.\n'
+	printf 'Verified Morpthis player and TempoTec V1 identity in rootfs.\n'
 fi
 
 printf 'UPT validation passed: %s\n' "$UPT"

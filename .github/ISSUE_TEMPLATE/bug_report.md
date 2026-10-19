@@ -22,18 +22,18 @@ Please attach the log file:
 1. Go to Settings --> System --> About and tap "Build number" five times, until a pop-up says developer options are turned on.
 2. Go to Settings --> Developer options and enable "Log to microSD".
 3. Reproduce the issue.
-4. Attach `.local/sonix_player.log` from the root of the microSD card (`.local` is a hidden folder).
+4. Attach `.local/morpthis_player.log` from the root of the microSD card (`.local` is a hidden folder).
 
 If the issue happens during a library scan, also enable "Database log" before reproducing it.
 If it is a Bluetooth problem, also enable "Bluetooth log" and attach `.local/bluetooth.log`.
 If it is a crash, a reboot or a freeze, attach the log as it is **after** the device has restarted: every start writes what the kernel kept of the previous run into the top of the new log.
 
-More, including how to take a full diagnostic bundle over ADB (`sonix-player/tools/sonix-bugreport.sh`) and which log belongs to which symptom: [docs/collecting-logs.md](../../docs/collecting-logs.md).
+More, including how to take a full diagnostic bundle over ADB (`sonix-player/tools/morpthis-bugreport.sh`) and which log belongs to which symptom: [docs/collecting-logs.md](../../docs/collecting-logs.md).
 
 **Screenshots**
 If applicable, add screenshots to help explain your problem.
 
-**Sonix Player info**
+**Morpthis info**
  - Operating system version: [e.g. 1.1.0]
  - Device: [TempoTec Variations V1]
 

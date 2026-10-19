@@ -835,7 +835,7 @@ static char held_device[sizeof(output_pcm)];
 // A Bluetooth stream converted to the headphones' rate is a plug of this
 // player's own, opened under this name; see open_bluetooth_at_rate(). It starts
 // with "bluealsa" so that pcm_is_bluetooth() knows the handle for what it is.
-#define BT_CONVERTED_PCM "bluealsa_sonix"
+#define BT_CONVERTED_PCM "bluealsa_morpthis"
 
 // The route such a handle stands for, since its own name is the plug's.
 static snd_pcm_t *bt_converted_pcm;
@@ -3945,7 +3945,7 @@ static void *playback_thread_func(void *arg) {
 	// The name, and only the name -- not thread_be_background(), which also puts
 	// the caller on SCHED_IDLE, and this is the one thread that must never wait
 	// behind anything. /proc/self/task/*/comm is what the watchdog's dump
-	// prints, and a stall report that says "sonix_player_ho" three times over
+	// prints, and a stall report that says "morpthis_player" three times over
 	// does not say which thread stopped.
 	prctl(PR_SET_NAME, "playback", 0, 0, 0);
 

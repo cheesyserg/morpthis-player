@@ -238,7 +238,7 @@ static void check_within_panel_in(lv_obj_t *obj, gui_config_t *cfg, const char *
 }
 
 static void dump_snapshot(lv_obj_t *screen, const char *tag) {
-	const char *prefix = getenv("SONIX_PAGE_SNAPSHOTS");
+	const char *prefix = getenv("MORPTHIS_PAGE_SNAPSHOTS");
 	if (!prefix || !prefix[0]) {
 		return;
 	}
@@ -306,7 +306,7 @@ static void check_strings(const char *language_dir) {
 int main(int argc, char **argv) {
 	assert(argc == 2);
 
-	char card[] = "/tmp/sonix-wifi-ui-test-XXXXXX";
+	char card[] = "/tmp/morpthis-wifi-ui-test-XXXXXX";
 	assert(mkdtemp(card));
 	char config[512];
 	snprintf(config, sizeof(config), "%s/device_config.ini", card);

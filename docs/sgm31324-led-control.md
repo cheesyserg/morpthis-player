@@ -29,8 +29,8 @@ stock firmware), so `rmmod` is what releases it. Unloading does not reset the ch
 running on the last register values it was given - which is why the routines
 below program every register they depend on.
 
-On a Sonix Player image the packer disables that module outright (see step 6b
-of `sonix-packer/sonix_firmware_packer.sh`): the script is replaced with a no-op
+On a Morpthis image the packer disables that module outright (see step 6b
+of `sonix-packer/morpthis_firmware_packer.sh`): the script is replaced with a no-op
 and the `.ko` removed, so the controller is free from boot and no `rmmod` is
 needed. The player takes the same route itself - see the note at the end.
 

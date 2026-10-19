@@ -72,12 +72,12 @@ static volatile sig_atomic_t running = 1;
 
 #ifdef HOST_BUILD
 // Screenshot trigger on the simulator. The device uses volume-up plus power,
-// physical keys that do not exist here, so creating /tmp/sonix/shot takes their
+// physical keys that do not exist here, so creating /tmp/morpthis/shot takes their
 // place and runs the same screenshot path (copy, flash, PNG writer).
 static void host_shot_poll_cb(lv_timer_t *timer) {
 	(void)timer;
-	if (access("/tmp/sonix/shot", F_OK) == 0) {
-		remove("/tmp/sonix/shot");
+	if (access("/tmp/morpthis/shot", F_OK) == 0) {
+		remove("/tmp/morpthis/shot");
 		screenshot_request();
 	}
 }
@@ -163,7 +163,7 @@ static void sigint_handler(int sig) {
 // ---------------------------------------------------------------------------
 // staying alive
 //
-// sonix_player.sh starts the player through sonix_launch, which does
+// morpthis_player.sh starts the player through morpthis_launch, which does
 // `sleep 1; reboot` when it exits (the shell does it on a rootfs without it).
 // Whatever the reason -- a clean exit, a failed display init, a segfault, a
 // stray SIGPIPE -- the moment this process goes away the device reboots, so a
@@ -399,7 +399,7 @@ static void write_crumbs(void) {
 // causes the reboot.
 //
 // With the program counter in the log,
-//   mipsel-rockbox-linux-gnu-addr2line -f -e sonix_player 0x...
+//   mipsel-rockbox-linux-gnu-addr2line -f -e morpthis_player 0x...
 // names the function and the line.
 static void crash_handler(int sig, siginfo_t *info, void *context) {
 	const char *name = "signal";
@@ -423,7 +423,7 @@ static void crash_handler(int sig, siginfo_t *info, void *context) {
 		break;
 	}
 
-	write_raw("\n*** sonix_player crashed: ");
+	write_raw("\n*** morpthis_player crashed: ");
 	write_raw(name);
 	write_raw(" ***\n");
 
@@ -446,7 +446,7 @@ static void crash_handler(int sig, siginfo_t *info, void *context) {
 		write_raw("  ra: ");
 		write_hex(crash_reg(uc, 31));
 #endif
-		write_raw("\n*** addr2line -f -C -i -e sonix_player <pc> <ra>\n");
+		write_raw("\n*** addr2line -f -C -i -e morpthis_player <pc> <ra>\n");
 
 		// The stack first: it is the one question with a yes-or-no answer, and
 		// it decides whether the registers below are even worth reading.
@@ -873,7 +873,7 @@ static void terminate_handler(int sig, siginfo_t *info, void *context) {
 		break;
 	}
 
-	write_raw("\n*** sonix_player is being stopped: ");
+	write_raw("\n*** morpthis_player is being stopped: ");
 	write_raw(name);
 	write_raw(" ***\n");
 
@@ -1046,7 +1046,7 @@ static void tune_pointer(lv_indev_t *indev) {
 #define PANEL_MIN_HEIGHT 480
 
 // The panel size for gui_config_t, in this order: the TempoTec board profile;
-// SONIX_PANEL (for simulation); the model named in system-info.json; the model
+// MORPTHIS_PANEL (for simulation); the model named in system-info.json; the model
 // whose panel exactly matches the framebuffer; SCREEN_WIDTH x SCREEN_HEIGHT.
 static void panel_size(int *width, int *height, int fb_w, int fb_h) {
 	const bool tempotec = bp_is_tempotec_v1();
@@ -1067,7 +1067,7 @@ static void panel_size(int *width, int *height, int fb_w, int fb_h) {
 		*height = model ? model->panel_height : SCREEN_HEIGHT;
 	}
 
-	const char *env = getenv("SONIX_PANEL");
+	const char *env = getenv("MORPTHIS_PANEL");
 	int w = 0, h = 0;
 	if (env && sscanf(env, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) {
 		*width = w;
@@ -1179,10 +1179,10 @@ bool display_wait_vsync(int frames) {
 	return false;
 }
 
-// The folder that stands in for the memory card: SONIX_SD_ROOT, else the
+// The folder that stands in for the memory card: MORPTHIS_SD_ROOT, else the
 // documents folder named by XDG, else ~/Documents or ~/Documenti.
 static void host_card_root(char *out, size_t size) {
-	const char *forced = getenv("SONIX_SD_ROOT");
+	const char *forced = getenv("MORPTHIS_SD_ROOT");
 	if (forced && forced[0]) {
 		snprintf(out, size, "%s", forced);
 		return;
@@ -1878,7 +1878,7 @@ int main(int argc, char **argv) {
 
 	logging_init();
 
-	printf("Starting sonix_player...\n");
+	printf("Starting morpthis_player...\n");
 
 	// After logging_init and not before it: both of these say what they did,
 	// and anything printed before the log is holding output goes to whatever
@@ -1908,8 +1908,8 @@ int main(int argc, char **argv) {
 
 	// Settings live on the UBIFS partition, the one writable place that is
 	// always present: the rootfs is read-only and the card may be missing.
-	// SONIX_CONFIG points it somewhere else for the host build and for testing.
-	const char *config_file = getenv("SONIX_CONFIG");
+	// MORPTHIS_CONFIG points it somewhere else for the host build and for testing.
+	const char *config_file = getenv("MORPTHIS_CONFIG");
 #ifndef HOST_BUILD
 	if (!config_file) {
 		config_file = "/usr/data/device_config.ini";
@@ -1923,9 +1923,9 @@ int main(int argc, char **argv) {
 	factoryreset_clear_stock_data(first_start);
 #endif
 
-	// The interface's own text, before any of it is built. SONIX_LANG_DIR points
-	// it somewhere else for the host build, the same way SONIX_CONFIG does.
-	const char *lang_dir = getenv("SONIX_LANG_DIR");
+	// The interface's own text, before any of it is built. MORPTHIS_LANG_DIR points
+	// it somewhere else for the host build, the same way MORPTHIS_CONFIG does.
+	const char *lang_dir = getenv("MORPTHIS_LANG_DIR");
 	lang_init(lang_dir && lang_dir[0] ? lang_dir : LANG_DIR);
 	// The playback mode (repeat/shuffle) as it was left. Restored before the
 	// GUI builds, so the repeat button is born showing the right icon.
@@ -1971,16 +1971,16 @@ int main(int argc, char **argv) {
 	lv_rand_set_seed((uint32_t)time(NULL) ^ (uint32_t)getpid());
 
 	// The fonts, before anything can create a widget: every lv_font_t the
-	// interface points at is filled in here, from /usr/resource/sonix/fonts through
+	// interface points at is filled in here, from /usr/resource/morpthis/fonts through
 	// FreeType -- the stock player's own mechanism. Without a usable base face
 	// (default.otf, or Neon.ttf on the V1), startup cannot draw the interface.
 	if (!fonts_init()) {
 #ifdef HOST_BUILD
-		fprintf(stderr, "fonts: no default.otf or V1 Neon.ttf in usr/resource/sonix/fonts or assets/fonts --\n"
+		fprintf(stderr, "fonts: no default.otf or V1 Neon.ttf in usr/resource/morpthis/fonts or assets/fonts --\n"
 						"       start the simulator from the folder that holds them\n");
 		return 1;
 #else
-		park("fonts: no readable default.otf or V1 Neon.ttf in /usr/resource/sonix/fonts");
+		park("fonts: no readable default.otf or V1 Neon.ttf in /usr/resource/morpthis/fonts");
 		return 1;
 #endif
 	}
@@ -2028,10 +2028,10 @@ int main(int argc, char **argv) {
 	// A PC has no battery here, so the status bar would always show an empty
 	// shell. Point these at any two files to fake one while working on the UI:
 	//   echo 80 > /tmp/cap; echo Charging > /tmp/stat
-	//   SONIX_BATTERY_CAPACITY=/tmp/cap SONIX_BATTERY_STATUS=/tmp/stat ./sonix_player_host
+	//   MORPTHIS_BATTERY_CAPACITY=/tmp/cap MORPTHIS_BATTERY_STATUS=/tmp/stat ./morpthis_player_host
 	battery_config_t battery_cfg = {
-		.battery_capacity_file = getenv("SONIX_BATTERY_CAPACITY"),
-		.battery_status_file = getenv("SONIX_BATTERY_STATUS"),
+		.battery_capacity_file = getenv("MORPTHIS_BATTERY_CAPACITY"),
+		.battery_status_file = getenv("MORPTHIS_BATTERY_STATUS"),
 	};
 #else
 	// Both NULL: the player enumerates /sys/class/power_supply and picks the

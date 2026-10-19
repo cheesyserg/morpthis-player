@@ -150,7 +150,7 @@ static int sysserver_connect(void) {
 }
 
 bool sysserver_available(void) {
-	if (getenv("SONIX_NO_SYSSERVER")) {
+	if (getenv("MORPTHIS_NO_SYSSERVER")) {
 		return false;
 	}
 
@@ -180,7 +180,7 @@ int sysserver_request(const char *command, char *reply, size_t reply_size) {
 		reply_size = sizeof(discard);
 	}
 
-	if (getenv("SONIX_NO_SYSSERVER")) {
+	if (getenv("MORPTHIS_NO_SYSSERVER")) {
 		return -1;
 	}
 
@@ -311,7 +311,7 @@ static void *sysserver_listen_thread(void *arg) {
 }
 
 void sysserver_listen(void (*cb)(const char *message)) {
-	if (g_listen_fd >= 0 || !cb || getenv("SONIX_NO_SYSSERVER")) {
+	if (g_listen_fd >= 0 || !cb || getenv("MORPTHIS_NO_SYSSERVER")) {
 		return;
 	}
 

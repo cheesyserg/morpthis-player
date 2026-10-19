@@ -1436,7 +1436,7 @@ static double biquad_gain_db_at(const biquad_t *f, double w) {
 // that only cuts leaves the stock louder than a player that can only attenuate.
 //
 // It belongs to MSEB alone. The graphic equaliser and the parametric keep the
-// separate headroom further down, which is a Sonix stage and is not this: the
+// separate headroom further down, which is a Morpthis stage and is not this: the
 // stock MSEB module has no idea they exist, and feeding their boosts into this
 // search would bend an algorithm that was reverse-engineered, not designed
 // here.
@@ -1742,7 +1742,7 @@ int eq_auto_headroom_tenths(void) {
 //
 // The stock MSEB module puts its coefficient on the samples immediately before
 // its own filters and knows nothing of what follows; the headroom for the other
-// two is Sonix's and sits in front of the filters it is protecting.
+// two is Morpthis's and sits in front of the filters it is protecting.
 #define EQ_PASS_FRAMES 256
 
 static float pass_buf[EQ_PASS_FRAMES * EQ_MAX_CHANNELS]; // interleaved, as the block
@@ -1811,7 +1811,7 @@ static void gain_run_pass(float *buf, int n, int channels, const float *gain) {
 
 // Both gains move toward their targets a step at a time rather than jumping.
 // The stock MSEB module has no such ramp -- its coefficient is recomputed and
-// used -- so this is a Sonix choice and a deliberate difference: it changes
+// used -- so this is a Morpthis choice and a deliberate difference: it changes
 // nothing about where the gain settles, only how it gets there, and without it
 // a moving slider crackles.
 static inline void pregain_glide(float step) {

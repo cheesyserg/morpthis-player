@@ -19,12 +19,12 @@
 // the device. The listing has to come from something else, and the only C
 // program on the device this project controls is the player itself.
 //
-// So the player symlinks itself into thttpd's document root as "sonix-list" and
+// So the player symlinks itself into thttpd's document root as "morpthis-list" and
 // answers that one URL, busybox-style: main() checks whether it was run as a
 // CGI before it does anything else, and if it was, prints a listing and exits
 // without ever opening a display.
 //
-//     GET sonix-list?path=<dir>[&hidden=1]
+//     GET morpthis-list?path=<dir>[&hidden=1]
 //         -> [{"path","name","ctime"[,"size"]}, ...]
 //
 // which is the shape the firmware's list.cgi returns, so the page can fall

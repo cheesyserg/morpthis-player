@@ -1,8 +1,8 @@
-// sonix_launch: starts the player and reboots the device when it exits.
+// morpthis_launch: starts the player and reboots the device when it exits.
 //
-//     sonix_launch [/path/to/player [args...]]
+//     morpthis_launch [/path/to/player [args...]]
 //
-// sonix_player.sh ends with `exec sonix_launch /usr/bin/sonix_player`, so this
+// morpthis_player.sh ends with `exec morpthis_launch /usr/bin/morpthis_player`, so this
 // replaces the shell that would otherwise sit in memory for the whole session
 // waiting to run `sleep 1; reboot`. It does exactly that and nothing else: the
 // player runs as its child with the same environment, limits and signal
@@ -19,7 +19,7 @@
 #define LINUX_REBOOT_CMD_RESTART 0x01234567
 #define EINTR 4
 
-#define DEFAULT_PLAYER "/usr/bin/sonix_player"
+#define DEFAULT_PLAYER "/usr/bin/morpthis_player"
 
 // o32: number in $2, arguments in $4-$7. On return $2 holds the result and $7
 // is non-zero when $2 is an errno, handed back here as a negative value.
@@ -86,7 +86,7 @@ __attribute__((noreturn, used)) void launch_main(long *sp) {
 	long pid = sys3(__NR_fork, 0, 0, 0);
 	if (pid == 0) {
 		run(player_argv[0], player_argv, envp);
-		say("sonix_launch: cannot start ");
+		say("morpthis_launch: cannot start ");
 		say(player_argv[0]);
 		say("\n");
 		sys3(__NR_exit, 127, 0, 0);
@@ -102,10 +102,10 @@ __attribute__((noreturn, used)) void launch_main(long *sp) {
 		} while (r == -EINTR);
 
 		if ((status & 0x7f) == 0) {
-			say("sonix_launch: player exited with status ");
+			say("morpthis_launch: player exited with status ");
 			say_num((unsigned)(status >> 8) & 0xff);
 		} else {
-			say("sonix_launch: player killed by signal ");
+			say("morpthis_launch: player killed by signal ");
 			say_num((unsigned)status & 0x7f);
 		}
 		say(", rebooting\n");

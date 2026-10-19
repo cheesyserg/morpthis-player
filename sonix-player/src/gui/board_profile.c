@@ -29,7 +29,7 @@ bool bp_is_tempotec_v1(void) {
 	// Convenient and unambiguous for the simulator.  On target BOARD should be
 	// exported by the launcher, but honouring this also makes a hand-written
 	// launcher which only sets the panel size behave consistently.
-	const char *panel = getenv("SONIX_PANEL");
+	const char *panel = getenv("MORPTHIS_PANEL");
 	if (panel && (strcasecmp(panel, "240x320") == 0 || strcasecmp(panel, "240X320") == 0)) {
 		cached = 1;
 		return true;

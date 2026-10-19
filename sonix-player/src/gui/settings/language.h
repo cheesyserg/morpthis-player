@@ -7,7 +7,7 @@
 
 #include "lvgl/lvgl.h"
 
-// Settings > Language: which of the files under /usr/resource/sonix/language is in
+// Settings > Language: which of the files under /usr/resource/morpthis/language is in
 // use. See src/system/lang.h for how the translations themselves work.
 //
 // Two ways in, the same way the clock has two: the settings page, and a panel

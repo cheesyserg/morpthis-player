@@ -11,8 +11,8 @@
 // because its UI is built from resource ids; ours is built from C, so one flat
 // file per language is both simpler to read and simpler to edit:
 //
-//     /usr/resource/sonix/language/Italiano.ini
-//     /usr/resource/sonix/language/English.ini
+//     /usr/resource/morpthis/language/Italiano.ini
+//     /usr/resource/morpthis/language/English.ini
 //
 // Next to the firmware's own fonts and strings, on the read-only rootfs, which
 // is where they belong: they are part of the build, not part of what the user
@@ -41,7 +41,7 @@
 
 #include "src/system/core/respath.h"
 
-#define LANG_DIR SONIX_RESOURCE_DIR "/language"
+#define LANG_DIR MORPTHIS_RESOURCE_DIR "/language"
 
 // The language used on first boot, until someone chooses: the welcome screen,
 // the language list and the date and time come out in it. The matching file

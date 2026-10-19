@@ -30,7 +30,7 @@
 // controller directly over I2C (led_i2c.h), which is what lets it fade in on
 // power-on, cross-fade between colours, breathe the charging red in hardware
 // and fade out on the way down. The firmware driver is disabled by the packer
-// (sonix_firmware_packer.sh step 6b) so the controller is free from boot; where
+// (morpthis_firmware_packer.sh step 6b) so the controller is free from boot; where
 // it is still loaded, led_i2c_init() unloads it. The pattern numbers above
 // remain the fallback, used only when the controller cannot be taken over or on
 // the R1, which has no SGM31324 at all.

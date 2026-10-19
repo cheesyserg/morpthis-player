@@ -7,7 +7,7 @@ it in.
     streaming-keys.key      the key that seals them -- never in git
         |
         v
-    streaming-keys.bin      one per assets tree, in usr/resource/sonix/components
+    streaming-keys.bin      one per assets tree, in usr/resource/morpthis/components
     build_gen/streamkeys_key.h      the same key, written by the Makefile
                                     and compiled into the player
 
@@ -40,7 +40,7 @@ import sys
 
 PLAYER_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PACKER_ASSETS = os.path.join(os.path.dirname(PLAYER_ROOT), "sonix-packer", "assets")
-COMPONENTS = os.path.join("usr", "resource", "sonix", "components")
+COMPONENTS = os.path.join("usr", "resource", "morpthis", "components")
 
 DEFAULT_INI = os.path.join(PLAYER_ROOT, "streaming-keys.ini")
 DEFAULT_KEY = os.path.join(PLAYER_ROOT, "streaming-keys.key")

@@ -448,7 +448,7 @@ void appearance_init(gui_config_t *cfg) {
 
 	style_buttons[THEME_STYLE_CLASSIC] =
 		make_style_choice(style_row, "appearance_style_classic", THEME_STYLE_CLASSIC, compact);
-	style_buttons[THEME_STYLE_SONIX] = make_style_choice(style_row, "appearance_style_sonix", THEME_STYLE_SONIX, compact);
+	style_buttons[THEME_STYLE_MORPTHIS] = make_style_choice(style_row, "appearance_style_morpthis", THEME_STYLE_MORPTHIS, compact);
 
 	lv_obj_t *style_note = lv_label_create(card);
 	lv_label_set_long_mode(style_note, LV_LABEL_LONG_WRAP);

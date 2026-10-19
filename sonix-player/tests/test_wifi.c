@@ -172,7 +172,7 @@ static wifi_op_t wait_op(char *ssid_out, size_t ssid_size) {
 }
 
 int main(void) {
-	char dir[] = "/tmp/sonix-wifi-test-XXXXXX";
+	char dir[] = "/tmp/morpthis-wifi-test-XXXXXX";
 	assert(mkdtemp(dir));
 
 	snprintf(log_path, sizeof(log_path), "%s/wpa.log", dir);

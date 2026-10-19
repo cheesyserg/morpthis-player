@@ -17,7 +17,7 @@
 #define PROFILE_MANAGER_PATH "/org/bluez"
 #define PROFILE_MANAGER "org.bluez.ProfileManager1"
 #define PROFILE_IFACE "org.bluez.Profile1"
-#define PROFILE_PATH "/org/sonix/sonixlink"
+#define PROFILE_PATH "/org/morpthis/sonixlink"
 
 // The RFCOMM channel the service listens on. bluez opens a listening socket
 // for an external profile only when it is given a channel or a PSM: a custom

@@ -31,7 +31,7 @@
 //     api_key = ...
 //     api_secret = ...
 //
-// and shipped sealed, as /usr/resource/sonix/components/streaming-keys.bin, by
+// and shipped sealed, as /usr/resource/morpthis/components/streaming-keys.bin, by
 // tools/seal_streamkeys.py. The key that opens it is not in the source: the
 // tool keeps it in streaming-keys.key, outside git, and the Makefile compiles
 // it into the player. That keeps the keys out of an unpacked image; it does not
@@ -57,8 +57,8 @@
 
 #include "src/system/core/respath.h"
 
-#define STREAMKEYS_PATH SONIX_RESOURCE_DIR "/components/streaming-keys.bin"
-#define STREAMKEYS_PLAIN_PATH SONIX_RESOURCE_DIR "/components/streaming-keys.ini"
+#define STREAMKEYS_PATH MORPTHIS_RESOURCE_DIR "/components/streaming-keys.bin"
+#define STREAMKEYS_PLAIN_PATH MORPTHIS_RESOURCE_DIR "/components/streaming-keys.ini"
 
 // The two names looked for at the card's root, in this order.
 #define STREAMKEYS_CARD_BIN "streaming-keys.bin"

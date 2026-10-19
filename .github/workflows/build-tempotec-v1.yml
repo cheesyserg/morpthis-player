@@ -174,20 +174,20 @@ jobs:
 
       - name: Build v1.upt
         run: |
-          install -m 0755 sonix-player/sonix_player sonix-packer/sonix_player
-          install -m 0755 sonix-player/sonix_launch sonix-packer/sonix_launch
-          sonix-packer/sonix_firmware_packer.sh
+          install -m 0755 sonix-player/morpthis_player sonix-packer/morpthis_player
+          install -m 0755 sonix-player/morpthis_launch sonix-packer/morpthis_launch
+          sonix-packer/morpthis_firmware_packer.sh
 
       - name: Validate generated firmware and unchanged kernel
         run: |
           sonix-packer/verify_upt.sh sonix-packer/v1.upt \
-            --sonix-v1 --kernel-sha256 '${{ steps.stock.outputs.kernel_sha256 }}' \
+            --morpthis-v1 --kernel-sha256 '${{ steps.stock.outputs.kernel_sha256 }}' \
             | tee "$RUNNER_TEMP/v1-output-validation.txt"
 
       - name: Assemble downloadable artifact
         run: |
           set -euo pipefail
-          out="$RUNNER_TEMP/sonix-tempotec-v1"
+          out="$RUNNER_TEMP/morpthis-tempotec-v1"
           mkdir -p "$out"
           # The artifact holds only what a user flashes and the checksum that
           # goes with it.
@@ -204,8 +204,8 @@ jobs:
           # The commit the image was built from, not the ref the run was
           # started on: this name is what says which of the artifacts in the
           # list holds which tree.
-          name: sonix-tempotec-v1-${{ steps.source.outputs.sha }}
-          path: ${{ runner.temp }}/sonix-tempotec-v1/
+          name: morpthis-tempotec-v1-${{ steps.source.outputs.sha }}
+          path: ${{ runner.temp }}/morpthis-tempotec-v1/
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -257,8 +257,8 @@ jobs:
           [ -f sonix-packer/boot-script-report.txt ] || exit 0
           mkdir -p docs/ci
           cp sonix-packer/boot-script-report.txt docs/ci/boot-script-report.txt
-          git config user.name "sonix-ci"
-          git config user.email "sonix-ci@users.noreply.github.com"
+          git config user.name "morpthis-ci"
+          git config user.email "morpthis-ci@users.noreply.github.com"
           git add docs/ci/boot-script-report.txt
           git commit -m "ci: what the packer found in the stock boot script [skip ci]" || exit 0
           git push origin "HEAD:${GITHUB_REF_NAME}" || echo "report push skipped (branch busy)"

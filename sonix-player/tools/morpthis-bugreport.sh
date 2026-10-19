@@ -1,10 +1,10 @@
 #!/bin/sh
-# sonix-bugreport.sh - one-file diagnostic bundle for the Sonix Player.
+# morpthis-bugreport.sh - one-file diagnostic bundle for the Morpthis.
 #
 # Run it ON the player, from a shell over ADB:
 #
-#     adb push sonix-player/tools/sonix-bugreport.sh /tmp/
-#     adb shell sh /tmp/sonix-bugreport.sh
+#     adb push sonix-player/tools/morpthis-bugreport.sh /tmp/
+#     adb shell sh /tmp/morpthis-bugreport.sh
 #     adb pull /mnt/sd_0/.local/bugreport-*.txt
 #
 # It writes a single text file - beside the player's own log on the card, or in
@@ -14,12 +14,12 @@
 # Read it once before posting anyway.
 #
 # Knobs, set in the environment:
-#     adb shell "SONIX_LOG_LINES=20000 sh /tmp/sonix-bugreport.sh"
-#     adb shell "SONIX_FULL_LOG=1 sh /tmp/sonix-bugreport.sh"
+#     adb shell "MORPTHIS_LOG_LINES=20000 sh /tmp/morpthis-bugreport.sh"
+#     adb shell "MORPTHIS_FULL_LOG=1 sh /tmp/morpthis-bugreport.sh"
 #
-#   SONIX_LOG_LINES   lines kept from the tail of each log  (default 4000)
-#   SONIX_FULL_LOG=1  copy whole logs instead of their tails
-#   SONIX_OUT_DIR=dir write the bundle somewhere else
+#   MORPTHIS_LOG_LINES   lines kept from the tail of each log  (default 4000)
+#   MORPTHIS_FULL_LOG=1  copy whole logs instead of their tails
+#   MORPTHIS_OUT_DIR=dir write the bundle somewhere else
 #
 # Plain POSIX sh: the player's firmware has busybox, not bash.
 
@@ -33,7 +33,7 @@ for c in /mnt/sd_0 /data/mnt/sd_0 /usr/data/mnt/sd_0; do
 	fi
 done
 
-OUT_DIR="${SONIX_OUT_DIR:-}"
+OUT_DIR="${MORPTHIS_OUT_DIR:-}"
 if [ -z "$OUT_DIR" ]; then
 	OUT_DIR="$CARD/.local"
 	[ -n "$CARD" ] || OUT_DIR=/tmp
@@ -43,12 +43,12 @@ fi
 STAMP=$(date +%Y%m%d-%H%M%S 2>/dev/null)
 [ -n "$STAMP" ] || STAMP="nodate"
 OUT="$OUT_DIR/bugreport-$STAMP.txt"
-LOG_LINES="${SONIX_LOG_LINES:-4000}"
+LOG_LINES="${MORPTHIS_LOG_LINES:-4000}"
 
-echo "sonix-bugreport: writing $OUT" >&2
+echo "morpthis-bugreport: writing $OUT" >&2
 exec >"$OUT" 2>&1
 
-PID=$(pidof sonix_player 2>/dev/null)
+PID=$(pidof morpthis_player 2>/dev/null)
 
 # ---------------------------------------------------------------- redaction
 
@@ -90,7 +90,7 @@ run() {
 	sh -c "$1" 2>&1 | head -n "${2:-200}" | redact
 }
 
-# The end of a file (all of it with SONIX_FULL_LOG=1), redacted, with its size
+# The end of a file (all of it with MORPTHIS_FULL_LOG=1), redacted, with its size
 # and mtime in front so a stale log is obvious.
 tailfile() {
 	if [ ! -f "$1" ]; then
@@ -100,7 +100,7 @@ tailfile() {
 	fi
 	section "$1"
 	ls -l "$1" 2>&1
-	if [ "${SONIX_FULL_LOG:-0}" = "1" ]; then
+	if [ "${MORPTHIS_FULL_LOG:-0}" = "1" ]; then
 		redact <"$1"
 	else
 		tail -n "$LOG_LINES" "$1" | redact
@@ -109,19 +109,19 @@ tailfile() {
 
 # ---------------------------------------------------------------- the bundle
 
-echo "sonix-player bug report bundle"
+echo "Morpthis bug report bundle"
 echo "written:   $(date 2>/dev/null)"
 echo "bundle:    $OUT"
 echo "card:      ${CARD:-<none mounted>}"
-echo "pid:       ${PID:-<sonix_player not running>}"
+echo "pid:       ${PID:-<morpthis_player not running>}"
 echo
 echo "This file is redacted (passwords, PSKs, tokens, logins -> <redacted>)."
 echo "Fill in the last section before attaching it to an issue."
 
 section "device and build"
-run 'cat /usr/resource/sonix/components/system-info.json'
-run 'ls -l /usr/bin/sonix_player /usr/bin/sonix_launch'
-run 'md5sum /usr/bin/sonix_player'
+run 'cat /usr/resource/morpthis/components/system-info.json'
+run 'ls -l /usr/bin/morpthis_player /usr/bin/morpthis_launch'
+run 'md5sum /usr/bin/morpthis_player'
 run 'cat /etc/version'
 run 'cat /etc/os-release'
 
@@ -165,18 +165,18 @@ if [ -n "$CARD" ]; then
 fi
 
 section "player log"
-tailfile "${CARD:-/tmp}/.local/sonix_player.log"
+tailfile "${CARD:-/tmp}/.local/morpthis_player.log"
 run 'ls -la /tmp'
 
 section "bluetooth log"
 tailfile "${CARD:-/tmp}/.local/bluetooth.log"
-if [ "${SONIX_FULL_LOG:-0}" = "1" ]; then
+if [ "${MORPTHIS_FULL_LOG:-0}" = "1" ]; then
 	tailfile "${CARD:-/tmp}/.local/bluetooth.old.log"
 fi
 
 section "boot trace (boot screen / logo)"
 run 'cat /tmp/.bootlogo_trace'
-run 'cat /tmp/sonix-log-early' 100
+run 'cat /tmp/morpthis-log-early' 100
 
 section "settings (redacted)"
 run 'ls -l /usr/data'

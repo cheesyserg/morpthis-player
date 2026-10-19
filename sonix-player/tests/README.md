@@ -104,11 +104,11 @@ reflows. Actual LVGL snapshots verify pixel-for-pixel alpha edges, theme tints
 and opaque pixels in ARGB8888 and the panel's RGB565 format; geometry alone
 cannot catch a small bitmap being enlarged into a blurry icon.
 
-To inspect rendered screens, optionally set `SONIX_MENU_SNAPSHOTS` to an output
+To inspect rendered screens, optionally set `MORPTHIS_MENU_SNAPSHOTS` to an output
 prefix (its parent directory must exist), for example:
 
 ```sh
-SONIX_MENU_SNAPSHOTS=.build/menu make -C sonix-player/tests ui
+MORPTHIS_MENU_SNAPSHOTS=.build/menu make -C sonix-player/tests ui
 ```
 
 This writes ignored `.build/menu-<width>-theme<kind>.ppm` files using LVGL's
@@ -155,11 +155,11 @@ folder. It reads the size the empty-folder note promises from every language
 file, requires them all to agree, and requires the limit to match: 480x800 on
 the V1, which ships the R1's texts, and the panel's own size elsewhere.
 
-Set `SONIX_SCREENSAVER_SNAPSHOTS` to an output prefix to keep the rendered
+Set `MORPTHIS_SCREENSAVER_SNAPSHOTS` to an output prefix to keep the rendered
 screens as ignored `.ppm` files, for example:
 
 ```sh
-SONIX_SCREENSAVER_SNAPSHOTS=.build/saver make -C sonix-player/tests ui
+MORPTHIS_SCREENSAVER_SNAPSHOTS=.build/saver make -C sonix-player/tests ui
 ```
 
 ## Screensaver folder rules

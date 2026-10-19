@@ -1,10 +1,10 @@
-# Makefile for sonix_player
+# Makefile for morpthis_player
 
 # Target executables
-HOST_BIN = sonix_player_host
-TARGET_BIN = sonix_player
-# Built from launcher/, see "sonix_launch" below.
-LAUNCH_BIN = sonix_launch
+HOST_BIN = morpthis_player_host
+TARGET_BIN = morpthis_player
+# Built from launcher/, see "morpthis_launch" below.
+LAUNCH_BIN = morpthis_launch
 
 # The unstripped copy of the target binary, kept beside the stripped one.
 #
@@ -12,7 +12,7 @@ LAUNCH_BIN = sonix_launch
 # on the device carries no symbol table and no DWARF, so an address out of a
 # crash log means nothing without this file. The two are the same build, so an
 # address from one resolves in the other.
-TARGET_DEBUG_BIN = sonix_player_debug
+TARGET_DEBUG_BIN = morpthis_player_debug
 
 LVGL_DIR = $(CURDIR)/lvgl
 ROCKBOX_TOOLCHAIN_DIR = $(CURDIR)/rockbox-toolchain
@@ -86,7 +86,7 @@ HOST_CFLAGS = $(CFLAGS) -DHOST_BUILD=1 $(shell sdl2-config --cflags) $(shell pkg
 # linker with MIPS PLT support, which glibc has had since 2.9 (the device has
 # 2.22). Ignored for anything built with -fPIC.
 # This fork's target package is for the TempoTec V1. The runtime BOARD value
-# still wins (BOARD=tempotec_v1, or SONIX_PANEL on the simulator), while host
+# still wins (BOARD=tempotec_v1, or MORPTHIS_PANEL on the simulator), while host
 # builds stay regular unless either is supplied.
 TARGET_CFLAGS = $(CFLAGS) -DBOARD_DEFAULT_TEMPOTEC_V1=1 -march=mips32r2 -mno-madd4 -mplt -I$(LVGL_DIR)/src -I$(FREETYPE_PREFIX)/include/freetype2 \
 				-I$(AUDIO_PREFIX)/include -I$(AUDIO_PREFIX)/include/opus \
@@ -213,23 +213,23 @@ $(TARGET_BIN): $(TARGET_OBJS)
 	@echo "Target build complete: File ready at '$(TARGET_BIN)'"
 
 # ---------------------------------------------------------------------------
-# sonix_launch
+# morpthis_launch
 #
-# The process sonix_player.sh hands itself over to: it starts the player and
-# reboots the device when the player exits (launcher/sonix_launch.c). No libc
+# The process morpthis_player.sh hands itself over to: it starts the player and
+# reboots the device when the player exits (launcher/morpthis_launch.c). No libc
 # and no loader, so it is built on its own: static, freestanding, non-PIC, and
 # with the loop idioms GCC would turn into memset or strlen calls left as loops.
-# The packer takes it from next to itself, like sonix_player.
+# The packer takes it from next to itself, like morpthis_player.
 # ---------------------------------------------------------------------------
 
 LAUNCH_CFLAGS = -Os -Wall -Wextra -march=mips32r2 -mno-abicalls -fno-pic -G0 -static -nostdlib \
 				-ffreestanding -fno-builtin -fno-tree-loop-distribute-patterns -fno-stack-protector \
 				-fno-asynchronous-unwind-tables -Wl,-e,__start
 
-$(LAUNCH_BIN): launcher/sonix_launch.c $(CROSS_CC)
+$(LAUNCH_BIN): launcher/morpthis_launch.c $(CROSS_CC)
 	$(CROSS_CC) $(LAUNCH_CFLAGS) -o $@ $<
 	@if [ -x "$(CROSS_STRIP)" ]; then $(CROSS_STRIP) $@; fi
-	@echo "sonix_launch: $$(wc -c < $@) bytes"
+	@echo "morpthis_launch: $$(wc -c < $@) bytes"
 
 # ---------------------------------------------------------------------------
 # Splitting the link output in two
@@ -263,7 +263,7 @@ strip-target:
 #
 # The toolchain compiles against glibc 2.27, the device has 2.22. A binary
 # asking for a newer versioned symbol links without a word and then refuses to
-# start, and on this device that means a boot loop: sonix_launch runs
+# start, and on this device that means a boot loop: morpthis_launch runs
 # `sleep 1; reboot` as soon as the player exits.
 #
 # glibc_compat.h holds the known functions down; this catches the next ones.
@@ -336,7 +336,7 @@ $(TARGET_BIN): $(FREETYPE_PREFIX)/lib/libfreetype.a $(AUDIO_LIBS)
 
 $(CROSS_CC):
 	@echo "Building Rockbox toolchain..."
-	RBDEV_SONIX_MINIMAL=1 ./rockboxdev/rockboxdev.sh
+	RBDEV_MORPTHIS_MINIMAL=1 ./rockboxdev/rockboxdev.sh
 
 # The flags FreeType and the audio libraries are built with. -march and -mplt as
 # in TARGET_CFLAGS: they are static, so they end up in the same executable. They

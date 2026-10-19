@@ -37,7 +37,7 @@ lv_obj_t *remap_screen;
 // play/pause over next -- so there it is one photo, the media side's files, cut
 // off at the bottom and sitting on the bottom edge, with four taller rows.
 //
-// The photos live in /usr/resource/sonix/gui rather than in the binary, and are
+// The photos live in /usr/resource/morpthis/gui rather than in the binary, and are
 // loaded when the page opens and freed when it closes: a picture seen once a
 // year does not stay resident on a 64 MB device.
 //
@@ -50,10 +50,10 @@ lv_obj_t *remap_screen;
 // RGB565, the panel's format.
 // ---------------------------------------------------------------------------
 
-#define PHOTO_PLAY_DARK SONIX_RESOURCE_DIR "/gui/remap-play-dark.png"
-#define PHOTO_PLAY_LIGHT SONIX_RESOURCE_DIR "/gui/remap-play-light.png"
-#define PHOTO_VOL_DARK SONIX_RESOURCE_DIR "/gui/remap-vol-dark.png"
-#define PHOTO_VOL_LIGHT SONIX_RESOURCE_DIR "/gui/remap-vol-light.png"
+#define PHOTO_PLAY_DARK MORPTHIS_RESOURCE_DIR "/gui/remap-play-dark.png"
+#define PHOTO_PLAY_LIGHT MORPTHIS_RESOURCE_DIR "/gui/remap-play-light.png"
+#define PHOTO_VOL_DARK MORPTHIS_RESOURCE_DIR "/gui/remap-vol-dark.png"
+#define PHOTO_VOL_LIGHT MORPTHIS_RESOURCE_DIR "/gui/remap-vol-light.png"
 #define PHOTO_MAX_BYTES (2 * 1024 * 1024)
 
 // Length of the leader line tying a row to its button, and the row heights.

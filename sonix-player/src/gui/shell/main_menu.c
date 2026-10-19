@@ -430,7 +430,7 @@ void main_menu_init(gui_config_t *cfg) {
 	lv_obj_set_flex_align(home_header, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
 	home_title = lv_label_create(home_header);
-	lv_label_set_text(home_title, "Sonix Player");
+	lv_label_set_text(home_title, "Morpthis");
 	lv_obj_add_style(home_title, &theme_style_text, 0);
 	lv_obj_set_style_text_font(home_title, &font_ui_16, 0);
 	lv_obj_set_flex_grow(home_title, 1);

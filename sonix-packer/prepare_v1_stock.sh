@@ -23,7 +23,7 @@ PACKER_DIR="${2:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 mkdir -p "$PACKER_DIR"
 PACKER_DIR="$(cd "$PACKER_DIR" && pwd)"
 
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/sonix-v1-stock.XXXXXX")"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/morpthis-v1-stock.XXXXXX")"
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 

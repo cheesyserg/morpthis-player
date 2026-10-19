@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an idea or a feature for Sonix Player
+about: Suggest an idea or a feature for Morpthis
 title: "[Feature]"
 labels: enhancement
 assignees: ''

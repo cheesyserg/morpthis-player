@@ -1942,7 +1942,7 @@ static void fetch_favicon(const char *url) {
 	}
 
 	char path[256];
-	snprintf(path, sizeof(path), "/tmp/sonix-radio-cover%s", ext);
+	snprintf(path, sizeof(path), "/tmp/morpthis-radio-cover%s", ext);
 
 	FILE *f = fopen(path, "wb");
 	if (f) {

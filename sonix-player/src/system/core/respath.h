@@ -9,6 +9,6 @@
 #define RESOURCE_DIR "/usr/resource"
 #endif
 
-#define SONIX_RESOURCE_DIR RESOURCE_DIR "/sonix"
+#define MORPTHIS_RESOURCE_DIR RESOURCE_DIR "/morpthis"
 
 #endif /* RESPATH_H */

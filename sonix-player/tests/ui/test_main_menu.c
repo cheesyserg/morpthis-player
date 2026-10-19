@@ -172,7 +172,7 @@ static lv_obj_t *find_label(lv_obj_t *obj, const char *text) {
 /* Optional real-renderer diagnostics, kept out of Git. No display driver or
  * image library is needed; PPM can be opened by ordinary image tools. */
 static void dump_menu_snapshot(int kind) {
-	const char *prefix = getenv("SONIX_MENU_SNAPSHOTS");
+	const char *prefix = getenv("MORPTHIS_MENU_SNAPSHOTS");
 	if (!prefix || !prefix[0]) {
 		return;
 	}
@@ -344,7 +344,7 @@ static void check_metrics(lv_obj_t *tile, tile_metrics_t expected) {
 int main(int argc, char **argv) {
 	assert(argc == 2 || argc == 3);
 	bool saved_icons_only = argc == 3;
-	char dir[] = "/tmp/sonix-menu-test-XXXXXX";
+	char dir[] = "/tmp/morpthis-menu-test-XXXXXX";
 	assert(mkdtemp(dir));
 	char config[256];
 	snprintf(config, sizeof(config), "%s/device_config.ini", dir);

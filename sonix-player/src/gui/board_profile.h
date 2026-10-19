@@ -14,7 +14,7 @@
 
 // True for the V1 profile. BOARD=tempotec_v1 selects it for the host build;
 // BOARD_DEFAULT_TEMPOTEC_V1 is defined by the target build, so the device
-// always takes it. SONIX_PANEL=240x320 also selects it for host simulation.
+// always takes it. MORPTHIS_PANEL=240x320 also selects it for host simulation.
 bool bp_is_tempotec_v1(void);
 
 int bp_screen_w(void);

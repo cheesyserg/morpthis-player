@@ -60,7 +60,7 @@ bool wifitransfer_get_enabled(void);
 // what the page should believe, not the flag above.
 bool wifitransfer_running(void);
 
-// The name to type into the browser -- "http://sonix-transfer.local" -- or an
+// The name to type into the browser -- "http://morpthis-transfer.local" -- or an
 // empty string when the responder that publishes it is not up.
 //
 // This is the one to show first. It is published over mDNS (src/system/mdns.c,

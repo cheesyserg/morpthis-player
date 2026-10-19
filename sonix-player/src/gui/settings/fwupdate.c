@@ -27,7 +27,7 @@
 
 // The title while a release is shown, downloaded and installed; the version
 // is in the line under it.
-#define PRODUCT_NAME "Sonix Player"
+#define PRODUCT_NAME "Morpthis"
 
 // The notes scroll inside the card past this share of the screen height.
 #define NOTES_MAX_PERCENT 40

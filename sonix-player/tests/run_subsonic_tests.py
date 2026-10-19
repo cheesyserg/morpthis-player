@@ -91,7 +91,7 @@ class Handler(BaseHTTPRequestHandler):
         path = request.path
         if path.startswith("/rest/"):
             assert q.get("u") == USER, q
-            assert q.get("f") == "json" and q.get("v") == "1.16.1" and q.get("c") == "sonix", q
+            assert q.get("f") == "json" and q.get("v") == "1.16.1" and q.get("c") == "morpthis", q
             assert "p" not in q and len(q.get("s", "")) == 32, q
             token = hashlib.md5((PASSWORD + q["s"]).encode()).hexdigest()
             if q.get("t") != token:
@@ -268,7 +268,7 @@ def main():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        with tempfile.TemporaryDirectory(prefix="sonix-subsonic-test-") as directory:
+        with tempfile.TemporaryDirectory(prefix="morpthis-subsonic-test-") as directory:
             tls = start_https_servers(directory)
             try:
                 bases = [f"https://127.0.0.1:{s.server_port}" for s in tls]

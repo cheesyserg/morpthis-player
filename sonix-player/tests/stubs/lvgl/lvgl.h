@@ -1,5 +1,5 @@
-#ifndef SONIX_TEST_STUB_LVGL_H
-#define SONIX_TEST_STUB_LVGL_H
+#ifndef MORPTHIS_TEST_STUB_LVGL_H
+#define MORPTHIS_TEST_STUB_LVGL_H
 
 /* The smallest lvgl/lvgl.h that lets a plain-C test compile a player file
  * whose header mentions LVGL only in passing: wifi.c includes power.h for
@@ -12,4 +12,4 @@
 typedef struct lv_display lv_display_t;
 typedef struct lv_timer lv_timer_t;
 
-#endif /* SONIX_TEST_STUB_LVGL_H */
+#endif /* MORPTHIS_TEST_STUB_LVGL_H */

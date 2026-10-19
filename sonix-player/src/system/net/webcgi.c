@@ -135,7 +135,7 @@ bool webcgi_should_run(int argc, char **argv) {
 		name = slash + 1;
 	}
 
-	return strcmp(name, "sonix-list") == 0;
+	return strcmp(name, "morpthis-list") == 0;
 }
 
 int webcgi_main(void) {

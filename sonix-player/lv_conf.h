@@ -38,7 +38,7 @@
 #define LV_CHECK_ARG_LOG_MODE LV_CHECK_ARG_LOG_MODE_MINIMAL
 
 /* No font is built into the binary: every string is rendered through FreeType
- * from the faces in /usr/resource/sonix/fonts (see src/gui/fonts/fonts.c). */
+ * from the faces in /usr/resource/morpthis/fonts (see src/gui/fonts/fonts.c). */
 #define LV_FONT_MONTSERRAT_14 0
 #define LV_FONT_MONTSERRAT_16 0
 #define LV_FONT_MONTSERRAT_28 0

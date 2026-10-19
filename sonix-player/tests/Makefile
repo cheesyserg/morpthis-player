@@ -129,11 +129,11 @@ SAVER_OBJ = $(patsubst $(ROOT)/%.c,$(BUILD)/ui/%.o,$(SAVER_SRC)) \
 
 .PHONY: ui
 ui: $(BUILD)/test_main_menu $(BUILD)/test_screensaver $(BUILD)/test_wifi_pages
-	BOARD=tempotec_v1 $(BUILD)/test_main_menu ../../sonix-packer/assets/V1/usr/resource/sonix/language
-	BOARD=tempotec_v1 $(BUILD)/test_main_menu ../../sonix-packer/assets/V1/usr/resource/sonix/language saved
-	BOARD=tempotec_v1 $(BUILD)/test_screensaver ../../sonix-packer/assets/V1/usr/resource/sonix/language
-	BOARD=tempotec_v1 $(BUILD)/test_screensaver ../../sonix-packer/assets/V1/usr/resource/sonix/language saved
-	BOARD=tempotec_v1 $(BUILD)/test_wifi_pages ../../sonix-packer/assets/V1/usr/resource/sonix/language
+	BOARD=tempotec_v1 $(BUILD)/test_main_menu ../../sonix-packer/assets/V1/usr/resource/morpthis/language
+	BOARD=tempotec_v1 $(BUILD)/test_main_menu ../../sonix-packer/assets/V1/usr/resource/morpthis/language saved
+	BOARD=tempotec_v1 $(BUILD)/test_screensaver ../../sonix-packer/assets/V1/usr/resource/morpthis/language
+	BOARD=tempotec_v1 $(BUILD)/test_screensaver ../../sonix-packer/assets/V1/usr/resource/morpthis/language saved
+	BOARD=tempotec_v1 $(BUILD)/test_wifi_pages ../../sonix-packer/assets/V1/usr/resource/morpthis/language
 
 $(BUILD)/test_main_menu: $(UI_OBJ)
 	$(CC) -o $@ $^ $(LDFLAGS) $(LDLIBS)

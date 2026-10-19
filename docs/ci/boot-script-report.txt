@@ -25,14 +25,14 @@
    
    	echo "Wait display... "
    
-   # --- sonix boot screen choice (added by the firmware packer) ---
+   # --- morpthis boot screen choice (added by the firmware packer) ---
    boot_raw=$(nanddump -q -s 0x20000 -l 14 /dev/mtd5 -a 2>/dev/null)
    boot_sel=${boot_raw#* }
    echo "sel=$boot_sel raw=$boot_raw" > /tmp/.bootlogo_trace 2>/dev/null
    if [ "$boot_sel" = "logo:2" ] && [ -f /etc/logo_space.jpeg ]; then cmd_jpeg_display /etc/logo_space.jpeg && { echo "drawn=space" >> /tmp/.bootlogo_trace; boot_drawn=1; cmd_jpeg_display() { :; }; }; fi
    if [ "$boot_sel" = "logo:3" ] && [ -f /etc/logo_travelling.jpeg ]; then cmd_jpeg_display /etc/logo_travelling.jpeg && { echo "drawn=travelling" >> /tmp/.bootlogo_trace; boot_drawn=1; cmd_jpeg_display() { :; }; }; fi
    [ -n "$boot_drawn" ] || echo "drawn=stock-chain" >> /tmp/.bootlogo_trace 2>/dev/null
-   # --- end sonix boot screen choice ---
+   # --- end morpthis boot screen choice ---
        theme=$(nanddump -q -s 0x20000 -l 7 /dev/mtd5 -a)
        if [ "$theme" == "theme:1" ]; then
           cmd_jpeg_display /etc/logo1.jpeg

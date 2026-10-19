@@ -764,14 +764,14 @@ bool airpods_feed_packet(const uint8_t *data, unsigned length) { return handle_p
 //
 // A desktop has no Bluetooth adapter, so the page and the row cannot be looked
 // at at all unless the packets come from somewhere other than a socket.
-// SONIX_AIRPODS_FAKE holds a model number, three levels and optionally a noise
+// MORPTHIS_AIRPODS_FAKE holds a model number, three levels and optionally a noise
 // mode -- "A2084,85,80,62,2" -- and the worker builds exactly the packets those
 // describe and hands them to the same parsers. The variable is never set on the
 // device.
 // ---------------------------------------------------------------------------
 
 static bool fake_session(void) {
-	const char *spec = getenv("SONIX_AIRPODS_FAKE");
+	const char *spec = getenv("MORPTHIS_AIRPODS_FAKE");
 	if (!spec || !spec[0]) {
 		return false;
 	}
@@ -789,7 +789,7 @@ static bool fake_session(void) {
 	if (number[0]) {
 		uint8_t metadata[64] = {0x04, 0x00, 0x04, 0x00, 0x1D, 0x00, 0x01, 0xB2, 0x00, 0x08, 0x00};
 		size_t at = 11;
-		const char *name = "Sonix";
+		const char *name = "Morpthis";
 		memcpy(metadata + at, name, strlen(name) + 1);
 		at += strlen(name) + 1;
 		memcpy(metadata + at, number, strlen(number) + 1);

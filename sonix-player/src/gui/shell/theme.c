@@ -323,16 +323,16 @@ void theme_init(void) {
 
 	// The layout style. A clean boot gets the V1's original interface. A config
 	// written before the styles existed kept its layout in the theme name: the
-	// three palettes that used the compact one map to Sonix, so an existing
+	// three palettes that used the compact one map to Morpthis, so an existing
 	// device keeps the look it had.
 	const char *saved_style = config_get("ui", "style", NULL);
-	if (saved_style && strcmp(saved_style, "sonix") == 0) {
-		selected_style = THEME_STYLE_SONIX;
+	if (saved_style && (strcmp(saved_style, "morpthis") == 0 || strcmp(saved_style, "sonix") == 0)) {
+		selected_style = THEME_STYLE_MORPTHIS;
 	} else if (saved_style && strcmp(saved_style, "classic") == 0) {
 		selected_style = THEME_STYLE_CLASSIC;
 	} else if (saved_theme && (strcmp(saved_theme, "tokyo-night") == 0 ||
 							  strcmp(saved_theme, "amber-on-black") == 0 || strcmp(saved_theme, "oled") == 0)) {
-		selected_style = THEME_STYLE_SONIX;
+		selected_style = THEME_STYLE_MORPTHIS;
 	}
 
 	// The marker the boot script reads has to agree with the setting too, not
@@ -427,9 +427,9 @@ bool theme_is_oled(void) { return false; }
 
 bool theme_is_monochrome(void) { return false; }
 
-// The compact V1 layout and the function-matched glyphs belong to the Sonix
+// The compact V1 layout and the function-matched glyphs belong to the Morpthis
 // style alone; the palette has no say.
-bool theme_uses_function_glyphs(void) { return selected_style == THEME_STYLE_SONIX; }
+bool theme_uses_function_glyphs(void) { return selected_style == THEME_STYLE_MORPTHIS; }
 
 theme_style_t theme_get_style(void) { return selected_style; }
 
@@ -594,7 +594,7 @@ void theme_set_style(theme_style_t style) {
 	}
 
 	selected_style = style;
-	config_set("ui", "style", style == THEME_STYLE_SONIX ? "sonix" : "classic");
+	config_set("ui", "style", style == THEME_STYLE_MORPTHIS ? "morpthis" : "classic");
 	config_save();
 
 	// The pages that lay themselves out differently listen through the refresh

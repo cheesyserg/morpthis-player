@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!--
-  sonix_player -- Trasferimento Wi-Fi
+  morpthis_player -- Trasferimento Wi-Fi
 
   TEMPLATE. This is not the page that gets served: tools/web_to_c.py assembles
   it, replacing three placeholders, and writes both the finished page
@@ -500,7 +500,7 @@ body.dragging { outline: 3px solid var(--accent); outline-offset: -3px; }
      ways to do the same thing in the same corner is one too many. -->
 <header class="masthead">
   <b>{{Trasferimento Wi-Fi}}</b>
-  <img class="logo" src="<!--LOGO-->" alt="Sonix">
+  <img class="logo" src="<!--LOGO-->" alt="Morpthis">
 </header>
 
 <div class="shell">
@@ -628,10 +628,10 @@ var showHidden = false;
 
 // The firmware's list.cgi cannot show hidden entries -- it drops any name whose
 // first character is a dot, in compiled code -- so the player publishes its own
-// listing at sonix-list and that is what this asks first. If it is not there (an
+// listing at morpthis-list and that is what this asks first. If it is not there (an
 // older player, a document root the symlink could not be made in), the stock one
 // answers and the eye simply has nothing to reveal.
-var lister = "sonix-list";
+var lister = "morpthis-list";
 var deviceName = "";
 
 var $ = function (id) { return document.getElementById(id); };
@@ -881,15 +881,15 @@ function post(endpoint, fields) {
 }
 
 // One directory, from whichever lister is answering. The first failure of
-// sonix-list is taken as "this player does not have it" and the firmware's own is
+// morpthis-list is taken as "this player does not have it" and the firmware's own is
 // used from then on -- one probe, not one per navigation.
 function listing(target) {
   var url = lister + "?path=" + encodeURIComponent(target) +
-            (lister === "sonix-list" && showHidden ? "&hidden=1" : "");
+            (lister === "morpthis-list" && showHidden ? "&hidden=1" : "");
 
   return fetch(url, { cache: "no-store" }).then(function (res) {
     if (res.ok) { return res.json(); }
-    if (lister === "sonix-list") {
+    if (lister === "morpthis-list") {
       lister = "list";
       updateHiddenButton();
       return listing(target);
@@ -1134,7 +1134,7 @@ $("mkdir").onclick = function () {
 // dot-files too -- .Trashes, ._ twins, whatever a computer left behind.
 function updateHiddenButton() {
   var button = $("hidden");
-  var can = lister === "sonix-list";
+  var can = lister === "morpthis-list";
 
   button.disabled = !can;
   button.title = !can
@@ -1201,7 +1201,7 @@ function enqueue(files, fromFolder) {
   var unknown = 0;
 
   Array.prototype.forEach.call(files, function (file) {
-    var rel = file.webkitRelativePath || file.sonixRelativePath || "";
+    var rel = file.webkitRelativePath || file.morpthisRelativePath || "";
     if (!isKnown(file.name)) {
       unknown++;
       // One file at a time is worth naming. A folder of two hundred is not:
@@ -1312,7 +1312,7 @@ function walkEntry(entry, prefix, out) {
   if (entry.isFile) {
     return new Promise(function (resolve) {
       entry.file(function (file) {
-        if (prefix) { file.sonixRelativePath = prefix + file.name; }
+        if (prefix) { file.morpthisRelativePath = prefix + file.name; }
         out.push(file);
         resolve();
       }, resolve);

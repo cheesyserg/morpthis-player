@@ -9,9 +9,9 @@ paths on the device; the card is the microSD, mounted at `/mnt/sd_0`.
    developer options are on.
 2. **Settings → Developer options → Log to microSD** → on.
 3. Reproduce the bug.
-4. Take **`.local/sonix_player.log`** from the root of the card. `.local` is a
+4. Take **`.local/morpthis_player.log`** from the root of the card. `.local` is a
    hidden folder, so allow hidden files in your file manager (or `adb pull
-   /mnt/sd_0/.local/sonix_player.log`).
+   /mnt/sd_0/.local/morpthis_player.log`).
 
 That one file is the answer to "what log do I send" in almost every case. Every
 line is stamped with the time to the millisecond, a date line is printed at the
@@ -52,8 +52,8 @@ Enable **Developer options → ADB**, connect the player over USB, then from a
 computer with `adb`:
 
 ```sh
-adb push sonix-player/tools/sonix-bugreport.sh /tmp/
-adb shell sh /tmp/sonix-bugreport.sh
+adb push sonix-player/tools/morpthis-bugreport.sh /tmp/
+adb shell sh /tmp/morpthis-bugreport.sh
 adb pull /mnt/sd_0/.local/bugreport-*.txt
 ```
 
@@ -68,8 +68,8 @@ fill in (what happened, expected, numbered steps, time, build).
 Two knobs, set in the environment:
 
 ```sh
-adb shell "SONIX_LOG_LINES=20000 sh /tmp/sonix-bugreport.sh"   # longer tails (default 4000)
-adb shell "SONIX_FULL_LOG=1     sh /tmp/sonix-bugreport.sh"    # whole logs, not tails
+adb shell "MORPTHIS_LOG_LINES=20000 sh /tmp/morpthis-bugreport.sh"   # longer tails (default 4000)
+adb shell "MORPTHIS_FULL_LOG=1     sh /tmp/morpthis-bugreport.sh"    # whole logs, not tails
 ```
 
 ## Symptom → what else to send
@@ -94,7 +94,7 @@ adb shell "SONIX_FULL_LOG=1     sh /tmp/sonix-bugreport.sh"    # whole logs, not
   with local time, and the device's clock is not your phone's clock; a time lets
   the log be read even when it is days long.
 - The **firmware build** (Settings → System → About, or
-  `/usr/resource/sonix/components/system-info.json`), and the exact model.
+  `/usr/resource/morpthis/components/system-info.json`), and the exact model.
 - What is on the card: filesystem (exFAT/FAT32), make, and roughly how many
   tracks. Whether it still happens with no card inserted, if you can try.
 

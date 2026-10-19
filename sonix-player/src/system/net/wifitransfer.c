@@ -31,8 +31,8 @@
 // ":4399" would defeat the point of having a name at all.
 #define WT_PORT_NAMED 80
 
-// What the page answers to on the network: http://sonix-transfer.local
-#define WT_MDNS_NAME "sonix-transfer"
+// What the page answers to on the network: http://morpthis-transfer.local
+#define WT_MDNS_NAME "morpthis-transfer"
 
 #define THTTPD_BIN "/usr/bin/thttpd"
 #define UDP_SERVER_BIN "/usr/bin/udp_server"
@@ -52,8 +52,8 @@
 
 // In /tmp on purpose: both are rewritten on every start and there is no reason
 // to spend a flash erase block on them.
-#define CONF_PATH "/tmp/sonix-thttpd.conf"
-#define CONF_NAMED "/tmp/sonix-thttpd-80.conf"
+#define CONF_PATH "/tmp/morpthis-thttpd.conf"
+#define CONF_NAMED "/tmp/morpthis-thttpd-80.conf"
 
 // Where the CGI programs look for the card. Not a choice: it is compiled into
 // all six of them, along with sd_1 and the two udisk names.
@@ -216,7 +216,7 @@ static void unbind_card(void) {
 // whatever HiBy shipped, in Chinese. Everything still works.
 // ---------------------------------------------------------------------------
 
-// The player draws with /usr/resource/sonix/fonts/default.otf (MiSans Regular, see
+// The player draws with /usr/resource/morpthis/fonts/default.otf (MiSans Regular, see
 // src/gui/fonts/fonts.c). The page asks for it as fonts/default.otf so it can
 // render in the same face as the screen it came from.
 //
@@ -231,7 +231,7 @@ static void unbind_card(void) {
 // Nothing here is fatal. The page declares the faces with font-display: swap
 // behind a system-font fallback, so a name that is not there costs it the
 // typeface and nothing else.
-#define FIRMWARE_FONT_DIR SONIX_RESOURCE_DIR "/fonts"
+#define FIRMWARE_FONT_DIR MORPTHIS_RESOURCE_DIR "/fonts"
 
 // The player, linked into the document root as a CGI.
 //
@@ -253,7 +253,7 @@ static void link_self_as_cgi(const char *web_root) {
 	exe[len] = '\0';
 
 	char to[PATH_MAX];
-	snprintf(to, sizeof(to), "%s/sonix-list", web_root);
+	snprintf(to, sizeof(to), "%s/morpthis-list", web_root);
 
 	// Always point it at this build, never at a link left behind by another.
 	unlink(to);
@@ -540,7 +540,7 @@ static bool write_config(const char *web_root, int port, const char *conf_path, 
 	fprintf(f, "port=%d\n", port);
 	fprintf(f, "pidfile=%s\n", pidfile);
 	fprintf(f, "logfile=/dev/null\n");
-	fprintf(f, "cgipat=**.cgi|list|upload|download|create|move|delete|sonix-list\n");
+	fprintf(f, "cgipat=**.cgi|list|upload|download|create|move|delete|morpthis-list\n");
 
 	// Nothing served here may be cached without asking first.
 	//
@@ -554,7 +554,7 @@ static bool write_config(const char *web_root, int port, const char *conf_path, 
 	// the new one.
 	fprintf(f, "max_age=0\n");
 
-	// And the line without which `sonix-list` answers 403 every single time.
+	// And the line without which `morpthis-list` answers 403 every single time.
 	//
 	// thttpd resolves symlinks in the requested path itself, and refuses
 	// anything that ends up outside the document root -- "The requested URL
@@ -635,7 +635,7 @@ static bool start_server(void) {
 	// Two instances, and the reason is the name.
 	//
 	// A .local name resolves to an address, and nothing more: mDNS has no way to
-	// say "and the port is 4399". So for "http://sonix-transfer.local" to work
+	// say "and the port is 4399". So for "http://morpthis-transfer.local" to work
 	// with nothing typed after it, something has to be on port 80.
 	//
 	// 4399 stays as well, because that is the port HiBy's own phone app expects

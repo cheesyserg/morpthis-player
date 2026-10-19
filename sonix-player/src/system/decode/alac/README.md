@@ -23,7 +23,7 @@ non si arriva mai a quel ramo.
 ## Modifiche locali
 
 Il file è quello originale tranne due punti, entrambi marcati nel sorgente con
-`MODIFICA LOCALE (sonix_player)`:
+`MODIFICA LOCALE (morpthis_player)`:
 
 1. **`count_leading_zeros`** — aggiunto un ramo `__builtin_clz` prima di quelli
    scritti a mano. Su MIPS32r2 diventa una singola istruzione `clz` invece

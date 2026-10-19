@@ -19,7 +19,7 @@
 // Boosty code instead; every other language gets Ko-fi. The language is the
 // only thing there is to go on -- the device has no country and no account.
 //
-// The pictures live in /usr/resource/sonix/gui rather than in the binary, for
+// The pictures live in /usr/resource/morpthis/gui rather than in the binary, for
 // the same reason the button photographs do (see remap.c): a 380x380 RGB565
 // bitmap is not worth keeping resident for something seen once. As PNG on the
 // card they cost nothing until they are asked for, and they are freed the
@@ -31,8 +31,8 @@
 // unpack with no scaling.
 // ---------------------------------------------------------------------------
 
-#define QR_KOFI SONIX_RESOURCE_DIR "/gui/ko-fi-qr-code.png"
-#define QR_BOOSTY SONIX_RESOURCE_DIR "/gui/boosty-qr-code.png"
+#define QR_KOFI MORPTHIS_RESOURCE_DIR "/gui/ko-fi-qr-code.png"
+#define QR_BOOSTY MORPTHIS_RESOURCE_DIR "/gui/boosty-qr-code.png"
 #define QR_SIZE 380
 
 // White border around the code. The file has its own quiet zone; this is the

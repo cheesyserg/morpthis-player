@@ -4,7 +4,7 @@
 typedef struct alac_file alac_file;
 
 alac_file *create_alac(int samplesize, int numchannels);
-/* MODIFICA LOCALE (sonix_player): non c'era. Senza, i sei buffer interni
+/* MODIFICA LOCALE (morpthis_player): non c'era. Senza, i sei buffer interni
  * che alac_set_info() alloca non venivano mai liberati -- vedere la nota in
  * alac.c. */
 void free_alac(alac_file *alac);

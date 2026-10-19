@@ -9,7 +9,7 @@
 // drawn from.
 //
 // There are no fonts inside the binary. Everything is rendered through
-// FreeType from the faces shipped in /usr/resource/sonix/fonts:
+// FreeType from the faces shipped in /usr/resource/morpthis/fonts:
 //
 //   default.otf   MiSans Regular -- Latin, Greek, Cyrillic, kana, full CJK
 //   bold.otf      optional bold weight for the headings; regular stands in

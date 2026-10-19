@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 // A minimal multicast-DNS responder, so the Wi-Fi transfer page can be reached
-// by name -- http://sonix-transfer.local -- instead of by address.
+// by name -- http://morpthis-transfer.local -- instead of by address.
 //
 // It answers exactly one question: "what is the A record for <name>.local?".
 // That is what a browser asks when someone types the name, and it is all this
@@ -31,7 +31,7 @@
 // which would make it show up in Bonjour browsers), IPv6, and the conflict
 // probing RFC 6762 asks for before claiming a name. The first is a nicety, and
 // the last matters only if something else on the network has already taken
-// "sonix-transfer", which is not a name anything else uses.
+// "morpthis-transfer", which is not a name anything else uses.
 
 // Starts answering for "<name>.local" on the current Wi-Fi address. `name` is
 // copied. Calling it twice replaces the name.

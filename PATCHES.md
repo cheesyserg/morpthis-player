@@ -13,7 +13,7 @@ The target build of this fork defaults to the TempoTec V1 profile. At runtime,
 host simulator can be told either way:
 
 ```bash
-SONIX_PANEL=240x320 ./sonix_player_host
+MORPTHIS_PANEL=240x320 ./morpthis_player_host
 ```
 
 The profile is more than a font substitution. It makes `gui_config_t` use the

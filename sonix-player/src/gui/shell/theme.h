@@ -18,13 +18,13 @@ typedef enum {
 //   classic  the V1's original interface: tiled menu pages, plain settings
 //            rows, the blurred strip on the screensaver. The default, and
 //            what a clean boot shows.
-//   sonix    the compact layout built around function-matched icons: the
+//   morpthis    the compact layout built around function-matched icons: the
 //            single-column More list, captioned settings rows, the compact
 //            home page.
 //
 typedef enum {
 	THEME_STYLE_CLASSIC = 0,
-	THEME_STYLE_SONIX = 1,
+	THEME_STYLE_MORPTHIS = 1,
 } theme_style_t;
 
 #define THEME_STYLE_COUNT 2
@@ -141,7 +141,7 @@ bool theme_is_tokyo_night(void);
 bool theme_is_amber_on_black(void);
 bool theme_is_oled(void);
 bool theme_is_monochrome(void);
-// True when the Sonix style is chosen: the function-matched icons and the
+// True when the Morpthis style is chosen: the function-matched icons and the
 // compact layouts. Independent of the palette.
 bool theme_uses_function_glyphs(void);
 

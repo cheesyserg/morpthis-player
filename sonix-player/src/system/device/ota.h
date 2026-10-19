@@ -9,7 +9,7 @@
 // an update from the card.
 //
 // The repository is "ota-repo" in system-info.json, "owner/name";
-// Jepl4r/sonix-player when the file does not say.
+// mr-f0xx/morpthis-tempotec-v1 when the file does not say.
 //
 // A release counts when it is neither a draft nor a pre-release, its tag reads
 // as a version above OS_version in system-info.json ("1.0.2", "v1.0.2"), and
