@@ -32,12 +32,7 @@ static lv_obj_t *main_menu_books_toggle;
 static lv_obj_t *main_menu_browse_toggle;
 static lv_obj_t *battery_percent_toggle;
 static lv_obj_t *text_size_pill[FONTS_TEXT_COUNT]; // normal / large / small
-static lv_obj_t *theme_palette_card;
-static lv_obj_t *theme_palette_title;
-static lv_obj_t *theme_palette_swatches[8];
-static lv_obj_t *function_glyph_card;
-static lv_obj_t *function_glyph_icons[4];
-static void appearance_preview_refresh(void);
+static lv_obj_t *theme_buttons[THEME_KIND_COUNT];
 // The status bar draws the battery either way; this setting is only about the
 // number beside it, and is on by default.
 static void battery_percent_cb(lv_event_t *e) {
@@ -181,9 +176,8 @@ static void font_pills_reload_cb(lv_event_t *e) {
 	font_pills_rebuild();
 }
 
-// Paints the active theme choice. Dark and Light keep their original filled
-// accent treatment; the blue-, amber- and true-black palettes use the quieter
-// outlined selected pill that suits their compact V1 appearance card.
+// Paints the active theme choice. The V1's compact appearance card uses the
+// quieter outlined selected pill.
 static void refresh_buttons(void) {
 	theme_kind_t active_kind = theme_get_kind();
 	for (int i = 0; i < THEME_KIND_COUNT; i++) {
@@ -193,20 +187,13 @@ static void refresh_buttons(void) {
 		}
 		lv_obj_t *label = lv_obj_get_child(button, 0);
 		bool active = i == (int)active_kind;
-		bool outlined = theme_uses_function_glyphs();
-		if (active && outlined) {
-			// OLED's outlined pill stays black inside: a quarter of its white
-			// accent would be a grey fill.
-			lv_color_t fill = theme_is_oled() ? theme()->surface : lv_color_mix(theme()->accent, theme()->surface, (lv_opa_t)64);
+		if (active) {
+			lv_color_t fill = lv_color_mix(theme()->accent, theme()->surface, (lv_opa_t)64);
 			lv_obj_set_style_bg_color(button, fill, 0);
 			lv_obj_set_style_text_color(label, theme()->text_primary, 0);
 			lv_obj_set_style_border_width(button, 1, 0);
 			lv_obj_set_style_border_color(button, theme()->accent, 0);
 			lv_obj_set_style_border_opa(button, LV_OPA_COVER, 0);
-		} else if (active) {
-			lv_obj_set_style_bg_color(button, theme()->accent, 0);
-			lv_obj_set_style_text_color(label, theme_on_accent(), 0);
-			lv_obj_set_style_border_width(button, 0, 0);
 		} else {
 			lv_obj_set_style_bg_color(button, theme()->surface_pressed, 0);
 			lv_obj_set_style_text_color(label, theme()->text_primary, 0);
@@ -216,9 +203,7 @@ static void refresh_buttons(void) {
 	}
 }
 
-// The active circle wears a ring in the text colour; the rest sit flat. A
-// light circle under light text (OLED's white) takes a black ring instead,
-// with a hairline of the text colour around it, or the ring would vanish.
+// The active circle wears a ring in the text colour; the rest sit flat.
 static void refresh_accent_buttons(void) {
 	int active_accent = theme_get_accent();
 	for (int i = 0; i < THEME_ACCENT_COUNT; i++) {
@@ -309,7 +294,6 @@ static void theme_pick_cb(lv_event_t *e) {
 	theme_kind_t kind = (theme_kind_t)(intptr_t)lv_event_get_user_data(e);
 	theme_set_kind(kind);
 	refresh_buttons();
-	appearance_preview_refresh();
 }
 
 // ---------------------------------------------------------------------------
@@ -382,159 +366,6 @@ static lv_obj_t *make_theme_choice(lv_obj_t *parent, const char *text, theme_kin
 	return btn;
 }
 
-static lv_obj_t *theme_preview_card(lv_obj_t *parent, const char *title, bool compact) {
-	lv_obj_t *card = lv_obj_create(parent);
-	lv_obj_set_width(card, lv_pct(100));
-	lv_obj_set_height(card, LV_SIZE_CONTENT);
-	lv_obj_add_style(card, &theme_style_card, 0);
-	lv_obj_set_style_radius(card, compact ? 10 : 12, 0);
-	lv_obj_set_style_border_width(card, 0, 0);
-	lv_obj_set_style_shadow_width(card, 0, 0);
-	lv_obj_set_style_pad_all(card, compact ? 8 : 20, 0);
-	lv_obj_set_style_pad_gap(card, compact ? 6 : 14, 0);
-	lv_obj_set_scrollable(card, false);
-	lv_obj_set_event_bubble(card, true);
-	lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-	lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-
-	lv_obj_t *name = lv_label_create(card);
-	lv_label_set_text(name, tr(title));
-	lv_obj_add_style(name, &theme_style_text, 0);
-	lv_obj_set_style_text_font(name, compact ? &font_ui_16 : &font_ui_24, 0);
-	return card;
-}
-
-static void appearance_preview_refresh(void) {
-	bool tokyo = theme_is_tokyo_night();
-	bool amber = theme_is_amber_on_black();
-	bool oled = theme_is_oled();
-	bool show = bp_is_tempotec_v1() && (tokyo || amber || oled);
-	if (theme_palette_card) {
-		lv_obj_set_hidden(theme_palette_card, !show);
-	}
-	if (theme_palette_title) {
-		const char *title = amber ? "appearance_amber_palette" : oled ? "appearance_oled_palette" : "appearance_tokyo_palette";
-		lv_label_set_text(theme_palette_title, tr(title));
-	}
-	if (function_glyph_card) {
-		lv_obj_set_hidden(function_glyph_card, !show);
-	}
-
-	// Tokyo Night keeps its semantic hues. Amber on Black shows the distinct
-	// dark track, subdued star, playback, artist and cream-title colors from
-	// the reference screen instead of looking like the Tokyo palette. OLED is
-	// its ramp of greys, black to white, ending on the accent: the page and the
-	// cards, both black, then the track under the progress bar.
-	lv_color_t swatches[8];
-	if (oled) {
-		swatches[0] = theme()->screen_bg;
-		swatches[1] = theme()->surface;
-		swatches[2] = theme_player_chrome_color(THEME_PLAYER_CHROME_PROGRESS_REST);
-		swatches[3] = theme_player_chrome_color(THEME_PLAYER_CHROME_SHUFFLE_IDLE);
-		swatches[4] = theme_player_chrome_color(THEME_PLAYER_CHROME_MUTED);
-		swatches[5] = theme_player_chrome_color(THEME_PLAYER_CHROME_SECONDARY);
-		swatches[6] = theme_player_chrome_color(THEME_PLAYER_CHROME_PRIMARY);
-		swatches[7] = theme()->accent;
-	} else if (amber) {
-		swatches[0] = theme()->screen_bg;
-		swatches[1] = theme()->surface;
-		swatches[2] = theme()->surface_pressed;
-		swatches[3] = theme_player_chrome_color(THEME_PLAYER_CHROME_PROGRESS_REST);
-		swatches[4] = theme_player_chrome_color(THEME_PLAYER_CHROME_MUTED);
-		swatches[5] = theme_player_chrome_color(THEME_PLAYER_CHROME_PLAYBACK);
-		swatches[6] = theme_player_chrome_color(THEME_PLAYER_CHROME_SECONDARY);
-		swatches[7] = theme_player_chrome_color(THEME_PLAYER_CHROME_PRIMARY);
-	} else {
-		swatches[0] = theme()->screen_bg;
-		swatches[1] = theme()->surface;
-		swatches[2] = theme()->text_primary;
-		swatches[3] = theme()->accent;
-		swatches[4] = theme_semantic_color(THEME_SEMANTIC_CYAN);
-		swatches[5] = theme_semantic_color(THEME_SEMANTIC_PURPLE);
-		swatches[6] = theme_semantic_color(THEME_SEMANTIC_GREEN);
-		swatches[7] = theme_semantic_color(THEME_SEMANTIC_RED);
-	}
-	for (int i = 0; i < 8; i++) {
-		if (!theme_palette_swatches[i]) {
-			continue;
-		}
-		lv_obj_set_style_bg_color(theme_palette_swatches[i], swatches[i], 0);
-		if (amber || oled) {
-			// The near-black swatches otherwise disappear into the card and
-			// look like unpainted boxes on the low-contrast V1 panel.
-			lv_obj_set_style_border_width(theme_palette_swatches[i], 1, 0);
-			lv_obj_set_style_border_color(theme_palette_swatches[i], theme()->text_secondary, 0);
-			lv_obj_set_style_border_opa(theme_palette_swatches[i], LV_OPA_50, 0);
-		} else {
-			lv_obj_set_style_border_width(theme_palette_swatches[i], 0, 0);
-		}
-	}
-
-	static const theme_semantic_t tones[4] = {
-		THEME_SEMANTIC_CYAN, THEME_SEMANTIC_BLUE, THEME_SEMANTIC_BLUE, THEME_SEMANTIC_PURPLE,
-	};
-	for (int i = 0; i < 4; i++) {
-		if (!function_glyph_icons[i]) {
-			continue;
-		}
-		lv_obj_set_style_image_recolor(function_glyph_icons[i], theme_semantic_color(tones[i]), 0);
-		lv_obj_set_style_image_recolor_opa(function_glyph_icons[i], LV_OPA_COVER, 0);
-	}
-}
-
-static void build_theme_previews(lv_obj_t *container, bool compact) {
-	if (!compact) {
-		return;
-	}
-
-	theme_palette_card = theme_preview_card(container, "appearance_tokyo_palette", compact);
-	theme_palette_title = lv_obj_get_child(theme_palette_card, 0);
-	lv_obj_t *palette = lv_obj_create(theme_palette_card);
-	lv_obj_set_size(palette, lv_pct(100), 13);
-	lv_obj_set_style_bg_opa(palette, LV_OPA_TRANSP, 0);
-	lv_obj_set_style_border_width(palette, 0, 0);
-	lv_obj_set_style_pad_all(palette, 0, 0);
-	lv_obj_set_style_pad_column(palette, 3, 0);
-	lv_obj_set_flex_flow(palette, LV_FLEX_FLOW_ROW);
-	lv_obj_set_flex_align(palette, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-	for (int i = 0; i < 8; i++) {
-		lv_obj_t *swatch = lv_obj_create(palette);
-		lv_obj_set_height(swatch, 12);
-		lv_obj_set_flex_grow(swatch, 1);
-		lv_obj_set_style_bg_opa(swatch, LV_OPA_COVER, 0);
-		lv_obj_set_style_border_width(swatch, 0, 0);
-		lv_obj_set_style_radius(swatch, 3, 0);
-		// The default theme hands every plain object its card padding, which
-		// is taller than this 12 px box, so LVGL counted each swatch as
-		// scrollable and drew its tiny grey scrollbar pill inside the colour
-		// chip -- the cool specks that showed up over the amber strip.
-		lv_obj_set_scrollable(swatch, false);
-		theme_palette_swatches[i] = swatch;
-	}
-
-	function_glyph_card = theme_preview_card(container, "appearance_function_glyphs", compact);
-	lv_obj_t *glyph_row = lv_obj_create(function_glyph_card);
-	lv_obj_set_size(glyph_row, lv_pct(100), 24);
-	lv_obj_set_style_bg_opa(glyph_row, LV_OPA_TRANSP, 0);
-	lv_obj_set_style_border_width(glyph_row, 0, 0);
-	lv_obj_set_style_pad_all(glyph_row, 0, 0);
-	lv_obj_set_style_pad_column(glyph_row, 10, 0);
-	lv_obj_set_flex_flow(glyph_row, LV_FLEX_FLOW_ROW);
-	lv_obj_set_flex_align(glyph_row, LV_FLEX_ALIGN_SPACE_AROUND, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-	static const lv_image_dsc_t *const glyphs[4] = {&icon_music2, &icon_play_status, &icon_wifi, &icon_equalizer};
-	for (int i = 0; i < 4; i++) {
-		lv_obj_t *icon = lv_image_create(glyph_row);
-		lv_image_set_src(icon, glyphs[i]);
-		lv_obj_add_style(icon, &theme_style_icon, 0);
-		lv_obj_set_size(icon, 18, 18);
-		lv_image_set_inner_align(icon, LV_IMAGE_ALIGN_CENTER);
-		lv_image_set_scale(icon, (uint32_t)(LV_SCALE_NONE * 18 / LV_MAX((int)glyphs[i]->header.w,
-																(int)glyphs[i]->header.h)));
-		function_glyph_icons[i] = icon;
-	}
-	appearance_preview_refresh();
-}
-
 void appearance_init(gui_config_t *cfg) {
 	const bool compact = cfg->screen_width < 320;
 	lv_obj_t *container = settingsrow_page(appearance_screen, cfg, "appearance");
@@ -572,16 +403,6 @@ void appearance_init(gui_config_t *cfg) {
 
 	theme_buttons[THEME_KIND_DARK] = make_theme_choice(row, "appearance_dark", THEME_KIND_DARK, compact);
 	theme_buttons[THEME_KIND_LIGHT] = make_theme_choice(row, "appearance_light", THEME_KIND_LIGHT, compact);
-	theme_buttons[THEME_KIND_TOKYO_NIGHT] =
-		make_theme_choice(row, "appearance_tokyo_night", THEME_KIND_TOKYO_NIGHT, compact);
-	theme_buttons[THEME_KIND_AMBER_ON_BLACK] = make_theme_choice(row,
-		compact ? "appearance_amber_short" : "appearance_amber_on_black", THEME_KIND_AMBER_ON_BLACK, compact);
-	theme_buttons[THEME_KIND_OLED] = make_theme_choice(row, "appearance_oled", THEME_KIND_OLED, compact);
-
-	// Compact palette and function-glyph examples for Tokyo Night, Amber on
-	// Black and OLED, immediately after the theme switch. Hidden for Dark/Light
-	// so their existing Appearance page remains unchanged.
-	build_theme_previews(container, compact);
 
 	settingsrow_toggle(container, "appearance_main_menu_icons_only", &main_menu_icons_toggle, main_menu_icons_cb);
 	if (main_menu_icons_only()) {
@@ -786,7 +607,6 @@ void appearance_init(gui_config_t *cfg) {
 	theme_register_refresh(refresh_clock_buttons);
 	theme_register_refresh(refresh_accent_buttons);
 	theme_register_refresh(refresh_font_pills);
-	theme_register_refresh(appearance_preview_refresh);
 
 	// The card's fonts again on every visit: one copied over the USB cable
 	// while the player was running is offered the next time this page comes

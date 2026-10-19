@@ -5,22 +5,17 @@
 
 #include "lvgl/lvgl.h"
 
-// The built-in appearances. Dark and Light keep their existing palettes;
-// Tokyo Night, Amber on Black and OLED add three dark palettes designed for
-// the V1. OLED is true black with white as its accent.
+// The built-in appearances: Dark and Light.
 typedef enum {
 	THEME_KIND_DARK = 0,
 	THEME_KIND_LIGHT = 1,
-	THEME_KIND_TOKYO_NIGHT = 2,
-	THEME_KIND_AMBER_ON_BLACK = 3,
-	THEME_KIND_OLED = 4,
 } theme_kind_t;
 
-#define THEME_KIND_COUNT 5
+#define THEME_KIND_COUNT 2
 
-// Fixed semantic accents used by Tokyo Night's function-matched glyphs.
-// Amber on Black and OLED map every icon role to their accent (signal amber,
-// white); Dark and Light continue to use their existing single accent.
+// Semantic accents for the V1's function-matched glyphs. Dark and Light
+// resolve every role to the chosen accent (or secondary text for muted), so
+// the glyphs still carry the destination's meaning through the layout.
 typedef enum {
 	THEME_SEMANTIC_BLUE,
 	THEME_SEMANTIC_CYAN,
@@ -31,9 +26,8 @@ typedef enum {
 	THEME_SEMANTIC_MUTED,
 } theme_semantic_t;
 
-// Role-specific colors from the reference Now Playing screen. The Amber theme
-// uses the exact cream, amber and dark-orange steps, OLED the matching steps
-// of grey; other themes map these to their ordinary text/accent colors.
+// Role-specific colors from the reference Now Playing screen. Dark and Light
+// map these to their ordinary text/accent colours.
 typedef enum {
 	THEME_PLAYER_CHROME_PRIMARY,
 	THEME_PLAYER_CHROME_SECONDARY,
@@ -46,8 +40,7 @@ typedef enum {
 } theme_player_chrome_t;
 
 // The handful of colours the whole UI is built from. Everything on screen
-// pulls from the active one; Tokyo Night, Amber on Black and OLED remain dark
-// palettes for the existing dark/light-specific layout decisions.
+// pulls from the active one.
 typedef struct {
 	lv_color_t screen_bg;	   // page background
 	lv_color_t surface;		   // list rows, cards
@@ -74,16 +67,12 @@ extern lv_style_t theme_style_switch;
 extern lv_style_t theme_style_switch_checked; // image_recolor for monochrome icons
 
 // The knob of a switch that is on. It sits on the accent-coloured track, so it
-// takes theme_on_accent(): the white it has always been, and black on a white
-// accent (OLED), where a white knob would vanish into the track.
+// takes theme_on_accent().
 // theme_apply_switch() adds it with LV_PART_KNOB | LV_STATE_CHECKED.
 extern lv_style_t theme_style_switch_knob_checked;
 
-// Two states of the track that only OLED draws differently; for every other
-// theme both styles are empty. While the switch is on, the ring OLED draws
-// around an off track takes the accent, so the track is one solid pill. While
-// it is disabled, the whole switch is faded rather than washed with the
-// default theme's light grey, which on a black track would be a grey fill.
+// Two states of the track that no built-in theme draws differently; they stay
+// empty and are kept for the switch helper's shape.
 extern lv_style_t theme_style_switch_track_checked;
 extern lv_style_t theme_style_switch_disabled;
 
@@ -126,32 +115,28 @@ void theme_notify_screen_shown(lv_obj_t *screen);
 
 const theme_palette_t *theme(void);
 // The subtle accent-tinted surface shared by the dark themes' mini-player
-// and Music browse tiles. OLED's is plain black, like the rest of its cards.
+// and Music browse tiles.
 lv_color_t theme_now_playing_fill(void);
 bool theme_is_dark(void);
+// Absent from this tree. Kept as predicates because the pages still ask --
+// their branches resolve to the ordinary Dark/Light drawing, which is what a
+// V1 shows now.
 bool theme_is_tokyo_night(void);
 bool theme_is_amber_on_black(void);
 bool theme_is_oled(void);
-// The single-hue palettes, Amber on Black and OLED: every glyph and status
-// mark wears the accent, and nothing borrows a second hue (no Bluetooth blue,
-// codec colours or balanced-output gold). The roles still come from the
-// active palette, so each keeps its own colours.
 bool theme_is_monochrome(void);
-// Tokyo Night, Amber on Black and OLED use the same function-matched icon and
-// compact V1 layouts. Their palettes and semantic hues remain distinct.
+// True: the function-matched icons and the compact V1 layouts are the only
+// ones this tree draws. They used to be tied to the removed palettes.
 bool theme_uses_function_glyphs(void);
 theme_kind_t theme_get_kind(void);
 
-// Tokyo Night's blue, cyan, violet, green, amber, red and muted roles. Amber
-// on Black and OLED map every icon role to their accent; in Dark/Light they
-// resolve to the chosen accent (or secondary text for muted).
+// Dark and Light resolve every icon role to the chosen accent, with muted
+// left to secondary text.
 lv_color_t theme_semantic_color(theme_semantic_t role);
 lv_color_t theme_player_chrome_color(theme_player_chrome_t role);
 
-// What text and marks drawn on an accent-coloured fill wear: white, as they
-// always have, unless the accent is so light that white would not read on it
-// -- OLED's white accent, where they turn black. Read at paint time, like
-// every colour that follows the accent.
+// What text and marks drawn on an accent-coloured fill wear: white, unless the
+// accent is so light that white would not read on it.
 lv_color_t theme_on_accent(void);
 // The same rule for any other fill: white, or black on a fill that light.
 lv_color_t theme_ink_on(lv_color_t fill);
@@ -159,25 +144,19 @@ lv_color_t theme_ink_on(lv_color_t fill);
 bool theme_color_is_light(lv_color_t c);
 
 // What the file browser recolours its folder glyphs to, and nothing else on
-// the page. Tokyo Night answers with the violet of its own palette; every
-// other theme with the shared icon colour it has always used, so the page is
-// unchanged outside Tokyo Night.
+// the page: the semantic green, which is the accent.
 //
 // Read at paint time: a hand-set colour is a snapshot, so the page asks again
 // whenever the palette moves.
 lv_color_t theme_browser_folder_color(void);
 
-// Switches between Dark and Light, and repaints the UI. The added palettes
-// are treated as dark by the legacy toggle, so one toggle from any goes to Light.
+// Switches between Dark and Light, and repaints the UI.
 void theme_toggle(void);
 
 // The accent colour, chosen from a fixed set of presets (Appearance > Accent
 // colour): 0 blue (default), 1 red, 2 orange, 3 yellow, 4 lime, 5 green,
 // 6 cyan, 7 indigo, 8 purple, 9 pink, 10 brown, 11 slate. Dark and Light
-// retain the same presets; Tokyo Night defaults to its own blue (#7aa2f7),
-// Amber on Black to amber (#ffad2e), OLED to white (#ffffff), and all three
-// honor any explicitly selected non-default accent.
-// Persists in the config.
+// share the same presets. Persists in the config.
 #define THEME_ACCENT_COUNT 12
 lv_color_t theme_accent_preset(int index);
 int theme_get_accent(void);

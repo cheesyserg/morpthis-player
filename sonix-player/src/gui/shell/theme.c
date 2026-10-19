@@ -54,66 +54,8 @@ static theme_palette_t palette_light = {
 	.dark = false,
 };
 
-// Tokyo Night, matching the approved V1 mockup. There are no extra font or
-// bitmap packs: the menu glyphs reuse the existing generated icons.
-static theme_palette_t palette_tokyo = {
-	.screen_bg = LV_COLOR_MAKE(26, 27, 38),       // #1a1b26
-	.surface = LV_COLOR_MAKE(36, 40, 59),         // #24283b
-	.surface_pressed = LV_COLOR_MAKE(45, 53, 84), // #2d3554
-	.panel = LV_COLOR_MAKE(22, 22, 30),           // #16161e
-	.cover_bg = LV_COLOR_MAKE(22, 22, 30),
-	.text_primary = LV_COLOR_MAKE(192, 202, 245), // #c0caf5
-	.text_secondary = LV_COLOR_MAKE(169, 177, 214), // #a9b1d6
-	.accent = LV_COLOR_MAKE(122, 162, 247),       // #7aa2f7
-	.dark = true,
-};
-
-// Amber on Black follows the same V1 screen layouts as Tokyo Night, with the
-// distinct cream, golden-amber and dark-orange roles sampled from the
-// reference Now Playing screen.
-static theme_palette_t palette_amber = {
-	.screen_bg = LV_COLOR_MAKE(10, 9, 7),          // #0a0907
-	.surface = LV_COLOR_MAKE(25, 19, 10),          // #19130a
-	.surface_pressed = LV_COLOR_MAKE(37, 25, 7),   // #251907
-	.panel = LV_COLOR_MAKE(5, 5, 5),              // #050505
-	.cover_bg = LV_COLOR_MAKE(5, 5, 5),
-	.text_primary = LV_COLOR_MAKE(255, 242, 207),  // #fff2cf
-	.text_secondary = LV_COLOR_MAKE(243, 186, 92), // #f3ba5c
-	.accent = LV_COLOR_MAKE(255, 173, 46),         // #ffad2e
-	.dark = true,
-};
-
-// OLED: true black, white type and white as its accent, for panels that switch
-// a black pixel off. Nothing is filled grey: the page, the status bar, the
-// player's deck, the cards and the idle pills and buttons are all the same
-// black, and the layout is carried by the type and the glyphs alone. Every
-// grey the theme still draws -- the second line, the quiet controls, a track
-// -- is a multiple of eight, which survives the panel's RGB565 exactly: a step
-// in between lands on different levels in the green channel and the red/blue
-// ones, and a neutral grey comes out faintly green or magenta.
-static theme_palette_t palette_oled = {
-	.screen_bg = LV_COLOR_MAKE(0, 0, 0),            // #000000
-	.surface = LV_COLOR_MAKE(0, 0, 0),              // #000000
-	.surface_pressed = LV_COLOR_MAKE(0, 0, 0),      // #000000
-	.panel = LV_COLOR_MAKE(0, 0, 0),                // #000000
-	.cover_bg = LV_COLOR_MAKE(0, 0, 0),
-	.text_primary = LV_COLOR_MAKE(255, 255, 255),   // #ffffff
-	.text_secondary = LV_COLOR_MAKE(160, 160, 160), // #a0a0a0
-	.accent = LV_COLOR_MAKE(255, 255, 255),         // #ffffff
-	.dark = true,
-};
-
-// With no fill to darken, OLED still has to show a press: a row or a button
-// under a finger flashes this grey, the only grey that is ever a fill. A quiet
-// control that would vanish on the black -- an off switch's track, a dialog's
-// Cancel, an idle quick-panel circle -- is drawn as a ring instead.
-#define OLED_PRESSED_LEVEL 48 // #303030
-#define OLED_RING_LEVEL 96    // #606060
-#define OLED_RING_WIDTH 2
-
-// Whether white type stops reading on a fill. Every accent the presets had
-// before OLED stays below the line -- the lightest of them, Amber's #ffad2e,
-// weighs about 183 -- and OLED's white is far above it.
+// Whether white type stops reading on a fill. The lightest of the accent
+// presets weighs about 183, so only a deliberately pale accent crosses it.
 #define ON_ACCENT_DARK_INK_LUMA 200
 
 bool theme_color_is_light(lv_color_t c) {
@@ -121,19 +63,13 @@ bool theme_color_is_light(lv_color_t c) {
 }
 
 // The selected preset is kept apart from `active` because dynamic tint points
-// `active` at a derived copy rather than at any of the five presets.
+// `active` at a derived copy rather than at either preset.
 static theme_kind_t selected_kind = THEME_KIND_DARK;
 
 static theme_palette_t *selected_palette(void) {
 	switch (selected_kind) {
 	case THEME_KIND_LIGHT:
 		return &palette_light;
-	case THEME_KIND_TOKYO_NIGHT:
-		return &palette_tokyo;
-	case THEME_KIND_AMBER_ON_BLACK:
-		return &palette_amber;
-	case THEME_KIND_OLED:
-		return &palette_oled;
 	case THEME_KIND_DARK:
 	default:
 		return &palette_dark;
@@ -173,18 +109,8 @@ static const lv_color_t ACCENT_COLORS[THEME_ACCENT_COUNT] = {
 static int accent_index;
 
 static lv_color_t default_accent(theme_kind_t kind) {
-	switch (kind) {
-	case THEME_KIND_TOKYO_NIGHT:
-		return lv_color_make(122, 162, 247); // Tokyo Night blue
-	case THEME_KIND_AMBER_ON_BLACK:
-		return lv_color_make(255, 173, 46); // Amber on Black signal
-	case THEME_KIND_OLED:
-		return lv_color_make(255, 255, 255); // OLED white
-	case THEME_KIND_DARK:
-	case THEME_KIND_LIGHT:
-	default:
-		return ACCENT_COLORS[0];
-	}
+	(void)kind;
+	return ACCENT_COLORS[0];
 }
 
 // Where the six presets of the old palette sit in this one: a config written
@@ -197,8 +123,8 @@ lv_color_t theme_accent_preset(int index) {
 	if (index < 0 || index >= THEME_ACCENT_COUNT) {
 		index = 0;
 	}
-	// The added palettes have their own defaults. An explicitly saved
-	// non-default accent still carries across themes like Dark and Light.
+	// Slot zero is the shared blue default; the other slots are the same in
+	// both palettes.
 	return index == 0 ? default_accent(selected_kind) : ACCENT_COLORS[index];
 }
 
@@ -291,9 +217,7 @@ static void apply_palette(void) {
 	lv_style_set_bg_color(&theme_style_card, active->surface);
 	lv_style_set_text_color(&theme_style_card, active->text_primary);
 
-	bool oled = selected_kind == THEME_KIND_OLED;
-	lv_color_t pressed = oled ? lv_color_make(OLED_PRESSED_LEVEL, OLED_PRESSED_LEVEL, OLED_PRESSED_LEVEL) : active->surface_pressed;
-	lv_style_set_bg_color(&theme_style_card_pressed, pressed);
+	lv_style_set_bg_color(&theme_style_card_pressed, active->surface_pressed);
 
 	lv_style_set_text_color(&theme_style_text, active->text_primary);
 	lv_style_set_text_color(&theme_style_text_dim, active->text_secondary);
@@ -301,33 +225,13 @@ static void apply_palette(void) {
 	lv_style_set_image_recolor(&theme_style_icon, active->text_primary);
 
 	lv_style_set_bg_color(&theme_style_switch, active->surface_pressed);
-	// The ring only exists on OLED. Elsewhere the property is left out of the
-	// style altogether, so the controls that carry it look exactly as before.
-	if (oled) {
-		lv_style_set_border_width(&theme_style_switch, OLED_RING_WIDTH);
-		lv_style_set_border_color(&theme_style_switch, lv_color_make(OLED_RING_LEVEL, OLED_RING_LEVEL, OLED_RING_LEVEL));
-		lv_style_set_border_opa(&theme_style_switch, LV_OPA_COVER);
-	} else {
-		lv_style_remove_prop(&theme_style_switch, LV_STYLE_BORDER_WIDTH);
-		lv_style_remove_prop(&theme_style_switch, LV_STYLE_BORDER_COLOR);
-		lv_style_remove_prop(&theme_style_switch, LV_STYLE_BORDER_OPA);
-	}
-	// A switch that is on: the ring takes the accent and closes up with the
-	// track. A disabled one: the default theme washes it 50% towards a light
-	// grey, so OLED turns the wash off and fades the whole switch instead.
-	if (oled) {
-		// The track under the indicator goes white too, so the two rounded
-		// edges have nothing dark to blend into where they meet.
-		lv_style_set_bg_color(&theme_style_switch_track_checked, active->accent);
-		lv_style_set_border_color(&theme_style_switch_track_checked, active->accent);
-		lv_style_set_recolor_opa(&theme_style_switch_disabled, LV_OPA_TRANSP);
-		lv_style_set_opa(&theme_style_switch_disabled, LV_OPA_40);
-	} else {
-		lv_style_remove_prop(&theme_style_switch_track_checked, LV_STYLE_BG_COLOR);
-		lv_style_remove_prop(&theme_style_switch_track_checked, LV_STYLE_BORDER_COLOR);
-		lv_style_remove_prop(&theme_style_switch_disabled, LV_STYLE_RECOLOR_OPA);
-		lv_style_remove_prop(&theme_style_switch_disabled, LV_STYLE_OPA);
-	}
+	lv_style_remove_prop(&theme_style_switch, LV_STYLE_BORDER_WIDTH);
+	lv_style_remove_prop(&theme_style_switch, LV_STYLE_BORDER_COLOR);
+	lv_style_remove_prop(&theme_style_switch, LV_STYLE_BORDER_OPA);
+	lv_style_remove_prop(&theme_style_switch_track_checked, LV_STYLE_BG_COLOR);
+	lv_style_remove_prop(&theme_style_switch_track_checked, LV_STYLE_BORDER_COLOR);
+	lv_style_remove_prop(&theme_style_switch_disabled, LV_STYLE_RECOLOR_OPA);
+	lv_style_remove_prop(&theme_style_switch_disabled, LV_STYLE_OPA);
 	lv_style_set_bg_color(&theme_style_switch_checked, active->accent);
 	lv_style_set_bg_color(&theme_style_switch_knob_checked, theme_on_accent());
 
@@ -401,16 +305,12 @@ void theme_init(void) {
 	lv_style_set_radius(&theme_style_slider_track, LV_RADIUS_CIRCLE);
 
 	// Read the named theme choice when present; configs from older builds have
-	// only `dark_theme`, so they keep their original Dark/Light setting.
+	// only `dark_theme`, so they keep their original Dark/Light setting. A
+	// palette this build no longer has (tokyo-night, amber-on-black, oled)
+	// falls through to that same boolean, which is true by default.
 	const char *saved_theme = config_get("ui", "theme", NULL);
 	if (saved_theme && strcmp(saved_theme, "light") == 0) {
 		selected_kind = THEME_KIND_LIGHT;
-	} else if (saved_theme && strcmp(saved_theme, "tokyo-night") == 0) {
-		selected_kind = THEME_KIND_TOKYO_NIGHT;
-	} else if (saved_theme && strcmp(saved_theme, "amber-on-black") == 0) {
-		selected_kind = THEME_KIND_AMBER_ON_BLACK;
-	} else if (saved_theme && strcmp(saved_theme, "oled") == 0) {
-		selected_kind = THEME_KIND_OLED;
 	} else if (saved_theme && strcmp(saved_theme, "dark") == 0) {
 		selected_kind = THEME_KIND_DARK;
 	} else {
@@ -418,8 +318,7 @@ void theme_init(void) {
 	}
 
 	// The marker the boot script reads has to agree with the setting too, not
-	// only with the theme. The added palettes use the dark variant of that
-	// legacy light/dark boot-logo switch.
+	// only with the theme.
 	bootlogo_set(theme_boot_screen(), selected_palette()->dark);
 
 	// The accent slot is shared across themes; slot zero resolves to each new
@@ -441,9 +340,6 @@ void theme_init(void) {
 	}
 	palette_dark.accent = ACCENT_COLORS[accent_index];
 	palette_light.accent = ACCENT_COLORS[accent_index];
-	palette_tokyo.accent = accent_index == 0 ? default_accent(THEME_KIND_TOKYO_NIGHT) : ACCENT_COLORS[accent_index];
-	palette_amber.accent = accent_index == 0 ? default_accent(THEME_KIND_AMBER_ON_BLACK) : ACCENT_COLORS[accent_index];
-	palette_oled.accent = accent_index == 0 ? default_accent(THEME_KIND_OLED) : ACCENT_COLORS[accent_index];
 
 	dynamic_tint = config_get_bool("ui", "dynamic_tint", false);
 
@@ -456,9 +352,9 @@ void theme_apply_slider_knob(lv_obj_t *slider) {
 		return;
 	}
 	bool dark = theme()->dark;
-	// The white knob sits at the end of the accent fill. On a light accent
-	// (OLED's white) the hairline is not enough to tell the two apart, so the
-	// knob gets a solid black ring, which on a black page reads as a gap.
+	// The white knob sits at the end of the accent fill. On a pale accent the
+	// hairline is not enough to tell the two apart, so the knob gets a solid
+	// black ring, which on a dark page reads as a gap.
 	bool solid = dark && theme_color_is_light(theme()->accent);
 	lv_obj_set_style_border_color(slider, dark ? lv_color_black() : lv_color_make(120, 120, 120), LV_PART_KNOB);
 	lv_obj_set_style_border_opa(slider, dark && !solid ? LV_OPA_10 : LV_OPA_COVER, LV_PART_KNOB);
@@ -498,30 +394,24 @@ void theme_register_refresh(theme_refresh_cb_t cb) {
 const theme_palette_t *theme(void) { return active; }
 
 lv_color_t theme_now_playing_fill(void) {
-	// OLED keeps even this one black: a tenth of its white accent would be
-	// exactly the grey card it leaves out.
-	if (selected_kind == THEME_KIND_OLED) {
-		return active->surface;
-	}
 	return lv_color_mix(active->accent, active->surface, LV_OPA_10);
 }
 
 bool theme_is_dark(void) { return active->dark; }
 
-bool theme_is_tokyo_night(void) { return selected_kind == THEME_KIND_TOKYO_NIGHT; }
+// The three palettes these name were removed for the V1-only tree. The pages
+// still ask, and take their ordinary Dark/Light drawing.
+bool theme_is_tokyo_night(void) { return false; }
 
-bool theme_is_amber_on_black(void) { return selected_kind == THEME_KIND_AMBER_ON_BLACK; }
+bool theme_is_amber_on_black(void) { return false; }
 
-bool theme_is_oled(void) { return selected_kind == THEME_KIND_OLED; }
+bool theme_is_oled(void) { return false; }
 
-bool theme_is_monochrome(void) {
-	return selected_kind == THEME_KIND_AMBER_ON_BLACK || selected_kind == THEME_KIND_OLED;
-}
+bool theme_is_monochrome(void) { return false; }
 
-bool theme_uses_function_glyphs(void) {
-	return selected_kind == THEME_KIND_TOKYO_NIGHT || selected_kind == THEME_KIND_AMBER_ON_BLACK ||
-		   selected_kind == THEME_KIND_OLED;
-}
+// The compact V1 layout and the function-matched glyphs are what this tree
+// draws, for either palette.
+bool theme_uses_function_glyphs(void) { return true; }
 
 lv_color_t theme_ink_on(lv_color_t fill) { return theme_color_is_light(fill) ? lv_color_black() : lv_color_white(); }
 
@@ -530,120 +420,21 @@ lv_color_t theme_on_accent(void) { return theme_ink_on(active->accent); }
 theme_kind_t theme_get_kind(void) { return selected_kind; }
 
 lv_color_t theme_semantic_color(theme_semantic_t role) {
-	if (role == THEME_SEMANTIC_MUTED) {
-		// The monochrome palettes' icons all share the same signal colour;
-		// reserve their secondary tone for labels and surfaces, not
-		// destination glyphs.
-		return theme_is_monochrome() ? active->accent : active->text_secondary;
-	}
-	// Amber on Black and OLED are intentionally monochrome: blue, cyan,
-	// purple, green, amber and red roles all resolve to the chosen accent.
-	if (selected_kind != THEME_KIND_TOKYO_NIGHT) {
-		return active->accent;
-	}
-
-	switch (role) {
-	case THEME_SEMANTIC_BLUE:
-		return active->accent;
-	case THEME_SEMANTIC_CYAN:
-		return lv_color_make(125, 207, 255); // #7dcfff
-	case THEME_SEMANTIC_PURPLE:
-		return lv_color_make(187, 154, 247); // #bb9af7
-	case THEME_SEMANTIC_GREEN:
-		return lv_color_make(158, 206, 106); // #9ece6a
-	case THEME_SEMANTIC_AMBER:
-		return lv_color_make(224, 175, 104); // #e0af68
-	case THEME_SEMANTIC_RED:
-		return lv_color_make(247, 118, 142); // #f7768e
-	case THEME_SEMANTIC_MUTED:
-	default:
-		return active->text_secondary;
-	}
+	// Dark and Light resolve every destination glyph to the chosen accent;
+	// muted labels keep the secondary text colour.
+	return role == THEME_SEMANTIC_MUTED ? active->text_secondary : active->accent;
 }
 
-// The file browser's folders are the one thing in the interface that does not
-// wear a shared colour: Tokyo Night gives them its violet -- the hue its Now
-// Playing deck already uses -- and nowhere else is it spent. Every other
-// palette answers with the colour it has always used here, so outside Tokyo
-// Night the page is unchanged.
+// The file browser's folders wear the semantic green, which resolves to the
+// accent on both palettes.
 //
 // The names on the rows are not part of this: they read in the ordinary text
 // colour, the same one the library lists write theirs in.
 lv_color_t theme_browser_folder_color(void) {
-	if (selected_kind == THEME_KIND_TOKYO_NIGHT) {
-		return theme_semantic_color(THEME_SEMANTIC_PURPLE); // #bb9af7, the palette's violet
-	}
-	// Unchanged from before: the signal green a folder wears on the other
-	// function-glyph palettes (their accent), and the plain text colour
-	// everywhere else.
-	return theme_uses_function_glyphs() ? theme_semantic_color(THEME_SEMANTIC_GREEN) : active->text_primary;
+	return theme_semantic_color(THEME_SEMANTIC_GREEN);
 }
 
 lv_color_t theme_player_chrome_color(theme_player_chrome_t role) {
-	if (selected_kind == THEME_KIND_AMBER_ON_BLACK) {
-		switch (role) {
-		case THEME_PLAYER_CHROME_PRIMARY:
-			return lv_color_make(255, 242, 207); // #fff2cf
-		case THEME_PLAYER_CHROME_SECONDARY:
-			return lv_color_make(243, 186, 92); // #f3ba5c
-		case THEME_PLAYER_CHROME_MUTED:
-			return lv_color_make(185, 116, 36); // #b97424
-		case THEME_PLAYER_CHROME_PLAYBACK:
-			return lv_color_make(156, 90, 13); // #9c5a0d
-		case THEME_PLAYER_CHROME_PROGRESS_REST:
-			return lv_color_make(104, 64, 18); // #684012
-		case THEME_PLAYER_CHROME_CHEVRON:
-			return lv_color_make(208, 139, 53); // #d08b35
-		case THEME_PLAYER_CHROME_SHUFFLE_IDLE:
-			return lv_color_make(114, 70, 19); // #724613
-		case THEME_PLAYER_CHROME_OVERFLOW:
-			return lv_color_make(189, 118, 38); // #bd7626
-		}
-	}
-
-	// OLED takes the same roles in steps of grey: white for the type that
-	// matters, the palette's grey for the second line, and the quiet controls
-	// dimmed further. The playback glyph and the progress bar wear the accent,
-	// which is white unless another one has been picked.
-	if (selected_kind == THEME_KIND_OLED) {
-		switch (role) {
-		case THEME_PLAYER_CHROME_PRIMARY:
-		case THEME_PLAYER_CHROME_CHEVRON:
-			return active->text_primary;
-		case THEME_PLAYER_CHROME_SECONDARY:
-			return active->text_secondary;
-		case THEME_PLAYER_CHROME_MUTED:
-		case THEME_PLAYER_CHROME_OVERFLOW:
-			return lv_color_make(136, 136, 136); // #888888
-		case THEME_PLAYER_CHROME_PLAYBACK:
-			return active->accent;
-		case THEME_PLAYER_CHROME_PROGRESS_REST:
-			return lv_color_make(48, 48, 48); // #303030
-		case THEME_PLAYER_CHROME_SHUFFLE_IDLE:
-			return lv_color_make(96, 96, 96); // #606060
-		}
-	}
-
-	// Tokyo Night's Now Playing deck is drawn from three of its own hues:
-	// the track name, the format line and the playback glyph wear the violet,
-	// while the idle shuffle and the overflow button take the comment grey --
-	// quiet controls, the way the palette uses #565f89 elsewhere. The artist
-	// name, favourite star and skip glyphs ask for the cyan semantic role
-	// themselves.
-	if (selected_kind == THEME_KIND_TOKYO_NIGHT) {
-		switch (role) {
-		case THEME_PLAYER_CHROME_PRIMARY:
-		case THEME_PLAYER_CHROME_SECONDARY:
-		case THEME_PLAYER_CHROME_PLAYBACK:
-			return lv_color_make(187, 154, 247); // #bb9af7
-		case THEME_PLAYER_CHROME_SHUFFLE_IDLE:
-		case THEME_PLAYER_CHROME_OVERFLOW:
-			return lv_color_make(86, 95, 137); // #565f89
-		default:
-			break;
-		}
-	}
-
 	switch (role) {
 	case THEME_PLAYER_CHROME_PRIMARY:
 	case THEME_PLAYER_CHROME_CHEVRON:
@@ -752,19 +543,7 @@ static void refresh_all(void) {
 }
 
 static const char *theme_config_value(theme_kind_t kind) {
-	switch (kind) {
-	case THEME_KIND_LIGHT:
-		return "light";
-	case THEME_KIND_TOKYO_NIGHT:
-		return "tokyo-night";
-	case THEME_KIND_AMBER_ON_BLACK:
-		return "amber-on-black";
-	case THEME_KIND_OLED:
-		return "oled";
-	case THEME_KIND_DARK:
-	default:
-		return "dark";
-	}
+	return kind == THEME_KIND_LIGHT ? "light" : "dark";
 }
 
 void theme_set_kind(theme_kind_t kind) {
@@ -773,20 +552,16 @@ void theme_set_kind(theme_kind_t kind) {
 	}
 
 	selected_kind = kind;
-	palette_tokyo.accent = accent_index == 0 ? default_accent(THEME_KIND_TOKYO_NIGHT) : ACCENT_COLORS[accent_index];
-	palette_amber.accent = accent_index == 0 ? default_accent(THEME_KIND_AMBER_ON_BLACK) : ACCENT_COLORS[accent_index];
-	palette_oled.accent = accent_index == 0 ? default_accent(THEME_KIND_OLED) : ACCENT_COLORS[accent_index];
 	rebuild_active();
 	apply_palette();
 
 	// Keep the new string key and the old boolean in step: older builds still
-	// read `dark_theme`, while new builds can distinguish the named palettes.
+	// read `dark_theme`.
 	config_set("ui", "theme", theme_config_value(kind));
 	config_set_bool("ui", "dark_theme", active->dark);
 	config_save();
 
-	// The boot script understands only light and dark; the added palettes use
-	// the dark image and marker.
+	// The boot script understands only light and dark.
 	bootlogo_set(theme_boot_screen(), active->dark);
 	refresh_all();
 }
@@ -800,9 +575,6 @@ void theme_set_accent(int index) {
 	accent_index = index;
 	palette_dark.accent = ACCENT_COLORS[index];
 	palette_light.accent = ACCENT_COLORS[index];
-	palette_tokyo.accent = index == 0 ? default_accent(THEME_KIND_TOKYO_NIGHT) : ACCENT_COLORS[index];
-	palette_amber.accent = index == 0 ? default_accent(THEME_KIND_AMBER_ON_BLACK) : ACCENT_COLORS[index];
-	palette_oled.accent = index == 0 ? default_accent(THEME_KIND_OLED) : ACCENT_COLORS[index];
 	rebuild_active(); // the tint is drawn from the accent, so it moves with it
 	apply_palette();
 
