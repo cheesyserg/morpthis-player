@@ -5,12 +5,14 @@
 
 // The vendored TJpgDec is compiled into this translation unit under renamed
 // entry points, because LVGL links its own copy of the same library (with
-// scaling compiled OUT) and the two would otherwise collide at link time.
-#define jd_prepare morpthis_jd_prepare
-#define jd_decomp morpthis_jd_decomp
-#define jd_mcu_load morpthis_jd_mcu_load
-#define jd_mcu_output morpthis_jd_mcu_output
-#define jd_restart morpthis_jd_restart
+// scaling compiled OUT) and the two would otherwise collide at link time. The
+// prefix must not start with morpthis_: the player exports morpthis_* for the
+// app API, and an internal name under that prefix would leak into it.
+#define jd_prepare mp_jd_prepare
+#define jd_decomp mp_jd_decomp
+#define jd_mcu_load mp_jd_mcu_load
+#define jd_mcu_output mp_jd_mcu_output
+#define jd_restart mp_jd_restart
 #include "tjpgd/tjpgd_impl.inc"
 
 // Work pool for the decoder's tables and MCU buffers. The documented minimum
@@ -97,7 +99,7 @@ uint8_t *jpeg_scaled_decode(const uint8_t *data, size_t size, int min_box, int *
 	jpeg_io_t io = {.data = data, .size = size};
 
 	JDEC jd;
-	if (morpthis_jd_prepare(&jd, in_func, pool, JPEG_POOL_BYTES, &io) != JDR_OK) {
+	if (mp_jd_prepare(&jd, in_func, pool, JPEG_POOL_BYTES, &io) != JDR_OK) {
 		free(pool);
 		return NULL; // progressive, broken, or not a JPEG: caller falls back
 	}
@@ -147,7 +149,7 @@ uint8_t *jpeg_scaled_decode(const uint8_t *data, size_t size, int min_box, int *
 		return NULL;
 	}
 
-	JRESULT res = morpthis_jd_decomp(&jd, out_func, scale);
+	JRESULT res = mp_jd_decomp(&jd, out_func, scale);
 	free(pool);
 
 	if (res != JDR_OK) {
