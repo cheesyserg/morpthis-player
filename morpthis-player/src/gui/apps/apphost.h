@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include <morpthis/morpthis.h>
+
 #include "src/gui/shell/gui.h"
 #include "src/system/apps/apps.h"
 
@@ -87,6 +89,18 @@ void apphost_close_active_then(void (*done)(void *user), void *user);
 // The loaded app's raw PCM output, for the status-bar play/pause indicator.
 bool apphost_audio_active(void);
 bool apphost_audio_playing(void);
+
+// The track the loaded app published for the control centre. False when it has
+// not published one; `out` is zeroed then.
+bool apphost_app_track(morpthis_track_t *out);
+
+// Sends a transport or now-playing request to the loaded app, as if the user
+// had pressed its control. False when there is no app to take it.
+bool apphost_media_button(morpthis_button_t button);
+
+// Brings the loaded app forward (from the background if needed) and asks it to
+// show its now-playing page. False when there is nothing to show.
+bool apphost_open_now_playing(void);
 
 // Closes the loaded app's raw PCM output, if it has one. Called when the player
 // itself is about to start a local track: one writer on the DAC, and the track

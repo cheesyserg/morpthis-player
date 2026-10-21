@@ -48,6 +48,11 @@ struct morpthis_widget {
 	char *text;
 	char *image;
 
+	// An icon button's glyph child, and which glyph it is. `icon` is only used
+	// by a button; an image widget keeps its picture in `obj`.
+	lv_obj_t *icon;
+	morpthis_icon_t icon_kind;
+
 	bool visible;
 	bool enabled;
 
@@ -98,6 +103,10 @@ struct morpthis_screen {
 
 	struct morpthis_widget *widgets;
 	struct morpthis_screen *next;
+
+	// App-owned actions in the title row, to the left of the player's
+	// background button. The title reserves room for 1 + corner_count buttons.
+	int corner_count;
 };
 
 struct morpthis_app {
@@ -120,6 +129,10 @@ struct morpthis_app {
 	// handler must not then be quit by the chevron that delivered the key.
 	bool backgrounded;
 	bool background_requested;
+
+	// Set by morpthis_app_back_handled() from the BACK handler: the app moved to
+	// one of its own screens, so the guard keeps it loaded instead of quitting.
+	bool back_handled;
 
 	// Set by the app through morpthis_input_set_gameplay() and
 	// morpthis_input_set_game_menu(); read on the input thread. Active play and
@@ -153,6 +166,7 @@ void sdk_dispatch_button(morpthis_button_t button, morpthis_input_action_t actio
 // sdk_audio.c
 bool sdk_audio_app_active(void);
 bool sdk_audio_app_playing(void);
+bool sdk_audio_app_track(morpthis_track_t *out);
 void sdk_audio_app_reset(void);
 
 // sdk_ui.c

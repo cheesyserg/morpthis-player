@@ -519,8 +519,9 @@ static void load_screen(lv_obj_t *target_screen) {
 // register one, because filling it up is invisible from the outside: a dropped
 // registration shows up only as a chevron that leaves the section instead of
 // walking back through the page's own stack. That is what the log line below
-// is for.
-#define BACK_GUARDS_MAX 16
+// is for. The player's own pages account for nine; a sideloaded app adds one
+// per screen (six in the Subsonic client), so the old sixteen left no room.
+#define BACK_GUARDS_MAX 24
 
 static struct {
 	lv_obj_t *screen;

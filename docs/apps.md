@@ -122,10 +122,19 @@ thread. The app creates a screen; the player puts it up with its top bar,
 floating chevron and swipe-back, and destroys it when the app quits. The
 chevron and swipe both deliver `MORPTHIS_BUTTON_BACK` to an app that subscribed,
 then quit the app — unless the app answered by calling
-`morpthis_app_background()`, in which case it stays loaded and only its screens
-leave. A `game` screen is put up without the top bar, the chevron or the
-gesture, and the app quits itself. The mount is released after the app is
-unloaded, or immediately when the launch fails.
+`morpthis_app_background()` (it keeps playing or working in the background) or
+`morpthis_app_back_handled()` (it moved to another of its own screens). A
+backgrounded app keeps its screens, threads and raw audio; a `game` screen is
+put up without the top bar, the chevron or the gesture, and the app quits
+itself. The mount is released after the app is unloaded, or immediately when
+the launch fails.
+
+An app that holds the raw output can publish its track with
+`morpthis_audio_set_track()`. The status bar's play glyph and the control
+centre's now-playing card then show that track instead of the player's stopped
+queue; the card's play/pause, previous and next send the app the same buttons,
+and tapping the card brings the app forward with `NOW_PLAYING`, which its button
+handler turns into its own now-playing page.
 
 One app runs at a time. Tapping a tile whose app is loaded in the background
 brings its screen back; tapping a different tile puts up a confirmation that

@@ -223,6 +223,12 @@ bool morpthis_app_background(void) {
 	return apphost_background();
 }
 
+void morpthis_app_back_handled(void) {
+	if (sdk_app) {
+		sdk_app->back_handled = true;
+	}
+}
+
 // ---------------------------------------------------------------------------
 // log.h
 // ---------------------------------------------------------------------------

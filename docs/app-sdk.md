@@ -96,18 +96,23 @@ does not have to build binutils, GCC and glibc to compile a calculator.
 Keep the first version small enough to ship:
 
 - `app`: name, version, package folder, data folder, API version, `post()`,
-  `quit()`, `background()`.
+  `quit()`, `background()`, `back_handled()`.
 - `ui`: screen, label, button, list, image, slider, toast; rotation, opacity and
   `raise` for image overlays and moving parts; two-line list rows with a
   package icon, a chevron and a playing mark, matching the player's library; a
   canvas the app draws into (`create`, `buffer`, `invalidate`) and `refresh()`
-  to put it on the panel now.
-- `input`: button events, touch events, back gesture.
+  to put it on the panel now. The player's own glyphs as icon buttons and in the
+  heading row, its text sizes, dim colour and alignment, a full-height screen
+  without the title row, and `image_set_source()` for a picture downloaded to
+  the data folder.
+- `input`: button events, touch events, back gesture, and the control-centre
+  now-playing tap.
 - `audio`: play/pause/next/prev, current track, volume; or "leave the player's
   audio alone" for apps that do not need it. Plus a raw PCM stream
   (`open`/`open_ex`/`write`/`write_pcm`/`close`) for an app that mixes or
-  streams its own sound, at 16, 24 or 32 bits, and `set_playing()` for the
-  status-bar indicator.
+  streams its own sound, at 16, 24 or 32 bits, `set_playing()` for the
+  status-bar indicator, and `set_track()` to publish what is playing to the
+  control centre.
 - `fs`: the package root, the writable data folder, read/write helpers, card
   root, and a resolve call for libraries that open files themselves.
 - `log`: one line to the player's log.
@@ -163,12 +168,14 @@ screens and unloading the shared object.
 - SDK semver; `MORPTHIS_APP_API_VERSION` is the major.
 - `min_player` in the manifest is the minimum player build.
 - A plugin built for API 1 runs on every player that advertises API 1. API 2
-  adds the hi-res output, the playing flag and background operation; an API 2
+  adds the hi-res output, the playing flag, background operation, the published
+  track for the control centre, and the app-controlled BACK step; an API 2
   plugin is refused by an API 1 player, so its manifest says `min_player: 2`.
 - One app is loaded at a time. A background app keeps its screens, threads and
   audio; the player's back chevron leaves it running when the app asks for the
   background from its BACK handler, and a player-drawn corner button in the
-  heading row does the same for any non-game screen.
+  heading row does the same for any non-game screen. An app that walks up its
+  own pages calls `back_handled()` and keeps the chevron on that page.
 
 ## Testing
 

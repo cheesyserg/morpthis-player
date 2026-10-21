@@ -1,6 +1,7 @@
 #include "sdk_internal.h"
 
 #include <limits.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -126,6 +127,13 @@ static int external_buffer_ms;
 static volatile bool app_output_active;
 static volatile bool app_output_playing;
 
+// The track the app publishes for the player's control centre. Kept under its
+// own lock because an app may publish it from its mixer thread while the GUI
+// reads it for the card.
+static pthread_mutex_t track_lock = PTHREAD_MUTEX_INITIALIZER;
+static morpthis_track_t app_track;
+static bool app_track_valid;
+
 static void refresh_playback_cb(void *user) {
 	(void)user;
 	topbar_refresh_playback();
@@ -135,6 +143,21 @@ static void request_playback_refresh(void) { morpthis_app_post(refresh_playback_
 
 bool sdk_audio_app_active(void) { return app_output_active; }
 bool sdk_audio_app_playing(void) { return app_output_playing; }
+
+bool sdk_audio_app_track(morpthis_track_t *out) {
+	if (!out) {
+		return false;
+	}
+	pthread_mutex_lock(&track_lock);
+	bool valid = app_track_valid;
+	if (valid) {
+		*out = app_track;
+	} else {
+		memset(out, 0, sizeof(*out));
+	}
+	pthread_mutex_unlock(&track_lock);
+	return valid;
+}
 
 // Called by the host when the app is gone. A clean shutdown has already closed
 // the output; a force-closed app may still think it owns it, so release the DAC
@@ -150,6 +173,10 @@ void sdk_audio_app_reset(void) {
 	external_buffer_ms = 0;
 	app_output_active = false;
 	app_output_playing = false;
+	pthread_mutex_lock(&track_lock);
+	memset(&app_track, 0, sizeof(app_track));
+	app_track_valid = false;
+	pthread_mutex_unlock(&track_lock);
 	topbar_refresh_playback();
 }
 
@@ -218,6 +245,23 @@ void morpthis_audio_set_playing(bool playing) {
 	request_playback_refresh();
 }
 
+void morpthis_audio_set_track(const morpthis_track_t *track, bool playing) {
+	pthread_mutex_lock(&track_lock);
+	if (track) {
+		app_track = *track;
+		app_track_valid = true;
+	} else {
+		memset(&app_track, 0, sizeof(app_track));
+		app_track_valid = false;
+	}
+	pthread_mutex_unlock(&track_lock);
+
+	if (external_open) {
+		app_output_playing = playing;
+		request_playback_refresh();
+	}
+}
+
 void morpthis_audio_close(void) {
 	if (!external_open) {
 		return;
@@ -230,5 +274,9 @@ void morpthis_audio_close(void) {
 	external_buffer_ms = 0;
 	app_output_active = false;
 	app_output_playing = false;
+	pthread_mutex_lock(&track_lock);
+	memset(&app_track, 0, sizeof(app_track));
+	app_track_valid = false;
+	pthread_mutex_unlock(&track_lock);
 	request_playback_refresh();
 }

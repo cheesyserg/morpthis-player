@@ -13,6 +13,10 @@
 #include "src/gui/shell/toast.h"
 #include "src/gui/shell/topbar.h"
 
+static const lv_image_dsc_t *icon_for(morpthis_icon_t icon);
+static void button_click_cb(lv_event_t *e);
+static morpthis_widget_t *widget_new(morpthis_screen_t *screen, sdk_widget_kind_t kind);
+
 // ---------------------------------------------------------------------------
 // Screens
 // ---------------------------------------------------------------------------
@@ -39,6 +43,16 @@ int morpthis_ui_height(void) {
 		return (int)sdk_cfg->screen_height;
 	}
 	return (int)sdk_cfg->screen_height - sdk_content_top();
+}
+
+int morpthis_ui_full_height(void) {
+	if (!sdk_cfg) {
+		return 320;
+	}
+	if (app_is_game()) {
+		return (int)sdk_cfg->screen_height;
+	}
+	return (int)sdk_cfg->screen_height - (int)sdk_cfg->top_bar_height;
 }
 
 // A game owns the whole panel: the status bar and chevron go away, and the
@@ -151,22 +165,34 @@ static bool back_guard(void) {
 	}
 
 	// The app may answer BACK by asking for the background (a music app that is
-	// playing does). The flag is consumed here: when it is set the app has
-	// already left its screen, and quitting it now would stop the sound it just
-	// asked to keep.
+	// playing does) or by moving to another of its own screens (a library walking
+	// up a level). Either way it has already left the screen it was on, and
+	// quitting now would end work it just asked to keep.
 	app->background_requested = false;
+	app->back_handled = false;
 
-	// Let the app see the button first. Then quit regardless: in API 2 the
-	// chevron is the way out of an app, and an app that wants an internal back
-	// step puts a control on its own screen.
+	// Let the app see the button first. Then quit unless it claimed the step: in
+	// API 2 the chevron is the way out of an app, and an app that stays on its
+	// own screens says so with morpthis_app_back_handled().
 	sdk_dispatch_button(MORPTHIS_BUTTON_BACK, MORPTHIS_INPUT_PRESS);
 	sdk_dispatch_button(MORPTHIS_BUTTON_BACK, MORPTHIS_INPUT_RELEASE);
 	if (app->background_requested) {
 		app->background_requested = false;
 		return true;
 	}
+	if (app->back_handled) {
+		app->back_handled = false;
+		return true;
+	}
 	morpthis_app_quit();
 	return true;
+}
+
+// The swipe-back animates the app's page over a neutral panel, because the app
+// decides what the previous page is when BACK is delivered. Showing the
+// player's history there would promise a page the app is not going to load.
+static bool app_stays_in_page(void) {
+	return sdk_app && sdk_app->alive;
 }
 
 static void background_cb(lv_event_t *e) {
@@ -195,7 +221,7 @@ static void add_background_button(morpthis_screen_t *screen) {
 	lv_obj_add_event_cb(button, background_cb, LV_EVENT_CLICKED, NULL);
 }
 
-morpthis_screen_t *morpthis_screen_create(const char *title) {
+static morpthis_screen_t *screen_create(const char *title, bool full) {
 	if (!sdk_cfg || !sdk_app || !sdk_app->alive) {
 		errno = ENODEV;
 		return NULL;
@@ -216,13 +242,14 @@ morpthis_screen_t *morpthis_screen_create(const char *title) {
 
 	// The player owns the heading row and the space under it. The app's
 	// coordinates start below it, so its 0,0 is the first pixel it may draw.
-	// A game has no heading row: its 0,0 is the first pixel of the panel.
+	// A game has no heading row: its 0,0 is the first pixel of the panel. A
+	// full screen keeps the status bar but drops the title row.
 	const bool game = app_is_game();
-	if (!game) {
+	if (!game && !full) {
 		screen->title_label = settingsrow_title(screen->root, sdk_cfg, title ? title : "");
 		add_background_button(screen);
 	}
-	screen->content_top = game ? 0 : sdk_content_top();
+	screen->content_top = game ? 0 : (full ? (int)sdk_cfg->top_bar_height : sdk_content_top());
 
 	screen->content = lv_obj_create(screen->root);
 	lv_obj_remove_style_all(screen->content);
@@ -242,6 +269,7 @@ morpthis_screen_t *morpthis_screen_create(const char *title) {
 		switcher_attach_back_gesture(screen->root);
 		switcher_attach_back_gesture(screen->content);
 		switcher_set_back_guard(screen->root, back_guard);
+		switcher_set_back_guard_peek(screen->root, app_stays_in_page);
 	}
 
 	// Raw touch, for an app that draws its own surface. Widgets receive their
@@ -267,6 +295,55 @@ morpthis_screen_t *morpthis_screen_create(const char *title) {
 	return screen;
 }
 
+morpthis_screen_t *morpthis_screen_create(const char *title) {
+	return screen_create(title, false);
+}
+
+morpthis_screen_t *morpthis_screen_create_full(const char *title) {
+	return screen_create(title, true);
+}
+
+morpthis_widget_t *morpthis_screen_add_corner_button(morpthis_screen_t *screen, morpthis_icon_t icon,
+												 morpthis_click_cb cb, void *user) {
+	if (!screen || !sdk_cfg || !screen->title_label || app_is_game()) {
+		errno = ENOTSUP;
+		return NULL;
+	}
+
+	morpthis_widget_t *widget = widget_new(screen, SDK_WIDGET_BUTTON);
+	if (!widget) {
+		return NULL;
+	}
+	widget->obj = lv_btn_create(screen->root);
+	if (!widget->obj) {
+		morpthis_widget_destroy(widget);
+		return NULL;
+	}
+
+	// Slot 0 belongs to the player's background button; the app's actions sit
+	// to its left, and the title gives up the width.
+	settingsrow_place_corner_button(widget->obj, sdk_cfg, 1 + screen->corner_count);
+	lv_obj_set_style_bg_opa(widget->obj, LV_OPA_TRANSP, 0);
+	lv_obj_set_style_border_width(widget->obj, 0, 0);
+	lv_obj_set_style_shadow_width(widget->obj, 0, 0);
+	lv_obj_set_style_pad_all(widget->obj, 0, 0);
+
+	widget->icon = lv_image_create(widget->obj);
+	lv_image_set_src(widget->icon, icon_for(icon));
+	lv_obj_add_style(widget->icon, &theme_style_icon, 0);
+	settingsrow_scale_corner_icon(widget->icon, sdk_cfg);
+	lv_obj_center(widget->icon);
+
+	widget->icon_kind = icon;
+	widget->click_cb = cb;
+	widget->click_user = user;
+	lv_obj_add_event_cb(widget->obj, button_click_cb, LV_EVENT_CLICKED, widget);
+
+	screen->corner_count++;
+	settingsrow_title_corner_slots(screen->title_label, sdk_cfg, 1 + screen->corner_count);
+	return widget;
+}
+
 void morpthis_screen_set_title(morpthis_screen_t *screen, const char *title) {
 	if (screen && screen->title_label) {
 		lv_label_set_text(screen->title_label, title ? title : "");
@@ -278,7 +355,10 @@ void morpthis_screen_load(morpthis_screen_t *screen) {
 		return;
 	}
 	screen->app->active = screen;
-	switch_screen(screen->root);
+	// An app's pages are not steps in the player's own history: the app's BACK
+	// handler chooses what "back" means, and the player must not pop to a page
+	// the app has already left. The swipe and the chevron both arrive as BACK.
+	switch_screen_no_history(screen->root);
 }
 
 morpthis_screen_t *morpthis_screen_active(void) {
@@ -358,6 +438,140 @@ static void button_click_cb(lv_event_t *e) {
 	if (widget && widget->visible && widget->enabled && widget->click_cb) {
 		widget->click_cb(widget, widget->click_user);
 	}
+}
+
+static const lv_image_dsc_t *icon_for(morpthis_icon_t icon) {
+	switch (icon) {
+	case MORPTHIS_ICON_PLAY:
+		return &icon_play_large;
+	case MORPTHIS_ICON_PAUSE:
+		return &icon_pause_large;
+	case MORPTHIS_ICON_PREV:
+		return &icon_skip_back_large;
+	case MORPTHIS_ICON_NEXT:
+		return &icon_skip_forward_large;
+	case MORPTHIS_ICON_STOP:
+		return &icon_stop;
+	case MORPTHIS_ICON_QUEUE:
+		return &icon_list_queue;
+	case MORPTHIS_ICON_MORE:
+		return &icon_ellipsis_vertical;
+	case MORPTHIS_ICON_SEARCH:
+		return &icon_search;
+	case MORPTHIS_ICON_CLOSE:
+		return &icon_close;
+	default:
+		return &icon_music2;
+	}
+}
+
+static void flat_button_style(lv_obj_t *button) {
+	lv_obj_set_style_bg_opa(button, LV_OPA_TRANSP, 0);
+	lv_obj_set_style_border_width(button, 0, 0);
+	lv_obj_set_style_shadow_width(button, 0, 0);
+	lv_obj_set_style_pad_all(button, 0, 0);
+}
+
+morpthis_widget_t *morpthis_icon_button_create(morpthis_screen_t *screen, morpthis_icon_t icon,
+											 int size, morpthis_click_cb cb, void *user) {
+	morpthis_widget_t *widget = widget_new(screen, SDK_WIDGET_BUTTON);
+	if (!widget) {
+		return NULL;
+	}
+
+	widget->obj = lv_btn_create(screen->content);
+	if (!widget->obj) {
+		morpthis_widget_destroy(widget);
+		return NULL;
+	}
+	int side = size > 0 ? size : (sdk_ui_compact() ? 44 : 56);
+	lv_obj_set_size(widget->obj, side, side);
+	flat_button_style(widget->obj);
+
+	widget->icon = lv_image_create(widget->obj);
+	lv_image_set_src(widget->icon, icon_for(icon));
+	lv_obj_add_style(widget->icon, &theme_style_icon, 0);
+	if (sdk_ui_compact() && side < 56) {
+		lv_image_set_scale(widget->icon, 192);
+	}
+	lv_obj_center(widget->icon);
+
+	widget->icon_kind = icon;
+	widget->click_cb = cb;
+	widget->click_user = user;
+	lv_obj_add_event_cb(widget->obj, button_click_cb, LV_EVENT_CLICKED, widget);
+	lv_obj_set_event_bubble(widget->obj, true);
+	return widget;
+}
+
+void morpthis_widget_set_icon(morpthis_widget_t *widget, morpthis_icon_t icon) {
+	if (!widget || widget->kind != SDK_WIDGET_BUTTON || !widget->icon) {
+		return;
+	}
+	widget->icon_kind = icon;
+	lv_image_set_src(widget->icon, icon_for(icon));
+}
+
+static lv_obj_t *text_target(morpthis_widget_t *widget) {
+	if (!widget) {
+		return NULL;
+	}
+	if (widget->kind == SDK_WIDGET_LABEL) {
+		return widget->obj;
+	}
+	if (widget->kind == SDK_WIDGET_BUTTON) {
+		return widget->label;
+	}
+	return NULL;
+}
+
+void morpthis_widget_set_text_size(morpthis_widget_t *widget, int size) {
+	lv_obj_t *target = text_target(widget);
+	if (!target) {
+		return;
+	}
+	const lv_font_t *font;
+	if (size <= 14) {
+		font = &font_ui_14;
+	} else if (size <= 16) {
+		font = &font_ui_16;
+	} else if (size <= 18) {
+		font = &font_ui_18;
+	} else if (size <= 20) {
+		font = &font_ui_20;
+	} else if (size <= 22) {
+		font = &font_ui_22;
+	} else if (size <= 24) {
+		font = &font_ui_24;
+	} else if (size <= 26) {
+		font = &font_ui_26;
+	} else {
+		font = &font_ui_32;
+	}
+	lv_obj_set_style_text_font(target, font, 0);
+}
+
+void morpthis_widget_set_text_dim(morpthis_widget_t *widget, bool dim) {
+	lv_obj_t *target = text_target(widget);
+	if (!target) {
+		return;
+	}
+	// The shared dim style follows a theme change; a local colour would not.
+	lv_obj_remove_style(target, &theme_style_text_dim, 0);
+	if (dim) {
+		lv_obj_add_style(target, &theme_style_text_dim, 0);
+	}
+}
+
+void morpthis_widget_set_text_align(morpthis_widget_t *widget, morpthis_text_align_t align) {
+	lv_obj_t *target = text_target(widget);
+	if (!target) {
+		return;
+	}
+	lv_text_align_t value = align == MORPTHIS_TEXT_CENTER   ? LV_TEXT_ALIGN_CENTER
+							: align == MORPTHIS_TEXT_RIGHT ? LV_TEXT_ALIGN_RIGHT
+														 : LV_TEXT_ALIGN_LEFT;
+	lv_obj_set_style_text_align(target, value, 0);
 }
 
 morpthis_widget_t *morpthis_label_create(morpthis_screen_t *screen, const char *text) {
@@ -504,7 +718,7 @@ int morpthis_list_add_entry(morpthis_widget_t *list, const char *title, const ch
 
 	if (icon && icon[0]) {
 		char path[APPS_FOLDER_MAX + 256];
-		if (sdk_resolve_path(icon, path, sizeof(path)) == 0 &&
+		if (morpthis_fs_resolve(icon, path, sizeof(path)) &&
 			cover_load_image_file(path, thumb, thumb, COVER_FIT_COVER, &row->icon_cover)) {
 			row->icon = lv_image_create(row->row);
 			lv_obj_set_size(row->icon, thumb, thumb);
@@ -638,7 +852,7 @@ static void image_reload(morpthis_widget_t *widget) {
 	cover_free(&widget->cover);
 
 	char path[APPS_FOLDER_MAX + 256];
-	if (sdk_resolve_path(widget->image, path, sizeof(path)) != 0) {
+	if (!morpthis_fs_resolve(widget->image, path, sizeof(path))) {
 		return;
 	}
 
@@ -671,6 +885,19 @@ morpthis_widget_t *morpthis_image_create(morpthis_screen_t *screen, const char *
 	// photograph on the UI thread.
 	image_reload(widget);
 	return widget;
+}
+
+void morpthis_image_set_source(morpthis_widget_t *image, const char *relative_path) {
+	if (!image || image->kind != SDK_WIDGET_IMAGE) {
+		return;
+	}
+	char *copy = sdk_strdup(relative_path);
+	if (!copy) {
+		return;
+	}
+	free(image->image);
+	image->image = copy;
+	image_reload(image);
 }
 
 static void slider_event_cb(lv_event_t *e) {

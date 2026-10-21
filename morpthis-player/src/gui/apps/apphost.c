@@ -230,6 +230,12 @@ static void apphost_teardown(morpthis_app_t *app) {
 		// reason. Release the DAC so the next app can take it.
 		fprintf(stderr, "apps: %s did not stop within %d ms; force-closing it\n", app->id,
 				APPS_CLOSE_TIMEOUT_MS);
+		// The screens stay, but their back guards must not: the next app needs
+		// those slots, and the guard table has no idea the app behind them is
+		// gone. Clearing is safe; the guard only dispatches BACK.
+		for (morpthis_screen_t *screen = app->screens; screen; screen = screen->next) {
+			switcher_clear_back_guard(screen->root);
+		}
 		audio_external_end();
 	}
 
@@ -352,6 +358,35 @@ void apphost_close_active_then(void (*done)(void *user), void *user) {
 bool apphost_audio_active(void) { return sdk_audio_app_active(); }
 
 bool apphost_audio_playing(void) { return sdk_audio_app_playing(); }
+
+bool apphost_app_track(morpthis_track_t *out) { return sdk_audio_app_track(out); }
+
+bool apphost_media_button(morpthis_button_t button) {
+	if (!sdk_app || !sdk_app->alive || !sdk_app->button_cb) {
+		return false;
+	}
+	sdk_dispatch_button(button, MORPTHIS_INPUT_PRESS);
+	sdk_dispatch_button(button, MORPTHIS_INPUT_RELEASE);
+	return true;
+}
+
+bool apphost_open_now_playing(void) {
+	morpthis_app_t *app = sdk_app;
+	if (!app || !app->alive || !app->active) {
+		return false;
+	}
+	// The card is usually tapped while the app plays in the background. Bring
+	// its screen back first, then let the app decide which of its pages is the
+	// now-playing one.
+	if (app->backgrounded || lv_screen_active() != app->active->root) {
+		switch_screen(app->active->root);
+	}
+	app->backgrounded = false;
+	app->background_requested = false;
+	sdk_dispatch_button(MORPTHIS_BUTTON_NOW_PLAYING, MORPTHIS_INPUT_PRESS);
+	sdk_dispatch_button(MORPTHIS_BUTTON_NOW_PLAYING, MORPTHIS_INPUT_RELEASE);
+	return true;
+}
 
 void apphost_release_audio(void) {
 	if (sdk_audio_app_active()) {

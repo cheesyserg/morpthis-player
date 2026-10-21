@@ -295,7 +295,49 @@ static void refresh_repeat_icon(void) {
 	lv_obj_set_style_image_recolor_opa(np_repeat_icon, LV_OPA_COVER, 0);
 }
 
+static void refresh_app_now_playing(void) {
+	morpthis_track_t track;
+	if (apphost_app_track(&track) && track.title[0]) {
+		scrolltext_set(np_title, track.title);
+		scrolltext_set(np_artist, track.artist[0] ? track.artist : track.album);
+	} else {
+		// A game or another app using the raw output without publishing a
+		// track. It still owns the DAC, so the card must say so rather than
+		// showing the player's stopped queue.
+		scrolltext_set(np_title, tr("quickpanel_app_audio"));
+		scrolltext_set(np_artist, "");
+	}
+
+	lv_image_set_src(np_play_icon, apphost_audio_playing() ? &icon_pause_large : &icon_play_large);
+	lv_obj_set_style_image_recolor(np_play_icon, theme()->accent, 0);
+	lv_obj_set_style_image_recolor_opa(np_play_icon, LV_OPA_COVER, 0);
+
+	lv_obj_t *const transport[] = {np_prev_btn, np_play_btn, np_next_btn};
+	for (size_t i = 0; i < sizeof(transport) / sizeof(transport[0]); i++) {
+		if (!transport[i]) {
+			continue;
+		}
+		lv_obj_remove_state(transport[i], LV_STATE_DISABLED);
+		lv_obj_set_hidden(transport[i], false);
+	}
+	lv_image_set_src(np_prev_icon, &icon_skip_back_large);
+	lv_image_set_src(np_next_icon, &icon_skip_forward_large);
+	lv_obj_set_style_image_recolor(np_prev_icon, theme()->text_primary, 0);
+	lv_obj_set_style_image_recolor(np_next_icon, theme()->text_primary, 0);
+	lv_obj_set_style_image_recolor_opa(np_prev_icon, LV_OPA_COVER, 0);
+	lv_obj_set_style_image_recolor_opa(np_next_icon, LV_OPA_COVER, 0);
+
+	// The app has no repeat mode or player-side star the card could show.
+	lv_obj_set_hidden(np_repeat_btn, true);
+	lv_obj_set_hidden(np_star_btn, true);
+}
+
 static void refresh_now_playing_card(void) {
+	if (apphost_audio_active()) {
+		refresh_app_now_playing();
+		return;
+	}
+
 	device_state_t state;
 	device_state_get(&state);
 
@@ -846,6 +888,11 @@ static void brightness_released_cb(lv_event_t *e) {
 
 static void play_cb(lv_event_t *e) {
 	(void)e;
+	if (apphost_audio_active()) {
+		apphost_media_button(MORPTHIS_BUTTON_PLAY_PAUSE);
+		refresh_now_playing_card();
+		return;
+	}
 	player_key_play_pause();
 	refresh_now_playing_card();
 }
@@ -855,14 +902,36 @@ static void play_cb(lv_event_t *e) {
 // changing episode, which stays with the physical side keys.
 static void next_cb(lv_event_t *e) {
 	(void)e;
+	if (apphost_audio_active()) {
+		apphost_media_button(MORPTHIS_BUTTON_NEXT);
+		refresh_now_playing_card();
+		return;
+	}
 	player_screen_next();
 	refresh_now_playing_card();
 }
 
 static void prev_cb(lv_event_t *e) {
 	(void)e;
+	if (apphost_audio_active()) {
+		apphost_media_button(MORPTHIS_BUTTON_PREV);
+		refresh_now_playing_card();
+		return;
+	}
 	player_screen_prev();
 	refresh_now_playing_card();
+}
+
+// The card is the way back to the app's own now-playing page. Labels are not
+// clickable by default, so the title and artist are made so; the transport
+// buttons keep their own taps.
+static void np_card_cb(lv_event_t *e) {
+	(void)e;
+	if (!apphost_audio_active()) {
+		return;
+	}
+	quickpanel_close();
+	apphost_open_now_playing();
 }
 
 static void repeat_cb(lv_event_t *e) {
@@ -2238,6 +2307,8 @@ void quickpanel_init(gui_config_t *cfg) {
 	lv_obj_set_style_text_font(np_title, bp_title_font(), 0);
 	lv_obj_set_style_text_align(np_title, LV_TEXT_ALIGN_CENTER, 0);
 	scrolltext_apply(np_title);
+	lv_obj_set_clickable(np_title, true);
+	lv_obj_add_event_cb(np_title, np_card_cb, LV_EVENT_CLICKED, NULL);
 
 	np_artist = lv_label_create(np_card);
 	lv_obj_set_width(np_artist, lv_pct(100));
@@ -2246,6 +2317,8 @@ void quickpanel_init(gui_config_t *cfg) {
 	lv_obj_set_style_text_font(np_artist, bp_artist_font(), 0);
 	lv_obj_set_style_text_align(np_artist, LV_TEXT_ALIGN_CENTER, 0);
 	scrolltext_apply(np_artist);
+	lv_obj_set_clickable(np_artist, true);
+	lv_obj_add_event_cb(np_artist, np_card_cb, LV_EVENT_CLICKED, NULL);
 
 	lv_obj_t *transport = lv_obj_create(np_card);
 	lv_obj_set_size(transport, lv_pct(100), qp_compact ? 52 : 96);
