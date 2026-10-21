@@ -25,6 +25,10 @@ on:
         description: Ref to build (branch, tag or commit). Empty builds the ref this was dispatched from.
         required: false
         type: string
+      sdk_ref:
+        description: Ref of morpthis-sdk to build against (branch, tag or commit). Empty uses main.
+        required: false
+        type: string
       publish_release_tag:
         description: Release tag to upload the built image to, replacing its assets (v1.upt, v1_md5.txt). Empty publishes nothing.
         required: false
@@ -96,6 +100,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: ${{ github.repository_owner }}/morpthis-sdk
+          ref: ${{ inputs.sdk_ref || 'main' }}
           path: morpthis-sdk
 
       # The one line every later step and every report reads. GITHUB_SHA is
@@ -108,13 +113,18 @@ jobs:
           set -euo pipefail
           sha="$(git rev-parse HEAD)"
           subject="$(git log -1 --format=%s)"
+          sdk_sha="$(git -C morpthis-sdk rev-parse HEAD)"
+          sdk_subject="$(git -C morpthis-sdk log -1 --format=%s)"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "Building $sha"
           echo "  $subject"
+          echo "SDK $sdk_sha"
+          echo "  $sdk_subject"
           {
             echo "### Built revision"
             echo '```'
-            echo "$sha  $subject"
+            echo "player  $sha  $subject"
+            echo "sdk     $sdk_sha  $sdk_subject"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -208,7 +218,14 @@ jobs:
       - name: Check the exported SDK surface
         env:
           CROSS_NM: ${{ github.workspace }}/morpthis-player/rockbox-toolchain/bin/mipsel-rockbox-linux-gnu-nm
-        run: sh morpthis-sdk/tools/check-exports.sh morpthis-player/morpthis_player
+        run: |
+          set -euo pipefail
+          sdk_sha="$(git -C morpthis-sdk rev-parse HEAD)"
+          echo "check-exports against morpthis-sdk $sdk_sha"
+          if ! sh morpthis-sdk/tools/check-exports.sh morpthis-player/morpthis_player; then
+            echo "::error::The player exports symbols this morpthis-sdk does not list. If the player needs a newer API, push morpthis-sdk first and re-run, or set sdk_ref to that commit."
+            exit 1
+          fi
 
       - name: Build v1.upt
         run: |
