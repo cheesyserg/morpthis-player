@@ -264,6 +264,7 @@ void sdk_screen_destroy(morpthis_screen_t *screen) {
 		morpthis_widget_destroy(screen->widgets);
 	}
 	if (screen->root) {
+		switcher_clear_back_guard(screen->root);
 		lv_obj_delete(screen->root);
 	}
 	free(screen);

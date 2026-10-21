@@ -37,6 +37,11 @@ void switcher_set_back_guard(lv_obj_t *screen, bool (*handler)(void));
 // the dragged page.
 void switcher_set_back_guard_peek(lv_obj_t *screen, bool (*peek)(void));
 
+// Releases a screen's entry. Screens made and destroyed at runtime -- every SDK
+// app screen is one -- must call this before deleting the object, or the table
+// keeps a dangling pointer and fills up after sixteen launches.
+void switcher_clear_back_guard(lv_obj_t *screen);
+
 // True while the player sheet is open: parks the chevron higher, in the
 // artwork's corner, instead of on the (hidden) title row.
 void back_btn_player_mode(bool in_player);

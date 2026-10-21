@@ -756,15 +756,44 @@ static bool wav_needs_conversion(const wav_info_t *info) {
 }
 
 // When non-zero, the next open_pcm_device() sizes the buffer to this many
-// milliseconds instead of its own 750.
+// milliseconds instead of its own 750. A negative value forces the frame-based
+// sizing even when "audio"/"buffer_time_ms" is set: an external source that
+// asked for 0 wants the player's usual depth, not whatever the local playback
+// config chose.
 //
-// It exists for the emulator, whose need is the reverse of the one the 750 ms
-// serve: a game has to sound a button press now, not three quarters of a second
-// later, and the short buffer doubles as its metronome -- writing 738 samples
-// per frame to a blocking PCM lets ALSA keep the 59.73 fps pace instead of an
-// estimating usleep. The short reserve is affordable because the emulator does
-// not read the card while running: the ROM is already entirely in memory.
+// The positive form exists for the emulator, whose need is the reverse of the
+// one the 750 ms serve: a game has to sound a button press now, not three
+// quarters of a second later, and the short buffer doubles as its metronome --
+// writing 738 samples per frame to a blocking PCM lets ALSA keep the 59.73 fps
+// pace instead of an estimating usleep. The short reserve is affordable because
+// the emulator does not read the card while running: the ROM is already
+// entirely in memory.
 static int pcm_forced_buffer_ms;
+
+// A period the AIC's DMA can describe in whole bursts.
+//
+// The frame-based path asks for 4096 frames and never has to think about it. A
+// time-based request does: 30 ms at 48 kHz is 1440 frames and opens, while the
+// same 30 ms at 44.1 kHz is 1323 and the driver answers EINVAL. Snapping the
+// period to a 64-byte multiple keeps the time-based buffer shallow at rates
+// whose period does not divide evenly, instead of failing the track.
+static snd_pcm_uframes_t align_period_frames(snd_pcm_uframes_t frames, unsigned int frame_bytes) {
+	if (frame_bytes == 0) {
+		return frames;
+	}
+	unsigned int a = 64, b = frame_bytes;
+	while (b != 0) {
+		unsigned int t = a % b;
+		a = b;
+		b = t;
+	}
+	unsigned int step = 64 / (a ? a : 1);
+	if (step <= 1) {
+		return frames;
+	}
+	snd_pcm_uframes_t aligned = (frames / step) * step;
+	return aligned > 0 ? aligned : step;
+}
 
 // ---------------------------------------------------------------------------
 // Gapless: the PCM that stays open between tracks
@@ -1577,12 +1606,30 @@ static snd_pcm_t *open_pcm_device_now(int channels, int sample_rate, int bits_pe
 	//   buffer_time_ms = 200
 	// The emulator asks for a much shorter buffer of its own and overrides both:
 	// see pcm_forced_buffer_ms.
-	int buffer_time_ms = pcm_forced_buffer_ms > 0 ? pcm_forced_buffer_ms : (int)config_get_int("audio", "buffer_time_ms", 0);
+	int buffer_time_ms = pcm_forced_buffer_ms > 0 ? pcm_forced_buffer_ms
+						 : pcm_forced_buffer_ms < 0 ? 0
+						 : (int)config_get_int("audio", "buffer_time_ms", 0);
 	if (buffer_time_ms > 0) {
 		unsigned int buffer_time = (unsigned int)buffer_time_ms * 1000u;   // microseconds
 		unsigned int period_time = buffer_time / 4;
 		snd_pcm_hw_params_set_buffer_time_near(pcm_handle, hw_params, &buffer_time, &dir);
 		snd_pcm_hw_params_set_period_time_near(pcm_handle, hw_params, &period_time, &dir);
+
+		// ALSA picked the frames; make sure the period is one the DMA can
+		// take (see align_period_frames()). The buffer stays four periods.
+		snd_pcm_uframes_t period_frames = 0;
+		if (snd_pcm_hw_params_get_period_size(hw_params, &period_frames, &dir) >= 0 && period_frames > 0) {
+			snd_pcm_uframes_t aligned = align_period_frames(period_frames, frame_bytes);
+			if (aligned != period_frames) {
+				fprintf(stderr, "audio: period %lu frames is not DMA-aligned; using %lu\n",
+						(unsigned long)period_frames, (unsigned long)aligned);
+				if (snd_pcm_hw_params_set_period_size_near(pcm_handle, hw_params, &aligned, &dir) >= 0) {
+					snd_pcm_uframes_t buffer_frames = aligned * 4;
+					snd_pcm_hw_params_set_buffer_size_near(pcm_handle, hw_params, &buffer_frames);
+				}
+			}
+		}
+
 		fprintf(stderr, "audio: stock-style sizing, buffer %u us / period %u us\n", buffer_time,
 				period_time);
 	} else {
@@ -1591,6 +1638,23 @@ static snd_pcm_t *open_pcm_device_now(int channels, int sample_rate, int bits_pe
 	}
 
 	err = snd_pcm_hw_params(pcm_handle, hw_params);
+
+	// The time-based request can still be refused after the alignment snap --
+	// a driver that wants a different period shape, or a rate the clock cannot
+	// divide. Rather than fail the track, use the sizing local playback has
+	// always used: eight periods of period_size frames. This is what plays
+	// 44.1 kHz through every other output path on this device. Setting
+	// buffer_time_ms to 0 also lets the memory retry below halve it.
+	if (err == -EINVAL && buffer_time_ms > 0) {
+		fprintf(stderr, "audio: time-based sizing was refused; falling back to %lu-frame periods\n",
+				(unsigned long)period_size);
+		snd_pcm_hw_params_copy(hw_params, unsized);
+		periods = 8;
+		snd_pcm_hw_params_set_periods_near(pcm_handle, hw_params, &periods, &dir);
+		snd_pcm_hw_params_set_period_size_near(pcm_handle, hw_params, &period_size, &dir);
+		err = snd_pcm_hw_params(pcm_handle, hw_params);
+		buffer_time_ms = 0;
+	}
 
 	// Out of memory is not a refusal of the format. The driver is asking the
 	// kernel for the buffer this very moment, and after hours of reading the
@@ -4634,7 +4698,7 @@ static bool external_open_locked(void) {
 	// has not played anything since boot, none at all.
 	auto_set_output();
 
-	pcm_forced_buffer_ms = external_buffer_ms;
+	pcm_forced_buffer_ms = external_buffer_ms > 0 ? external_buffer_ms : -1;
 	snd_pcm_uframes_t period = 0;
 	external_pcm = open_pcm_device(external_channels, external_rate, external_bits, &period);
 	pcm_forced_buffer_ms = 0;

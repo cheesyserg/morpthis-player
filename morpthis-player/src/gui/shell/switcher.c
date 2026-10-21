@@ -573,6 +573,20 @@ void switcher_set_back_guard_peek(lv_obj_t *screen, bool (*peek)(void)) {
 	}
 }
 
+void switcher_clear_back_guard(lv_obj_t *screen) {
+	if (!screen) {
+		return;
+	}
+	for (int i = 0; i < BACK_GUARDS_MAX; i++) {
+		if (back_guards[i].screen == screen) {
+			back_guards[i].screen = NULL;
+			back_guards[i].handler = NULL;
+			back_guards[i].peek = NULL;
+			return;
+		}
+	}
+}
+
 // True when the step back from the active page will be consumed inside that
 // page, i.e. its internal stack is not empty.
 static bool back_stays_in_page(void) {
