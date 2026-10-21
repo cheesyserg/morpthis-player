@@ -29,6 +29,15 @@ Checks include:
 - nonmutating playlist next-track look-ahead across repeat/shuffle/ordered modes;
 - exclusive decoder leases, both handoff/teardown orders, failed pre-cache retry suppression, repeat-one starting at byte zero, account-change invalidation with an outstanding lease, metadata lookup and unsupported raw codecs.
 
+## Package mount registry
+
+`make -C sonix-player/tests pkgmerp` links the real `pkgmerp.c` and wraps only
+the loop and mount syscalls. It checks that the first package mounts (the free
+slot is not looked up by its mount-point path), six sequential mounts release
+their slots, four simultaneous mounts fit and the fifth is refused, and a
+shared mount survives until the last reference is dropped. No loop devices,
+root or card are needed. It is part of `make test`.
+
 ## Software volume
 
 `make -C sonix-player/tests swvolume` checks the arithmetic of the software

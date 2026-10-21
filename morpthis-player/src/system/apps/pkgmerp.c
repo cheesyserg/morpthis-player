@@ -192,9 +192,20 @@ static int attach_loop(const char *image, char *out_device, size_t out_size,
 	return loop_fd;
 }
 
-static mount_entry_t *find_mount(const char *mount_point, bool used) {
+static mount_entry_t *find_mount(const char *mount_point) {
 	for (size_t i = 0; i < PKGMERP_MAX_MOUNTS; i++) {
-		if (mounts[i].used == used && strcmp(mounts[i].mount_point, mount_point) == 0) {
+		if (mounts[i].used && strcmp(mounts[i].mount_point, mount_point) == 0) {
+			return &mounts[i];
+		}
+	}
+	return NULL;
+}
+
+// A free slot has an empty mount_point, so it cannot be found by matching the
+// path: the lookup is only about `used`.
+static mount_entry_t *find_free(void) {
+	for (size_t i = 0; i < PKGMERP_MAX_MOUNTS; i++) {
+		if (!mounts[i].used) {
 			return &mounts[i];
 		}
 	}
@@ -206,7 +217,7 @@ bool pkgmerp_is_mounted(const char *mount_point) {
 		return false;
 	}
 	pthread_mutex_lock(&mounts_lock);
-	bool found = find_mount(mount_point, true) != NULL;
+	bool found = find_mount(mount_point) != NULL;
 	pthread_mutex_unlock(&mounts_lock);
 	return found;
 }
@@ -220,7 +231,7 @@ bool pkgmerp_mount(const char *image, const char *mount_point, char *error,
 
 	pthread_mutex_lock(&mounts_lock);
 
-	mount_entry_t *mounted = find_mount(mount_point, true);
+	mount_entry_t *mounted = find_mount(mount_point);
 	if (mounted) {
 		if (strcmp(mounted->image, image) != 0) {
 			pthread_mutex_unlock(&mounts_lock);
@@ -232,7 +243,7 @@ bool pkgmerp_mount(const char *image, const char *mount_point, char *error,
 		return true;
 	}
 
-	mount_entry_t *slot = find_mount(mount_point, false);
+	mount_entry_t *slot = find_free();
 	if (!slot) {
 		pthread_mutex_unlock(&mounts_lock);
 		set_error(error, error_size, "too many mounted packages");
@@ -289,7 +300,7 @@ bool pkgmerp_unmount(const char *mount_point, char *error, size_t error_size) {
 
 	pthread_mutex_lock(&mounts_lock);
 
-	mount_entry_t *slot = find_mount(mount_point, true);
+	mount_entry_t *slot = find_mount(mount_point);
 	if (!slot) {
 		pthread_mutex_unlock(&mounts_lock); // not ours; nothing to release
 		return true;

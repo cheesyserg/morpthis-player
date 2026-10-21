@@ -21,12 +21,28 @@ CORE = $(ROOT)/src/system/streaming/subsonic.c \
 
 .PHONY: test sanitize clean
 
-test: $(BUILD)/test_subsonic
+test: $(BUILD)/test_subsonic $(BUILD)/test_pkgmerp
 	python3 run_subsonic_tests.py $(BUILD)/test_subsonic
+	$(BUILD)/test_pkgmerp
 
 $(BUILD)/test_subsonic: test_subsonic.c support.c $(CORE) $(shell find $(ROOT)/src/system -name '*.h')
 	@mkdir -p $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ test_subsonic.c support.c $(CORE) $(LDFLAGS) $(LDLIBS)
+
+# The package mount registry: the real pkgmerp.c, with only the loop/mount
+# syscalls wrapped. It catches a free-slot lookup that also matches the mount
+# point, which made the first package mount fail with "too many".
+PKGMERP_SRC = test_pkgmerp.c $(ROOT)/src/system/apps/pkgmerp.c
+
+$(BUILD)/test_pkgmerp: $(PKGMERP_SRC) $(ROOT)/src/system/apps/pkgmerp.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(PKGMERP_SRC) $(LDFLAGS) $(LDLIBS) \
+		-Wl,--wrap=open -Wl,--wrap=open64 -Wl,--wrap=ioctl -Wl,--wrap=mount \
+		-Wl,--wrap=umount -Wl,--wrap=umount2 -Wl,--wrap=mkdir
+
+.PHONY: pkgmerp
+pkgmerp: $(BUILD)/test_pkgmerp
+	$(BUILD)/test_pkgmerp
 
 sanitize:
 	$(MAKE) BUILD=.build/sanitize CFLAGS='-O1 -g -std=gnu11 -Wall -Wextra -Werror -D_FILE_OFFSET_BITS=64 -ffunction-sections -fdata-sections -fno-omit-frame-pointer -fsanitize=address,undefined' LDFLAGS='-Wl,--gc-sections -fsanitize=address,undefined' test
