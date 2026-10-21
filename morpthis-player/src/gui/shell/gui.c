@@ -189,8 +189,6 @@ bool gui_post(void (*cb)(void *), void *user) {
 }
 
 static void post_drain_cb(lv_timer_t *timer) {
-	(void)timer;
-
 	// Reading the eventfd clears its counter. It happens here rather than in the
 	// main loop so it also applies when the safety-net timer did the waking, and
 	// the queue is drained exactly once either way.
@@ -200,19 +198,27 @@ static void post_drain_cb(lv_timer_t *timer) {
 		(void)ignored;
 	}
 
-	for (;;) {
-		pthread_mutex_lock(&post_lock);
-		if (post_count == 0) {
-			pthread_mutex_unlock(&post_lock);
-			return;
-		}
-		gui_post_t entry = post_ring[post_head];
-		post_head = (post_head + 1) % GUI_POST_MAX;
-		post_count--;
+	pthread_mutex_lock(&post_lock);
+	if (post_count == 0) {
 		pthread_mutex_unlock(&post_lock);
+		return;
+	}
+	gui_post_t entry = post_ring[post_head];
+	post_head = (post_head + 1) % GUI_POST_MAX;
+	post_count--;
+	bool more = post_count > 0;
+	pthread_mutex_unlock(&post_lock);
 
-		// Outside the lock: the callback may post in turn.
-		entry.cb(entry.user);
+	// Outside the lock: the callback may post in turn.
+	entry.cb(entry.user);
+
+	// One item per pass. Draining the whole ring here means a producer that
+	// keeps it full -- a game's 60 Hz clock, whose tick both steps and renders
+	// -- holds this callback for frame after frame, and the input timer never
+	// gets its turn. The timer is re-armed, so the next item runs on the next
+	// pass of lv_timer_handler() and a touch or a key is read in between.
+	if (more) {
+		lv_timer_ready(timer);
 	}
 }
 
