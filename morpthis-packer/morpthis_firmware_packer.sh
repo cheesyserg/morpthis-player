@@ -453,11 +453,14 @@ build_one() {
 		#
 		# A custom picture is not a file the boot script can read: the rootfs
 		# is read-only and /usr/data is not mounted yet. The player writes it
-		# into the same erase block as the marker, one page in, and the marker
-		# carries its length. The block copies it out to /tmp and hands that to
-		# the vendor's own display command. A missing picture, a bad length or
-		# a failed display falls through to the stock chain, so what a device
-		# can lose is the choice, not the boot.
+		# into the same erase block as the marker, two pages in, and the marker
+		# carries its length. Two pages rather than one because nandwrite -p
+		# pads the marker to the NAND's page size, which is 8 KiB on some of
+		# these parts; a picture one page in would have its first half
+		# overwritten by the marker. The block copies the picture out to /tmp
+		# and hands that to the vendor's own display command. A missing picture,
+		# a bad length or a failed display falls through to the stock chain, so
+		# what a device can lose is the choice, not the boot.
 		BOOT_BLOCK="# --- morpthis boot screen choice (added by the firmware packer) ---
 boot_raw=\$(nanddump -q -s 0x20000 -l 64 /dev/mtd5 -a 2>/dev/null)
 boot_rest=\${boot_raw#* }
@@ -466,7 +469,7 @@ echo \"sel=\$boot_sel raw=\$boot_raw\" > /tmp/.bootlogo_trace 2>/dev/null
 if [ \"\$boot_sel\" = \"logo:2\" ]; then
     boot_size=\$(echo \"\$boot_raw\" | sed -n 's/.*size:\\([0-9][0-9]*\\).*/\\1/p')
     if [ -n \"\$boot_size\" ] && [ \"\$boot_size\" -gt 0 ] && [ \"\$boot_size\" -le 57344 ]; then
-        nanddump -q -s 0x21000 -l \"\$boot_size\" /dev/mtd5 -a > /tmp/.bootscreen.jpg 2>/dev/null
+        nanddump -q -s 0x22000 -l \"\$boot_size\" /dev/mtd5 -a > /tmp/.bootscreen.jpg 2>/dev/null
         if [ -s /tmp/.bootscreen.jpg ]; then
             $DISPLAY_CMD /tmp/.bootscreen.jpg && { echo \"drawn=custom\" >> /tmp/.bootlogo_trace; boot_drawn=1; $LEAVE; }
         fi

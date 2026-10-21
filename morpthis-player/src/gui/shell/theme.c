@@ -270,6 +270,17 @@ void theme_set_boot_screen(int choice) {
 	bootlogo_set(choice, active->dark);
 }
 
+void theme_set_boot_screen_force(int choice) {
+	if (choice < BOOTLOGO_STOCK || choice > BOOTLOGO_CUSTOM) {
+		return;
+	}
+
+	config_set_int("ui", "boot_screen", choice);
+	config_save();
+
+	bootlogo_set_force(choice, active->dark);
+}
+
 void theme_init(void) {
 	lv_style_init(&theme_style_screen);
 	lv_style_set_bg_opa(&theme_style_screen, LV_OPA_COVER);

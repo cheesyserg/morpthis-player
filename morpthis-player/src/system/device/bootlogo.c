@@ -13,10 +13,11 @@
 // firmware's own, read out of its init script and its binary, not guesses.
 #define MTD_DEVICE "/dev/mtd5"
 #define MARKER_OFFSET "0x20000"
-// The marker's own page, and the page after it where a custom picture starts.
-// Both are page-aligned, so the marker's padded write never reaches the
-// picture and the picture's padded write never reaches the next block.
-#define IMAGE_OFFSET "0x21000"
+// The marker's own page, and the page after the padding where a custom
+// picture starts. Two pages in rather than one: nandwrite -p pads the marker
+// to the NAND's page size, which is 8 KiB on some of these parts, and a
+// picture one page in would have its first half overwritten by the marker.
+#define IMAGE_OFFSET "0x22000"
 // "theme:N logo:M size:S hash:H", padded with spaces to one fixed width. The
 // stock script reads the first seven bytes and never looks further; the
 // packer's block reads all of it.
@@ -26,6 +27,7 @@ static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static volatile bool worker_running;
 static volatile int pending_choice; // what the worker should write
 static volatile bool pending_dark;
+static volatile bool pending_force; // write even when the marker agrees
 
 // What this boot did, in two lines: the trace the boot script left in /tmp
 // before the player existed, and what the worker made of the flash marker.
@@ -133,9 +135,12 @@ static void *write_main(void *arg) {
 	for (;;) {
 		int choice;
 		bool dark;
+		bool force;
 		pthread_mutex_lock(&lock);
 		choice = pending_choice;
 		dark = pending_dark;
+		force = pending_force;
+		pending_force = false;
 		pthread_mutex_unlock(&lock);
 
 		int requested_choice = choice;
@@ -152,9 +157,10 @@ static void *write_main(void *arg) {
 
 		// Already right: nothing is written. A theme switched back and forth
 		// must not cost an erase cycle each time, and neither must a theme
-		// switch while a custom picture is applied.
+		// switch while a custom picture is applied. A forced write skips this:
+		// the marker can agree while the picture behind it is damaged.
 		char have[MARKER_LENGTH + 1];
-		if (read_marker(have) && strncmp(have, want, MARKER_LENGTH) == 0) {
+		if (!force && read_marker(have) && strncmp(have, want, MARKER_LENGTH) == 0) {
 			pthread_mutex_lock(&lock);
 			snprintf(status_buf, sizeof(status_buf), "marker agrees: %s", want);
 			pthread_mutex_unlock(&lock);
@@ -203,7 +209,7 @@ static void *write_main(void *arg) {
 		// once more. The file matters because applying a second picture keeps
 		// the same choice: only its bytes say the block is out of date.
 		pthread_mutex_lock(&lock);
-		bool changed = pending_choice != requested_choice || pending_dark != dark;
+		bool changed = pending_choice != requested_choice || pending_dark != dark || pending_force;
 		pthread_mutex_unlock(&lock);
 
 		if (!changed && requested_choice == BOOTLOGO_CUSTOM) {
@@ -289,7 +295,7 @@ bool bootlogo_custom_store(const uint8_t *jpeg, size_t len) {
 	return true;
 }
 
-void bootlogo_set(int choice, bool dark) {
+static void bootlogo_set_internal(int choice, bool dark, bool force) {
 	if (choice < BOOTLOGO_STOCK || choice > BOOTLOGO_CUSTOM) {
 		choice = BOOTLOGO_RETROSPACE;
 	}
@@ -301,6 +307,9 @@ void bootlogo_set(int choice, bool dark) {
 	pthread_mutex_lock(&lock);
 	pending_choice = choice;
 	pending_dark = dark;
+	if (force) {
+		pending_force = true;
+	}
 	if (worker_running) {
 		pthread_mutex_unlock(&lock); // the one already running will pick it up
 		return;
@@ -317,3 +326,7 @@ void bootlogo_set(int choice, bool dark) {
 	}
 	pthread_detach(thread);
 }
+
+void bootlogo_set(int choice, bool dark) { bootlogo_set_internal(choice, dark, false); }
+
+void bootlogo_set_force(int choice, bool dark) { bootlogo_set_internal(choice, dark, true); }

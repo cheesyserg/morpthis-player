@@ -201,6 +201,11 @@ void theme_set_kind(theme_kind_t kind);
 int theme_boot_screen(void);
 void theme_set_boot_screen(int choice);
 
+// The same, but forces the flash marker and the custom picture to be written
+// again even when the marker already agrees. Applying a picture a second time
+// has to repair a block written by an older build.
+void theme_set_boot_screen_force(int choice);
+
 // The dynamic tint (Appearance > Dynamic tint): the neutral colours --
 // backgrounds, cards, the status bar -- borrow the accent's hue, the way
 // Material You colours a system from one seed. Each colour keeps its brightest

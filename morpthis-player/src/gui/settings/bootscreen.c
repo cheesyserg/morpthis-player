@@ -462,9 +462,6 @@ static void carousel_update(void) {
 	lv_obj_get_coords(carousel, &carousel_area);
 	int carousel_center = (carousel_area.x1 + carousel_area.x2) / 2;
 
-	int best = -1;
-	int best_dist = INT_MAX;
-
 	for (int i = 0; i < entry_count; i++) {
 		lv_obj_t *item = item_btn[i];
 		if (!item) {
@@ -476,11 +473,6 @@ static void carousel_update(void) {
 		int item_center = (item_area.x1 + item_area.x2) / 2;
 		int dist = item_center - carousel_center;
 		int abs_dist = dist < 0 ? -dist : dist;
-
-		if (abs_dist < best_dist) {
-			best_dist = abs_dist;
-			best = i;
-		}
 
 		float t = (float)abs_dist / (float)item_w;
 		if (t > 1.0f) {
@@ -494,11 +486,39 @@ static void carousel_update(void) {
 		lv_opa_t opa = (lv_opa_t)(LV_OPA_COVER - (LV_OPA_COVER - LV_OPA_60) * t);
 		lv_obj_set_style_image_opa(item_img[i], opa, 0);
 	}
+}
 
-	if (best >= 0 && best != selected) {
-		selected = best;
-		refresh_apply_button();
+// The entry nearest the middle. The selection is only moved when the row
+// comes to rest, never while it is still moving: changing it mid-snap is what
+// used to make the row settle between two pictures.
+static int carousel_closest(void) {
+	if (!carousel) {
+		return -1;
 	}
+
+	lv_area_t carousel_area;
+	lv_obj_get_coords(carousel, &carousel_area);
+	int carousel_center = (carousel_area.x1 + carousel_area.x2) / 2;
+
+	int best = -1;
+	int best_dist = INT_MAX;
+	for (int i = 0; i < entry_count; i++) {
+		lv_obj_t *item = item_btn[i];
+		if (!item) {
+			continue;
+		}
+
+		lv_area_t item_area;
+		lv_obj_get_coords(item, &item_area);
+		int item_center = (item_area.x1 + item_area.x2) / 2;
+		int dist = item_center - carousel_center;
+		int abs_dist = dist < 0 ? -dist : dist;
+		if (abs_dist < best_dist) {
+			best_dist = abs_dist;
+			best = i;
+		}
+	}
+	return best;
 }
 
 static void carousel_scroll_cb(lv_event_t *e) {
@@ -510,14 +530,23 @@ static void carousel_scroll_cb(lv_event_t *e) {
 }
 
 // Where the carousel has to be scrolled for `index` to sit in the middle.
+// The delta is measured from the absolute coordinates rather than from the
+// item's layout x: the row's own left padding is part of what puts the first
+// picture in the middle, and leaving it out is what used to park the selection
+// between two pictures.
 static int carousel_target_for(int index) {
 	if (index < 0 || index >= entry_count || !item_btn[index]) {
 		return 0;
 	}
 
-	int item_x = lv_obj_get_x(item_btn[index]);
-	int width = lv_obj_get_width(item_btn[index]);
-	int target = item_x + width / 2 - lv_obj_get_width(carousel) / 2;
+	lv_area_t item_area;
+	lv_area_t carousel_area;
+	lv_obj_get_coords(item_btn[index], &item_area);
+	lv_obj_get_coords(carousel, &carousel_area);
+
+	int item_center = (item_area.x1 + item_area.x2) / 2;
+	int carousel_center = (carousel_area.x1 + carousel_area.x2) / 2;
+	int target = lv_obj_get_scroll_x(carousel) + (item_center - carousel_center);
 
 	// Clamped to what the row can actually scroll: asking for a position past
 	// the end would make the snap animation end somewhere else and the next
@@ -537,8 +566,18 @@ static int carousel_target_for(int index) {
 
 static void carousel_scroll_end_cb(lv_event_t *e) {
 	(void)e;
-	if (carousel_rebuilding || selected < 0 || selected >= entry_count) {
+	if (carousel_rebuilding) {
 		return;
+	}
+
+	int best = carousel_closest();
+	if (best < 0) {
+		return;
+	}
+
+	if (best != selected) {
+		selected = best;
+		refresh_apply_button();
 	}
 
 	int target = carousel_target_for(selected);
@@ -688,7 +727,9 @@ static void apply_done_cb(void *user) {
 
 	if (job->ok) {
 		config_set("ui", "boot_screen_name", job->name);
-		theme_set_boot_screen(BOOTLOGO_CUSTOM);
+		// Forced: applying the same picture again has to repair a block that
+		// an older build may have written with the picture in the wrong place.
+		theme_set_boot_screen_force(BOOTLOGO_CUSTOM);
 		scan_entries();
 		refresh_carousel();
 		refresh_apply_button();
@@ -723,6 +764,15 @@ static void apply_cb(lv_event_t *e) {
 	(void)e;
 	if (carousel_rebuilding || apply_running || switcher_back_drag_active()) {
 		return;
+	}
+
+	// The row may still be moving when Apply is tapped. Take the picture that
+	// is in the middle right now, not the one that was there when the drag
+	// started.
+	int best = carousel_closest();
+	if (best >= 0 && best != selected) {
+		selected = best;
+		refresh_apply_button();
 	}
 	if (selected < 0 || selected >= entry_count) {
 		return;
@@ -834,20 +884,7 @@ void bootscreen_init(gui_config_t *cfg) {
 	page_cfg = cfg;
 	const bool compact = cfg->screen_width < 320;
 
-	// The carousel's large picture is 3:4, the panel's own shape, so what is
-	// previewed is what the boot script will draw.
-	item_w = compact ? 120 : 300;
-	item_h = item_w * 4 / 3;
-
 	int gap = compact ? 6 : 10;
-	carousel_w = (int)cfg->screen_width - 2 * cfg->padding;
-	if (carousel_w < 1) {
-		carousel_w = 1;
-	}
-	int carousel_pad = (carousel_w - item_w) / 2;
-	if (carousel_pad < 0) {
-		carousel_pad = 0;
-	}
 
 	lv_obj_add_style(bootscreen_screen, &theme_style_screen, 0);
 
@@ -858,13 +895,28 @@ void bootscreen_init(gui_config_t *cfg) {
 		content_h = 1;
 	}
 
+	// The carousel's large picture is 3:4, the panel's own shape, so what is
+	// previewed is what the boot script will draw. It takes the whole height
+	// the row has: the picture is the page, not a thumbnail on it.
+	item_h = content_h;
+	item_w = item_h * 3 / 4;
+	if (item_w < 1) {
+		item_w = 1;
+	}
+
+	carousel_w = (int)cfg->screen_width;
+	int carousel_pad = (carousel_w - item_w) / 2;
+	if (carousel_pad < 0) {
+		carousel_pad = 0;
+	}
+
 	lv_obj_t *content = lv_obj_create(bootscreen_screen);
 	lv_obj_set_size(content, lv_pct(100), content_h);
 	lv_obj_align(content, LV_ALIGN_TOP_LEFT, 0, top);
 	lv_obj_set_style_bg_opa(content, 0, 0);
 	lv_obj_set_style_border_width(content, 0, 0);
 	lv_obj_set_style_radius(content, 0, 0);
-	lv_obj_set_style_pad_all(content, cfg->padding, 0);
+	lv_obj_set_style_pad_all(content, 0, 0);
 	lv_obj_set_style_pad_gap(content, 0, 0);
 	lv_obj_set_scrollable(content, false);
 	lv_obj_set_flex_flow(content, LV_FLEX_FLOW_ROW);

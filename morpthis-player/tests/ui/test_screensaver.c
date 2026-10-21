@@ -66,6 +66,11 @@ void bootlogo_set(int choice, bool dark) {
 	(void)choice;
 	(void)dark;
 }
+
+void bootlogo_set_force(int choice, bool dark) {
+	(void)choice;
+	(void)dark;
+}
 bool clock_is_set(void) { return true; }
 void clock_format_hm(char *out, size_t out_size, int hour, int minute) {
 	(void)hour;

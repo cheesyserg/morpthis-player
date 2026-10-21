@@ -39,13 +39,15 @@
 //
 // A custom picture cannot be a file the boot script reads: the rootfs is
 // read-only and /usr/data is not mounted yet. It is therefore written into the
-// same erase block as the marker, after the marker's page, and the packer's
-// block in the boot script copies it out to /tmp with nanddump before drawing
-// it. The marker carries the picture's length and hash so the player can tell
-// whether the block already holds the picture it wants, and the boot script
-// can tell whether there is anything to copy. The picture is also kept at
-// BOOTLOGO_CUSTOM_IMAGE on the writable partition, which is what the Boot
-// screen centre previews and what survives the card being removed.
+// same erase block as the marker, two pages in, and the packer's block in the
+// boot script copies it out to /tmp with nanddump before drawing it. Two pages
+// rather than one because nandwrite -p pads the marker to the NAND's page
+// size, which is 8 KiB on some of these parts. The marker carries the
+// picture's length and hash so the player can tell whether the block already
+// holds the picture it wants, and the boot script can tell whether there is
+// anything to copy. The picture is also kept at BOOTLOGO_CUSTOM_IMAGE on the
+// writable partition, which is what the Boot screen centre previews and what
+// survives the card being removed.
 //
 // Two things this module is careful about, because raw flash is not a file:
 // it reads the marker first and does nothing when it already agrees (NAND has
@@ -67,7 +69,7 @@
 #define BOOTLOGO_CUSTOM_IMAGE "/usr/data/bootscreen.jpg"
 
 // The most a custom picture may be. The marker block is at least 64 KiB on
-// this NAND, and the picture starts one page into it, so this leaves room for
+// this NAND, and the picture starts two pages into it, so this leaves room for
 // the marker and the page padding on either side.
 #define BOOTLOGO_IMAGE_MAX (56 * 1024)
 
@@ -78,6 +80,12 @@
 // has no /dev/mtd5, or on the host build. A custom choice whose picture is
 // missing falls back to Retrospace.
 void bootlogo_set(int choice, bool dark);
+
+// The same, but writes the marker and the custom picture even when the marker
+// already agrees. Applying a picture again has to repair a block that was
+// written by an older build, and the marker alone cannot tell that the picture
+// behind it is damaged.
+void bootlogo_set_force(int choice, bool dark);
 
 // The applied custom picture, as the Boot screen centre reads it. False when
 // there is none, or when the file is larger than the flash copy can hold.

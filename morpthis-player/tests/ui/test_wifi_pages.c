@@ -79,6 +79,11 @@ void bootlogo_set(int choice, bool dark) {
 	(void)choice;
 	(void)dark;
 }
+
+void bootlogo_set_force(int choice, bool dark) {
+	(void)choice;
+	(void)dark;
+}
 bool gui_card_available(void) { return true; }
 void gui_notify_no_card(void) { assert(!"the card is there in this test"); }
 void gui_notify_popup(const char *text) {
