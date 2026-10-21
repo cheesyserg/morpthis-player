@@ -98,8 +98,10 @@ Keep the first version small enough to ship:
 - `app`: name, version, package folder, data folder, API version, `post()`,
   `quit()`, `background()`.
 - `ui`: screen, label, button, list, image, slider, toast; rotation, opacity and
-  `raise` for image overlays and moving parts; a canvas the app draws into
-  (`create`, `buffer`, `invalidate`) and `refresh()` to put it on the panel now.
+  `raise` for image overlays and moving parts; two-line list rows with a
+  package icon, a chevron and a playing mark, matching the player's library; a
+  canvas the app draws into (`create`, `buffer`, `invalidate`) and `refresh()`
+  to put it on the panel now.
 - `input`: button events, touch events, back gesture.
 - `audio`: play/pause/next/prev, current track, volume; or "leave the player's
   audio alone" for apps that do not need it. Plus a raw PCM stream

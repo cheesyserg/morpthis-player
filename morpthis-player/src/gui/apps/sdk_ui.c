@@ -21,6 +21,12 @@ static bool app_is_game(void) {
 	return sdk_app && sdk_app->category == APP_CATEGORY_GAME;
 }
 
+// The V1's 240 px panel uses the compact row metrics from the player's own
+// library; a larger panel gets the roomier ones.
+static bool sdk_ui_compact(void) {
+	return sdk_cfg && sdk_cfg->screen_width < 320;
+}
+
 int morpthis_ui_width(void) {
 	return sdk_cfg ? (int)sdk_cfg->screen_width : 240;
 }
@@ -425,10 +431,11 @@ morpthis_widget_t *morpthis_list_create(morpthis_screen_t *screen) {
 	}
 	lv_obj_remove_style_all(widget->obj);
 	lv_obj_set_style_pad_all(widget->obj, 0, 0);
-	lv_obj_set_style_pad_gap(widget->obj, 6, 0);
+	lv_obj_set_style_pad_gap(widget->obj, sdk_ui_compact() ? 5 : 8, 0);
 	lv_obj_set_flex_flow(widget->obj, LV_FLEX_FLOW_COLUMN);
 	lv_obj_set_scroll_dir(widget->obj, LV_DIR_VER);
 	lv_obj_set_scrollbar_mode(widget->obj, LV_SCROLLBAR_MODE_AUTO);
+	widget->playing_index = -1;
 	return widget;
 }
 
@@ -445,40 +452,169 @@ static void list_row_cb(lv_event_t *e) {
 	list->select_cb(list, index, list->select_user);
 }
 
-int morpthis_list_add(morpthis_widget_t *list, const char *text) {
+int morpthis_list_add_entry(morpthis_widget_t *list, const char *title, const char *detail,
+						const char *icon, bool chevron) {
 	if (!list || list->kind != SDK_WIDGET_LIST) {
 		errno = EINVAL;
 		return -1;
 	}
 
-	lv_obj_t *row = lv_btn_create(list->obj);
-	lv_obj_set_width(row, lv_pct(100));
-	lv_obj_set_height(row, 48);
-	lv_obj_add_style(row, &theme_style_card, 0);
-	lv_obj_add_style(row, &theme_style_card_pressed, LV_STATE_PRESSED);
-	lv_obj_set_style_radius(row, 10, 0);
-	lv_obj_set_style_border_width(row, 0, 0);
-	lv_obj_set_style_shadow_width(row, 0, 0);
-	lv_obj_set_style_pad_hor(row, 12, 0);
+	if (list->item_count >= list->row_capacity) {
+		int capacity = list->row_capacity ? list->row_capacity * 2 : 16;
+		sdk_list_row_t **rows = realloc(list->rows, sizeof(*rows) * (size_t)capacity);
+		if (!rows) {
+			return -1;
+		}
+		list->rows = rows;
+		list->row_capacity = capacity;
+	}
 
-	lv_obj_t *label = lv_label_create(row);
-	lv_obj_add_style(label, &theme_style_text, 0);
-	lv_obj_set_style_text_font(label, &font_ui_22, 0);
-	lv_label_set_text(label, text ? text : "");
-	lv_obj_align(label, LV_ALIGN_LEFT_MID, 0, 0);
+	sdk_list_row_t *row = calloc(1, sizeof(*row));
+	if (!row) {
+		return -1;
+	}
 
-	lv_obj_set_user_data(row, (void *)(intptr_t)list->item_count);
-	lv_obj_add_event_cb(row, list_row_cb, LV_EVENT_CLICKED, list);
-	lv_obj_set_event_bubble(row, true);
+	const bool compact = sdk_ui_compact();
+	const int height = compact ? 44 : 80;
+	const int pad = compact ? 4 : 8;
+	const int thumb = compact ? 36 : 56;
+	const int radius = compact ? 10 : 12;
+	const lv_font_t *title_font = compact ? &font_ui_18 : &font_ui_24;
+	const lv_font_t *detail_font = compact ? &font_ui_14 : &font_ui_20;
+
+	// The same row the player's own library draws: a card, a leading thumb,
+	// a title over a dim detail, and the chevron on anything that opens a page.
+	row->row = lv_btn_create(list->obj);
+	if (!row->row) {
+		free(row);
+		return -1;
+	}
+	lv_obj_set_width(row->row, lv_pct(100));
+	lv_obj_set_height(row->row, height);
+	lv_obj_add_style(row->row, &theme_style_card, 0);
+	lv_obj_add_style(row->row, &theme_style_card_pressed, LV_STATE_PRESSED);
+	lv_obj_set_style_radius(row->row, radius, 0);
+	lv_obj_set_style_border_width(row->row, 0, 0);
+	lv_obj_set_style_shadow_width(row->row, 0, 0);
+	lv_obj_set_style_pad_all(row->row, pad, 0);
+	lv_obj_set_style_pad_column(row->row, pad, 0);
+	lv_obj_set_flex_flow(row->row, LV_FLEX_FLOW_ROW);
+	lv_obj_set_flex_align(row->row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+	lv_obj_set_event_bubble(row->row, true);
+
+	if (icon && icon[0]) {
+		char path[APPS_FOLDER_MAX + 256];
+		if (sdk_resolve_path(icon, path, sizeof(path)) == 0 &&
+			cover_load_image_file(path, thumb, thumb, COVER_FIT_COVER, &row->icon_cover)) {
+			row->icon = lv_image_create(row->row);
+			lv_obj_set_size(row->icon, thumb, thumb);
+			lv_image_set_src(row->icon, &row->icon_cover.dsc);
+			lv_obj_set_clickable(row->icon, false);
+		}
+	}
+
+	// Title and detail in a column so the detail cannot eat the title's width.
+	row->text = lv_obj_create(row->row);
+	lv_obj_remove_style_all(row->text);
+	lv_obj_set_flex_grow(row->text, 1);
+	lv_obj_set_height(row->text, LV_SIZE_CONTENT);
+	lv_obj_set_flex_flow(row->text, LV_FLEX_FLOW_COLUMN);
+	lv_obj_set_flex_align(row->text, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+	lv_obj_set_style_pad_all(row->text, 0, 0);
+	lv_obj_set_style_pad_row(row->text, 0, 0);
+	lv_obj_set_scrollable(row->text, false);
+	lv_obj_set_clickable(row->text, false);
+	lv_obj_set_event_bubble(row->text, true);
+
+	row->title = lv_label_create(row->text);
+	lv_label_set_text(row->title, title ? title : "");
+	lv_label_set_long_mode(row->title, LV_LABEL_LONG_DOT);
+	lv_obj_set_width(row->title, lv_pct(100));
+	lv_obj_set_height(row->title, lv_font_get_line_height(title_font));
+	lv_obj_add_style(row->title, &theme_style_text, 0);
+	lv_obj_set_style_text_font(row->title, title_font, 0);
+	lv_obj_set_clickable(row->title, false);
+
+	row->detail = lv_label_create(row->text);
+	lv_label_set_text(row->detail, detail ? detail : "");
+	lv_label_set_long_mode(row->detail, LV_LABEL_LONG_DOT);
+	lv_obj_set_width(row->detail, lv_pct(100));
+	lv_obj_set_height(row->detail, lv_font_get_line_height(detail_font));
+	lv_obj_add_style(row->detail, &theme_style_text_dim, 0);
+	lv_obj_set_style_text_font(row->detail, detail_font, 0);
+	lv_obj_set_clickable(row->detail, false);
+	lv_obj_set_hidden(row->detail, !(detail && detail[0]));
+
+	// The playing bar sits in the row's padding, out of the flex layout, so a
+	// row does not move when it becomes the playing one.
+	row->playmark = lv_obj_create(row->row);
+	lv_obj_set_ignore_layout(row->playmark, true);
+	lv_obj_set_size(row->playmark, compact ? 4 : 6, compact ? 26 : 52);
+	lv_obj_align(row->playmark, LV_ALIGN_LEFT_MID, 0, 0);
+	lv_obj_add_style(row->playmark, &theme_style_accent_bg, 0);
+	lv_obj_set_style_radius(row->playmark, LV_RADIUS_CIRCLE, 0);
+	lv_obj_set_style_border_width(row->playmark, 0, 0);
+	lv_obj_set_style_shadow_width(row->playmark, 0, 0);
+	lv_obj_set_style_pad_all(row->playmark, 0, 0);
+	lv_obj_set_scrollable(row->playmark, false);
+	lv_obj_set_clickable(row->playmark, false);
+	lv_obj_set_hidden(row->playmark, true);
+
+	if (chevron) {
+		row->chevron = lv_image_create(row->row);
+		lv_image_set_src(row->chevron, &icon_chevron_right);
+		lv_obj_add_style(row->chevron, &theme_style_icon, 0);
+		lv_obj_set_style_image_opa(row->chevron, LV_OPA_60, 0);
+		lv_obj_set_clickable(row->chevron, false);
+	}
+
+	lv_obj_set_user_data(row->row, (void *)(intptr_t)list->item_count);
+	lv_obj_add_event_cb(row->row, list_row_cb, LV_EVENT_CLICKED, list);
+
+	list->rows[list->item_count] = row;
 	return list->item_count++;
+}
+
+int morpthis_list_add(morpthis_widget_t *list, const char *text) {
+	return morpthis_list_add_entry(list, text, NULL, NULL, false);
+}
+
+void morpthis_list_set_playing(morpthis_widget_t *list, int index) {
+	if (!list || list->kind != SDK_WIDGET_LIST) {
+		return;
+	}
+	if (index < 0 || index >= list->item_count) {
+		index = -1;
+	}
+	list->playing_index = index;
+	for (int i = 0; i < list->item_count; i++) {
+		if (list->rows[i] && list->rows[i]->playmark) {
+			lv_obj_set_hidden(list->rows[i]->playmark, i != index);
+		}
+	}
 }
 
 void morpthis_list_clear(morpthis_widget_t *list) {
 	if (!list || list->kind != SDK_WIDGET_LIST) {
 		return;
 	}
-	lv_obj_clean(list->obj);
+	if (list->obj) {
+		lv_obj_clean(list->obj);
+		lv_obj_scroll_to_y(list->obj, 0, LV_ANIM_OFF);
+	}
+	for (int i = 0; i < list->item_count; i++) {
+		sdk_list_row_t *row = list->rows[i];
+		if (!row) {
+			continue;
+		}
+		cover_free(&row->icon_cover);
+		free(row);
+	}
+	free(list->rows);
+	list->rows = NULL;
+	list->row_capacity = 0;
 	list->item_count = 0;
+	list->playing_index = -1;
 }
 
 int morpthis_list_count(const morpthis_widget_t *list) {
@@ -705,7 +841,10 @@ void morpthis_widget_destroy(morpthis_widget_t *widget) {
 	}
 
 	if (widget->obj) {
-		if (widget->kind == SDK_WIDGET_IMAGE || widget->kind == SDK_WIDGET_CANVAS) {
+		if (widget->kind == SDK_WIDGET_LIST) {
+			// Deletes the row objects and frees the per-row covers and structs.
+			morpthis_list_clear(widget);
+		} else if (widget->kind == SDK_WIDGET_IMAGE || widget->kind == SDK_WIDGET_CANVAS) {
 			lv_image_set_src(widget->obj, NULL);
 		}
 		lv_obj_delete(widget->obj);

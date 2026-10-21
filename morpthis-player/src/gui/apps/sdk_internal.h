@@ -26,6 +26,19 @@ typedef enum {
 	SDK_WIDGET_CANVAS,
 } sdk_widget_kind_t;
 
+// One row of an SDK list. The objects are children of the row button; the
+// covers are owned here because LVGL only keeps the descriptor pointer.
+typedef struct sdk_list_row {
+	lv_obj_t *row;
+	lv_obj_t *text;
+	lv_obj_t *icon;
+	lv_obj_t *title;
+	lv_obj_t *detail;
+	lv_obj_t *chevron;
+	lv_obj_t *playmark;
+	cover_image_t icon_cover;
+} sdk_list_row_t;
+
 struct morpthis_widget {
 	morpthis_screen_t *screen;
 	lv_obj_t *obj;
@@ -52,6 +65,13 @@ struct morpthis_widget {
 	int max;
 	int value;
 	int item_count;
+
+	// A list's rows, kept one allocation per row so a growing array never moves
+	// an image descriptor LVGL is pointing at. `playing_index` is the row with
+	// the accent bar, or -1.
+	sdk_list_row_t **rows;
+	int row_capacity;
+	int playing_index;
 
 	// A programmatic slider update may or may not emit LV_EVENT_VALUE_CHANGED
 	// depending on the LVGL path taken; these make the app see one callback
