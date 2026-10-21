@@ -14,7 +14,6 @@
 #include "src/gui/shell/main_menu.h"
 #include "src/gui/library/music.h"
 #include "src/gui/nowplaying/player.h"
-#include "src/gui/settings/bootscreen.h"
 #include "src/gui/shell/theme.h"
 #include "src/gui/shell/topbar.h"
 #include "src/gui/nowplaying/trackmenu.h"
@@ -473,12 +472,9 @@ static bool page_has_no_chevron(lv_obj_t *screen) {
 }
 
 static void load_screen(lv_obj_t *target_screen) {
-	// Every page keeps the status bar, except the Boot screen centre: it owns
-	// the whole panel and hides the bar itself, but doing it here as well
-	// keeps the bar from flashing for a frame during the transition. The
-	// player is not a page -- it slides over the top of one -- so nothing here
-	// has to make room for it.
-	topbar_set_hidden(target_screen == bootscreen_screen);
+	// Every page keeps the status bar. The player is not a page -- it slides
+	// over the top of one -- so nothing here has to make room for it.
+	topbar_set_hidden(false);
 
 	if (back_btn) {
 		// The scan pages have their own way out (cancel / OK) and must not be

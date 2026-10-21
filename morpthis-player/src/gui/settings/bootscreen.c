@@ -1,6 +1,7 @@
 #include "bootscreen.h"
 
 #include <dirent.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,6 +39,17 @@ lv_obj_t *bootscreen_screen;
 #define BOOTSCREEN_NAME_MAX 128
 #define BOOTSCREEN_PATH_MAX 512
 
+// How much smaller a picture at the edge of the carousel is drawn than the one
+// in the middle. 0.55 leaves the neighbours clearly present without competing
+// with the selection.
+#define CAROUSEL_EDGE_SCALE 0.55f
+
+// The full-screen preview's grow and shrink. The overshoot on the way in is
+// what makes the picture feel like it pops out of the carousel rather than
+// simply sliding to the middle of the panel.
+#define PREVIEW_OPEN_MS  320
+#define PREVIEW_CLOSE_MS 260
+
 typedef enum {
 	ENTRY_STOCK,
 	ENTRY_RETROSPACE,
@@ -48,8 +60,8 @@ typedef struct {
 	entry_kind_t kind;
 	char name[BOOTSCREEN_NAME_MAX]; // the file name, or "Stock"/"Retrospace"
 	char path[BOOTSCREEN_PATH_MAX];
-	cover_image_t thumb;
-	bool thumb_loaded;
+	cover_image_t art; // decoded at the carousel's large size
+	bool art_loaded;
 } entry_t;
 
 static gui_config_t *page_cfg;
@@ -58,31 +70,40 @@ static int entry_count;
 static int selected = -1;
 static int applied_entry = -1;
 
-static lv_obj_t *preview_img;
-static lv_obj_t *preview_placeholder;
-static lv_obj_t *preview_name;
 static lv_obj_t *applied_img;
 static lv_obj_t *applied_label;
 static lv_obj_t *applied_check;
-static lv_obj_t *thumbs_row;
-static lv_obj_t *thumb_btn[BOOTSCREEN_MAX];
-static lv_obj_t *empty_label;
+static lv_obj_t *separator;
+static lv_obj_t *carousel;
+static lv_obj_t *item_btn[BOOTSCREEN_MAX];
+static lv_obj_t *item_img[BOOTSCREEN_MAX];
 static lv_obj_t *apply_btn;
 static lv_obj_t *apply_label;
 
-static cover_image_t preview;
-static bool preview_loaded;
-static cover_image_t applied_thumb;
+static lv_obj_t *preview_layer;
+static lv_obj_t *preview_img;
+static cover_image_t preview_art;
+static bool preview_art_loaded;
+static bool preview_open;
+static bool preview_animating;
+static bool preview_closing;
+static int preview_start_x;
+static int preview_start_y;
+static uint32_t preview_start_scale;
+
+static cover_image_t applied_art;
 static bool applied_loaded;
 
-static int preview_box_w;
-static int preview_box_h;
+static int item_w;
+static int item_h;
+static int name_h;
+static int carousel_w;
+static int applied_col_w;
 static int applied_w;
 static int applied_h;
-static int thumb_size;
 
 // Draws one of the interface's glyphs at `size`, whatever its source art is.
-// The check on the applied picture and on its thumbnail are the two users.
+// The check on the applied picture and on its carousel item are the two users.
 static void scale_icon(lv_obj_t *icon, const lv_image_dsc_t *source, int size) {
 	lv_obj_set_size(icon, size, size);
 	lv_image_set_inner_align(icon, LV_IMAGE_ALIGN_CENTER);
@@ -91,6 +112,165 @@ static void scale_icon(lv_obj_t *icon, const lv_image_dsc_t *source, int size) {
 		lv_image_set_scale(icon, (uint32_t)(LV_SCALE_NONE * size / source_side));
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The full-screen preview
+//
+// A tap on the picture in the middle lifts it out of the carousel and grows it
+// to fill the panel, over a black sheet that covers the page, the status bar
+// and the chevron. A second tap shrinks it back into the row. The animation
+// moves the picture's centre and its scale together, so it reads as one object
+// growing rather than a second picture fading in.
+// ---------------------------------------------------------------------------
+
+typedef struct {
+	lv_obj_t *img;
+	int32_t start_x, start_y, end_x, end_y;
+	uint32_t start_scale, end_scale;
+} preview_anim_t;
+
+static preview_anim_t preview_anim_data;
+
+static void preview_anim_cb(void *var, int32_t value) {
+	preview_anim_t *a = var;
+	int32_t x = a->start_x + (a->end_x - a->start_x) * value / 1000;
+	int32_t y = a->start_y + (a->end_y - a->start_y) * value / 1000;
+	int32_t scale = (int32_t)a->start_scale + ((int32_t)a->end_scale - (int32_t)a->start_scale) * value / 1000;
+
+	lv_obj_set_x(a->img, x);
+	lv_obj_set_y(a->img, y);
+	lv_obj_set_style_transform_scale(a->img, scale, 0);
+}
+
+static void preview_anim_done_cb(lv_anim_t *a) {
+	(void)a;
+	preview_animating = false;
+
+	if (preview_closing) {
+		preview_closing = false;
+		preview_open = false;
+		lv_obj_set_hidden(preview_layer, true);
+		topbar_set_hidden(false);
+		back_btn_force_hidden(false);
+	}
+}
+
+static void preview_close_cb(lv_event_t *e);
+
+static void preview_open_cb(lv_event_t *e) {
+	(void)e;
+	if (preview_open || preview_animating) {
+		return;
+	}
+	if (selected < 0 || selected >= entry_count || !item_img[selected]) {
+		return;
+	}
+
+	entry_t *entry = &entries[selected];
+	if (preview_art_loaded) {
+		lv_image_set_src(preview_img, NULL);
+		cover_free(&preview_art);
+		preview_art_loaded = false;
+	}
+	if (!cover_load_image_file(entry->path, (int)page_cfg->screen_width, (int)page_cfg->screen_height,
+							   COVER_FIT_COVER, &preview_art)) {
+		return;
+	}
+	preview_art_loaded = true;
+
+	// Where the picture is on screen right now, and how big it is drawn.
+	lv_obj_t *src = item_img[selected];
+	lv_area_t area;
+	lv_obj_get_coords(src, &area);
+	int cx = (area.x1 + area.x2) / 2;
+	int cy = (area.y1 + area.y2) / 2;
+
+	int src_w = lv_obj_get_width(src) * lv_image_get_scale(src) / LV_SCALE_NONE;
+	if (src_w < 1) {
+		src_w = 1;
+	}
+	uint32_t start_scale = (uint32_t)((int64_t)LV_SCALE_NONE * src_w / (int)page_cfg->screen_width);
+	if (start_scale < 1) {
+		start_scale = 1;
+	}
+
+	preview_start_x = cx - (int)page_cfg->screen_width / 2;
+	preview_start_y = cy - (int)page_cfg->screen_height / 2;
+	preview_start_scale = start_scale;
+
+	lv_obj_set_size(preview_img, (int32_t)page_cfg->screen_width, (int32_t)page_cfg->screen_height);
+	lv_image_set_src(preview_img, &preview_art.dsc);
+	lv_obj_set_x(preview_img, preview_start_x);
+	lv_obj_set_y(preview_img, preview_start_y);
+	lv_obj_set_style_transform_scale(preview_img, (int32_t)preview_start_scale, 0);
+
+	lv_obj_set_hidden(preview_layer, false);
+	lv_obj_move_foreground(preview_layer);
+	topbar_set_hidden(true);
+	back_btn_force_hidden(true);
+
+	preview_open = true;
+	preview_animating = true;
+	preview_closing = false;
+
+	preview_anim_data.img = preview_img;
+	preview_anim_data.start_x = preview_start_x;
+	preview_anim_data.start_y = preview_start_y;
+	preview_anim_data.end_x = 0;
+	preview_anim_data.end_y = 0;
+	preview_anim_data.start_scale = preview_start_scale;
+	preview_anim_data.end_scale = LV_SCALE_NONE;
+
+	lv_anim_t a;
+	lv_anim_init(&a);
+	lv_anim_set_var(&a, &preview_anim_data);
+	lv_anim_set_exec_cb(&a, preview_anim_cb);
+	lv_anim_set_values(&a, 0, 1000);
+	lv_anim_set_duration(&a, PREVIEW_OPEN_MS);
+	lv_anim_set_path_cb(&a, lv_anim_path_overshoot);
+	lv_anim_set_completed_cb(&a, preview_anim_done_cb);
+	lv_anim_start(&a);
+}
+
+static void preview_close_cb(lv_event_t *e) {
+	(void)e;
+	if (!preview_open || preview_animating) {
+		return;
+	}
+
+	preview_animating = true;
+	preview_closing = true;
+
+	preview_anim_data.img = preview_img;
+	preview_anim_data.start_x = lv_obj_get_x(preview_img);
+	preview_anim_data.start_y = lv_obj_get_y(preview_img);
+	preview_anim_data.end_x = preview_start_x;
+	preview_anim_data.end_y = preview_start_y;
+	preview_anim_data.start_scale = (uint32_t)lv_obj_get_style_transform_scale_x(preview_img, 0);
+	preview_anim_data.end_scale = preview_start_scale;
+
+	lv_anim_t a;
+	lv_anim_init(&a);
+	lv_anim_set_var(&a, &preview_anim_data);
+	lv_anim_set_exec_cb(&a, preview_anim_cb);
+	lv_anim_set_values(&a, 0, 1000);
+	lv_anim_set_duration(&a, PREVIEW_CLOSE_MS);
+	lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
+	lv_anim_set_completed_cb(&a, preview_anim_done_cb);
+	lv_anim_start(&a);
+}
+
+// The swipe-back and the chevron close the preview rather than leaving the
+// page while it is up. The chevron itself is hidden, but the gesture is not.
+static bool preview_back_guard(void) {
+	if (!preview_open) {
+		return false;
+	}
+	preview_close_cb(NULL);
+	return true;
+}
+
+static bool preview_back_guard_peek(void) { return preview_open; }
 
 // ---------------------------------------------------------------------------
 // The applied picture
@@ -164,9 +344,9 @@ static void find_applied_entry(void) {
 // ---------------------------------------------------------------------------
 
 static void free_entry(entry_t *entry) {
-	if (entry->thumb_loaded) {
-		cover_free(&entry->thumb);
-		entry->thumb_loaded = false;
+	if (entry->art_loaded) {
+		cover_free(&entry->art);
+		entry->art_loaded = false;
 	}
 }
 
@@ -237,63 +417,34 @@ static void scan_entries(void) {
 	selected = applied_entry >= 0 ? applied_entry : 0;
 }
 
-static void load_thumb(entry_t *entry) {
-	if (entry->thumb_loaded) {
+static void load_art(entry_t *entry) {
+	if (entry->art_loaded) {
 		return;
 	}
-	if (cover_load_image_file(entry->path, thumb_size, thumb_size, COVER_FIT_COVER, &entry->thumb)) {
-		entry->thumb_loaded = true;
+	if (cover_load_image_file(entry->path, item_w, item_h, COVER_FIT_COVER, &entry->art)) {
+		entry->art_loaded = true;
 	}
-}
-
-static void load_preview(void) {
-	if (preview_loaded) {
-		lv_image_set_src(preview_img, NULL);
-		cover_free(&preview);
-		preview_loaded = false;
-	}
-
-	if (selected < 0 || selected >= entry_count) {
-		lv_obj_set_hidden(preview_placeholder, false);
-		lv_label_set_text(preview_name, "");
-		return;
-	}
-
-	entry_t *entry = &entries[selected];
-	if (cover_load_image_file(entry->path, preview_box_w, preview_box_h, COVER_FIT_CONTAIN, &preview)) {
-		preview_loaded = true;
-		lv_obj_set_size(preview_img, (int32_t)preview.dsc.header.w, (int32_t)preview.dsc.header.h);
-		lv_image_set_src(preview_img, &preview.dsc);
-		lv_obj_center(preview_img);
-		lv_obj_set_hidden(preview_placeholder, true);
-	} else {
-		lv_obj_set_size(preview_img, 0, 0);
-		lv_image_set_src(preview_img, NULL);
-		lv_obj_set_hidden(preview_placeholder, false);
-	}
-
-	lv_label_set_text(preview_name, entry->name);
 }
 
 static void refresh_applied(void) {
 	if (applied_loaded) {
 		lv_image_set_src(applied_img, NULL);
-		cover_free(&applied_thumb);
+		cover_free(&applied_art);
 		applied_loaded = false;
 	}
 
 	const char *path = applied_path();
-	if (path && cover_load_image_file(path, applied_w, applied_h, COVER_FIT_COVER, &applied_thumb)) {
+	if (path && cover_load_image_file(path, applied_w, applied_h, COVER_FIT_COVER, &applied_art)) {
 		applied_loaded = true;
 		lv_obj_set_size(applied_img, applied_w, applied_h);
-		lv_image_set_src(applied_img, &applied_thumb.dsc);
+		lv_image_set_src(applied_img, &applied_art.dsc);
 		lv_obj_center(applied_img);
 	} else {
 		lv_obj_set_size(applied_img, 0, 0);
 		lv_image_set_src(applied_img, NULL);
 	}
 
-	lv_label_set_text_fmt(applied_label, "%s: %s", tr("bootscreen_applied"), bootscreen_applied_name());
+	lv_label_set_text(applied_label, bootscreen_applied_name());
 }
 
 static void refresh_apply_button(void) {
@@ -309,78 +460,194 @@ static void refresh_apply_button(void) {
 	}
 }
 
-static void thumb_clicked_cb(lv_event_t *e) {
+// ---------------------------------------------------------------------------
+// The carousel
+// ---------------------------------------------------------------------------
+
+// The item nearest the middle is the selection. Everything else is drawn
+// smaller the further it sits from that middle, which is what makes the row
+// read as a carousel rather than a list of thumbnails.
+static void carousel_update(void) {
+	if (!carousel) {
+		return;
+	}
+
+	lv_area_t carousel_area;
+	lv_obj_get_coords(carousel, &carousel_area);
+	int carousel_center = (carousel_area.x1 + carousel_area.x2) / 2;
+
+	int best = -1;
+	int best_dist = INT_MAX;
+
+	for (int i = 0; i < entry_count; i++) {
+		lv_obj_t *item = item_btn[i];
+		if (!item) {
+			continue;
+		}
+
+		lv_area_t item_area;
+		lv_obj_get_coords(item, &item_area);
+		int item_center = (item_area.x1 + item_area.x2) / 2;
+		int dist = item_center - carousel_center;
+		int abs_dist = dist < 0 ? -dist : dist;
+
+		if (abs_dist < best_dist) {
+			best_dist = abs_dist;
+			best = i;
+		}
+
+		float t = (float)abs_dist / (float)item_w;
+		if (t > 1.0f) {
+			t = 1.0f;
+		}
+		float scale = 1.0f - (1.0f - CAROUSEL_EDGE_SCALE) * t;
+		lv_image_set_scale(item_img[i], (uint32_t)(LV_SCALE_NONE * scale));
+
+		// The neighbours fade a little as they shrink, so the middle picture
+		// is the one the eye lands on.
+		lv_opa_t opa = (lv_opa_t)(LV_OPA_COVER - (LV_OPA_COVER - LV_OPA_60) * t);
+		lv_obj_set_style_image_opa(item_img[i], opa, 0);
+	}
+
+	if (best >= 0 && best != selected) {
+		selected = best;
+		refresh_apply_button();
+	}
+
+	for (int i = 0; i < entry_count; i++) {
+		if (item_btn[i]) {
+			lv_obj_set_style_border_width(item_btn[i], i == selected ? 2 : 0, 0);
+			lv_obj_set_style_border_color(item_btn[i], theme()->accent, 0);
+		}
+	}
+}
+
+static void carousel_scroll_cb(lv_event_t *e) {
+	(void)e;
+	carousel_update();
+}
+
+// Where the carousel has to be scrolled for `index` to sit in the middle.
+static int carousel_target_for(int index) {
+	if (index < 0 || index >= entry_count || !item_btn[index]) {
+		return 0;
+	}
+
+	int item_x = lv_obj_get_x(item_btn[index]);
+	int width = lv_obj_get_width(item_btn[index]);
+	int target = item_x + width / 2 - lv_obj_get_width(carousel) / 2;
+
+	// Clamped to what the row can actually scroll: asking for a position past
+	// the end would make the snap animation end somewhere else and the next
+	// SCROLL_END would ask for the same impossible target again.
+	int max_scroll = lv_obj_get_scroll_x(carousel) + lv_obj_get_scroll_right(carousel);
+	if (max_scroll < 0) {
+		max_scroll = 0;
+	}
+	if (target < 0) {
+		target = 0;
+	}
+	if (target > max_scroll) {
+		target = max_scroll;
+	}
+	return target;
+}
+
+static void carousel_scroll_end_cb(lv_event_t *e) {
+	(void)e;
+	if (selected < 0 || selected >= entry_count) {
+		return;
+	}
+
+	int target = carousel_target_for(selected);
+	if (target == lv_obj_get_scroll_x(carousel)) {
+		return;
+	}
+	lv_obj_scroll_to_x(carousel, target, LV_ANIM_ON);
+}
+
+static void item_clicked_cb(lv_event_t *e) {
 	if (switcher_back_drag_active()) {
 		return;
 	}
 
 	int index = (int)(intptr_t)lv_event_get_user_data(e);
-	if (index < 0 || index >= entry_count || index == selected) {
+	if (index < 0 || index >= entry_count) {
+		return;
+	}
+
+	// A tap on the picture already in the middle opens it full screen; a tap
+	// on a neighbour brings that one to the middle first.
+	if (index == selected) {
+		preview_open_cb(NULL);
 		return;
 	}
 
 	selected = index;
-	load_preview();
 	refresh_apply_button();
-
-	// The selected border is the only thing that moves on the row; the
-	// pictures themselves are already decoded.
-	for (int i = 0; i < entry_count; i++) {
-		if (thumb_btn[i]) {
-			lv_obj_set_style_border_width(thumb_btn[i], i == selected ? 2 : 0, 0);
-			lv_obj_set_style_border_color(thumb_btn[i], theme()->accent, 0);
-		}
-	}
+	lv_obj_scroll_to_x(carousel, carousel_target_for(index), LV_ANIM_ON);
+	carousel_update();
 }
 
-static void refresh_thumbs(void) {
-	lv_obj_clean(thumbs_row);
+static void refresh_carousel(void) {
+	lv_obj_clean(carousel);
 	for (int i = 0; i < BOOTSCREEN_MAX; i++) {
-		thumb_btn[i] = NULL;
+		item_btn[i] = NULL;
+		item_img[i] = NULL;
 	}
 
 	for (int i = 0; i < entry_count; i++) {
 		entry_t *entry = &entries[i];
-		load_thumb(entry);
+		load_art(entry);
 
-		lv_obj_t *btn = lv_btn_create(thumbs_row);
-		thumb_btn[i] = btn;
-		lv_obj_set_size(btn, thumb_size, thumb_size);
-		lv_obj_set_style_radius(btn, bp_pick(8, 12), 0);
-		lv_obj_set_style_bg_color(btn, theme()->surface_pressed, 0);
-		lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
-		lv_obj_set_style_border_width(btn, i == selected ? 2 : 0, 0);
-		lv_obj_set_style_border_color(btn, theme()->accent, 0);
-		lv_obj_set_style_shadow_width(btn, 0, 0);
-		lv_obj_set_style_pad_all(btn, 0, 0);
-		lv_obj_add_event_cb(btn, thumb_clicked_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+		lv_obj_t *item = lv_btn_create(carousel);
+		item_btn[i] = item;
+		lv_obj_set_size(item, item_w, item_h + name_h + (page_cfg->screen_width < 320 ? 2 : 4));
+		lv_obj_set_style_radius(item, page_cfg->screen_width < 320 ? 8 : 12, 0);
+		lv_obj_set_style_bg_color(item, theme()->surface_pressed, 0);
+		lv_obj_set_style_bg_opa(item, LV_OPA_COVER, 0);
+		lv_obj_set_style_border_width(item, i == selected ? 2 : 0, 0);
+		lv_obj_set_style_border_color(item, theme()->accent, 0);
+		lv_obj_set_style_shadow_width(item, 0, 0);
+		lv_obj_set_style_pad_all(item, 0, 0);
+		lv_obj_set_style_pad_gap(item, page_cfg->screen_width < 320 ? 2 : 4, 0);
+		lv_obj_set_scrollable(item, false);
+		lv_obj_set_flex_flow(item, LV_FLEX_FLOW_COLUMN);
+		lv_obj_set_flex_align(item, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+		lv_obj_add_event_cb(item, item_clicked_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
-		if (entry->thumb_loaded) {
-			lv_obj_t *img = lv_image_create(btn);
-			lv_image_set_src(img, &entry->thumb.dsc);
-			lv_obj_set_size(img, thumb_size, thumb_size);
-			lv_obj_center(img);
-		} else {
-			lv_obj_t *icon = lv_image_create(btn);
-			lv_image_set_src(icon, &icon_files_image);
-			lv_obj_add_style(icon, &theme_style_icon, 0);
-			lv_obj_center(icon);
+		lv_obj_t *img = lv_image_create(item);
+		item_img[i] = img;
+		lv_obj_set_size(img, item_w, item_h);
+		lv_obj_set_clickable(img, false);
+		if (entry->art_loaded) {
+			lv_image_set_src(img, &entry->art.dsc);
 		}
 
+		lv_obj_t *name = lv_label_create(item);
+		lv_label_set_text(name, entry->name);
+		lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
+		lv_obj_set_width(name, lv_pct(100));
+		lv_obj_set_style_text_align(name, LV_TEXT_ALIGN_CENTER, 0);
+		lv_obj_add_style(name, &theme_style_text_dim, 0);
+		lv_obj_set_style_text_font(name, page_cfg->screen_width < 320 ? &font_ui_14 : &font_ui_18, 0);
+
 		if (i == applied_entry) {
-			lv_obj_t *check = lv_image_create(btn);
+			lv_obj_t *check = lv_image_create(item);
 			lv_image_set_src(check, &icon_check);
 			lv_obj_add_style(check, &theme_style_icon, 0);
 			lv_obj_set_style_image_recolor(check, theme()->accent, 0);
 			lv_obj_set_style_image_recolor_opa(check, LV_OPA_COVER, 0);
-			scale_icon(check, &icon_check, bp_pick(16, 22));
+			scale_icon(check, &icon_check, page_cfg->screen_width < 320 ? 16 : 22);
 			lv_obj_align(check, LV_ALIGN_TOP_RIGHT, -2, 2);
 		}
 	}
 
-	// The built-ins are always there, so the note is only for a card with no
-	// pictures of its own in the folder.
-	lv_obj_set_hidden(empty_label, entry_count > 2);
+	lv_obj_update_layout(carousel);
+	if (selected >= 0 && selected < entry_count) {
+		lv_obj_scroll_to_x(carousel, carousel_target_for(selected), LV_ANIM_OFF);
+	}
+	carousel_update();
 }
 
 // ---------------------------------------------------------------------------
@@ -457,7 +724,7 @@ static void apply_cb(lv_event_t *e) {
 
 	find_applied_entry();
 	refresh_applied();
-	refresh_thumbs();
+	refresh_carousel();
 	refresh_apply_button();
 	toast_success("bootscreen_applied_toast");
 }
@@ -473,47 +740,59 @@ static void repaint_cb(void) {
 
 	refresh_apply_button();
 	for (int i = 0; i < entry_count; i++) {
-		if (thumb_btn[i]) {
-			lv_obj_set_style_border_width(thumb_btn[i], i == selected ? 2 : 0, 0);
-			lv_obj_set_style_border_color(thumb_btn[i], theme()->accent, 0);
-			lv_obj_set_style_bg_color(thumb_btn[i], theme()->surface_pressed, 0);
+		if (item_btn[i]) {
+			lv_obj_set_style_border_width(item_btn[i], i == selected ? 2 : 0, 0);
+			lv_obj_set_style_border_color(item_btn[i], theme()->accent, 0);
+			lv_obj_set_style_bg_color(item_btn[i], theme()->surface_pressed, 0);
 		}
 	}
 	if (applied_check) {
 		lv_obj_set_style_image_recolor(applied_check, theme()->accent, 0);
 	}
+	if (separator) {
+		lv_obj_set_style_bg_color(separator, theme()->text_secondary, 0);
+	}
 }
 
 static void screen_loaded_cb(lv_event_t *e) {
 	(void)e;
-	// The page owns the whole panel: the status bar steps aside while it is up.
-	topbar_set_hidden(true);
-
 	// The card may have been inserted, removed or written to since the last
 	// visit, so the folder is read again every time.
 	scan_entries();
 	refresh_applied();
-	refresh_thumbs();
-	load_preview();
+	refresh_carousel();
 	refresh_apply_button();
 }
 
 static void screen_unloaded_cb(lv_event_t *e) {
 	(void)e;
-	// A removed card's pictures should not stay in memory. The next visit
-	// reads the folder again. The buttons go before the pictures they draw:
-	// an image object must not outlive the buffer it points at.
-	lv_obj_clean(thumbs_row);
-	clear_entries();
-	if (preview_loaded) {
-		lv_image_set_src(preview_img, NULL);
-		cover_free(&preview);
-		preview_loaded = false;
+	// A preview left open would keep the status bar and the chevron hidden on
+	// whatever page comes next. Any animation still running is stopped first:
+	// its completion would otherwise touch the page after it has gone.
+	lv_anim_delete(&preview_anim_data, preview_anim_cb);
+	if (preview_open) {
+		lv_obj_set_hidden(preview_layer, true);
+		topbar_set_hidden(false);
+		back_btn_force_hidden(false);
+		preview_open = false;
+		preview_animating = false;
+		preview_closing = false;
 	}
+
+	// A removed card's pictures should not stay in memory. The next visit
+	// reads the folder again. The items go before the pictures they draw: an
+	// image object must not outlive the buffer it points at.
+	lv_obj_clean(carousel);
+	clear_entries();
 	if (applied_loaded) {
 		lv_image_set_src(applied_img, NULL);
-		cover_free(&applied_thumb);
+		cover_free(&applied_art);
 		applied_loaded = false;
+	}
+	if (preview_art_loaded) {
+		lv_image_set_src(preview_img, NULL);
+		cover_free(&preview_art);
+		preview_art_loaded = false;
 	}
 }
 
@@ -521,20 +800,24 @@ void bootscreen_init(gui_config_t *cfg) {
 	page_cfg = cfg;
 	const bool compact = cfg->screen_width < 320;
 
-	thumb_size = compact ? 44 : 64;
-	applied_w = compact ? 24 : 36;
-	applied_h = compact ? 32 : 48;
+	// The carousel's large picture is 3:4, the panel's own shape, so what is
+	// previewed is what the boot script will draw.
+	item_w = compact ? 120 : 300;
+	item_h = item_w * 4 / 3;
+	name_h = lv_font_get_line_height(compact ? &font_ui_14 : &font_ui_18);
 
-	int preview_h = compact ? 140 : 260;
-	int preview_pad = compact ? 4 : 10;
-	int name_h = lv_font_get_line_height(compact ? &font_ui_16 : &font_ui_22);
-	preview_box_w = (int)cfg->screen_width - 2 * cfg->padding - 2 * preview_pad;
-	preview_box_h = preview_h - 2 * preview_pad - name_h - (compact ? 2 : 6);
-	if (preview_box_w < 1) {
-		preview_box_w = 1;
+	applied_col_w = compact ? 56 : 90;
+	applied_w = compact ? 40 : 64;
+	applied_h = applied_w * 4 / 3;
+
+	int gap = compact ? 6 : 10;
+	carousel_w = (int)cfg->screen_width - 2 * cfg->padding - applied_col_w - 1 - 2 * gap;
+	if (carousel_w < 1) {
+		carousel_w = 1;
 	}
-	if (preview_box_h < 1) {
-		preview_box_h = 1;
+	int carousel_pad = (carousel_w - item_w) / 2;
+	if (carousel_pad < 0) {
+		carousel_pad = 0;
 	}
 
 	lv_obj_add_style(bootscreen_screen, &theme_style_screen, 0);
@@ -547,6 +830,8 @@ void bootscreen_init(gui_config_t *cfg) {
 		content_h = 1;
 	}
 
+	// One row: the applied picture, a rule, then the carousel. The rule is
+	// what keeps the applied picture from reading as another item in the row.
 	lv_obj_t *content = lv_obj_create(bootscreen_screen);
 	lv_obj_set_size(content, lv_pct(100), content_h);
 	lv_obj_align(content, LV_ALIGN_TOP_LEFT, 0, top);
@@ -554,94 +839,70 @@ void bootscreen_init(gui_config_t *cfg) {
 	lv_obj_set_style_border_width(content, 0, 0);
 	lv_obj_set_style_radius(content, 0, 0);
 	lv_obj_set_style_pad_all(content, cfg->padding, 0);
-	lv_obj_set_style_pad_gap(content, compact ? 6 : 12, 0);
-	lv_obj_set_scrollable(content, true);
-	lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_OFF);
-	lv_obj_set_flex_flow(content, LV_FLEX_FLOW_COLUMN);
-	lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+	lv_obj_set_style_pad_gap(content, gap, 0);
+	lv_obj_set_scrollable(content, false);
+	lv_obj_set_flex_flow(content, LV_FLEX_FLOW_ROW);
+	lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-	// The applied picture, in a section of its own: the one thing on the page
-	// that says what the device will actually draw.
-	lv_obj_t *applied_card = lv_obj_create(content);
-	lv_obj_set_width(applied_card, lv_pct(100));
-	lv_obj_set_height(applied_card, compact ? 40 : 64);
-	lv_obj_add_style(applied_card, &theme_style_card, 0);
-	lv_obj_set_style_radius(applied_card, compact ? 8 : 12, 0);
-	lv_obj_set_style_border_width(applied_card, 0, 0);
-	lv_obj_set_style_shadow_width(applied_card, 0, 0);
-	lv_obj_set_style_pad_all(applied_card, compact ? 4 : 8, 0);
-	lv_obj_set_style_pad_gap(applied_card, compact ? 6 : 10, 0);
-	lv_obj_set_scrollable(applied_card, false);
-	lv_obj_set_flex_flow(applied_card, LV_FLEX_FLOW_ROW);
-	lv_obj_set_flex_align(applied_card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+	// The applied picture, in its own column at the far left.
+	lv_obj_t *applied_col = lv_obj_create(content);
+	lv_obj_set_size(applied_col, applied_col_w, lv_pct(100));
+	lv_obj_add_style(applied_col, &theme_style_card, 0);
+	lv_obj_set_style_radius(applied_col, compact ? 8 : 12, 0);
+	lv_obj_set_style_border_width(applied_col, 0, 0);
+	lv_obj_set_style_shadow_width(applied_col, 0, 0);
+	lv_obj_set_style_pad_all(applied_col, compact ? 4 : 8, 0);
+	lv_obj_set_style_pad_gap(applied_col, compact ? 4 : 8, 0);
+	lv_obj_set_scrollable(applied_col, false);
+	lv_obj_set_flex_flow(applied_col, LV_FLEX_FLOW_COLUMN);
+	lv_obj_set_flex_align(applied_col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-	applied_img = lv_image_create(applied_card);
-	lv_obj_set_size(applied_img, applied_w, applied_h);
-	lv_obj_set_clickable(applied_img, false);
-
-	applied_label = lv_label_create(applied_card);
-	lv_obj_set_flex_grow(applied_label, 1);
-	lv_label_set_long_mode(applied_label, LV_LABEL_LONG_DOT);
-	lv_obj_add_style(applied_label, &theme_style_text, 0);
-	lv_obj_set_style_text_font(applied_label, compact ? &font_ui_16 : &font_ui_22, 0);
-
-	applied_check = lv_image_create(applied_card);
+	applied_check = lv_image_create(applied_col);
 	lv_image_set_src(applied_check, &icon_check);
 	lv_obj_add_style(applied_check, &theme_style_icon, 0);
 	lv_obj_set_style_image_recolor(applied_check, theme()->accent, 0);
 	lv_obj_set_style_image_recolor_opa(applied_check, LV_OPA_COVER, 0);
-	scale_icon(applied_check, &icon_check, compact ? 16 : 24);
+	scale_icon(applied_check, &icon_check, compact ? 16 : 22);
 
-	// The selected picture, large enough to judge.
-	lv_obj_t *preview_card = lv_obj_create(content);
-	lv_obj_set_width(preview_card, lv_pct(100));
-	lv_obj_set_height(preview_card, preview_h);
-	lv_obj_add_style(preview_card, &theme_style_card, 0);
-	lv_obj_set_style_radius(preview_card, compact ? 10 : 14, 0);
-	lv_obj_set_style_border_width(preview_card, 0, 0);
-	lv_obj_set_style_shadow_width(preview_card, 0, 0);
-	lv_obj_set_style_pad_all(preview_card, preview_pad, 0);
-	lv_obj_set_scrollable(preview_card, false);
-	lv_obj_set_flex_flow(preview_card, LV_FLEX_FLOW_COLUMN);
-	lv_obj_set_flex_align(preview_card, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+	applied_img = lv_image_create(applied_col);
+	lv_obj_set_size(applied_img, applied_w, applied_h);
+	lv_obj_set_clickable(applied_img, false);
 
-	preview_img = lv_image_create(preview_card);
-	lv_image_set_inner_align(preview_img, LV_IMAGE_ALIGN_CENTER);
-	lv_obj_set_clickable(preview_img, false);
+	applied_label = lv_label_create(applied_col);
+	lv_label_set_long_mode(applied_label, LV_LABEL_LONG_DOT);
+	lv_obj_set_width(applied_label, lv_pct(100));
+	lv_obj_set_style_text_align(applied_label, LV_TEXT_ALIGN_CENTER, 0);
+	lv_obj_add_style(applied_label, &theme_style_text_dim, 0);
+	lv_obj_set_style_text_font(applied_label, compact ? &font_ui_14 : &font_ui_18, 0);
 
-	preview_placeholder = lv_image_create(preview_card);
-	lv_image_set_src(preview_placeholder, &icon_files_image);
-	lv_obj_add_style(preview_placeholder, &theme_style_icon, 0);
-	lv_obj_set_style_image_opa(preview_placeholder, LV_OPA_40, 0);
+	separator = lv_obj_create(content);
+	lv_obj_set_size(separator, 1, lv_pct(100));
+	lv_obj_set_style_bg_color(separator, theme()->text_secondary, 0);
+	lv_obj_set_style_bg_opa(separator, LV_OPA_20, 0);
+	lv_obj_set_style_border_width(separator, 0, 0);
+	lv_obj_set_style_radius(separator, 0, 0);
+	lv_obj_set_style_pad_all(separator, 0, 0);
+	lv_obj_set_scrollable(separator, false);
 
-	preview_name = lv_label_create(preview_card);
-	lv_label_set_long_mode(preview_name, LV_LABEL_LONG_DOT);
-	lv_obj_set_width(preview_name, lv_pct(100));
-	lv_obj_set_style_text_align(preview_name, LV_TEXT_ALIGN_CENTER, 0);
-	lv_obj_add_style(preview_name, &theme_style_text_dim, 0);
-	lv_obj_set_style_text_font(preview_name, compact ? &font_ui_16 : &font_ui_22, 0);
-
-	// The gallery itself: a row that scrolls sideways, so a card full of
-	// pictures does not push the preview off the page.
-	thumbs_row = lv_obj_create(content);
-	lv_obj_set_width(thumbs_row, lv_pct(100));
-	lv_obj_set_height(thumbs_row, thumb_size + (compact ? 8 : 16));
-	lv_obj_set_style_bg_opa(thumbs_row, 0, 0);
-	lv_obj_set_style_border_width(thumbs_row, 0, 0);
-	lv_obj_set_style_pad_all(thumbs_row, 0, 0);
-	lv_obj_set_style_pad_gap(thumbs_row, compact ? 6 : 10, 0);
-	lv_obj_set_scrollable(thumbs_row, true);
-	lv_obj_set_scroll_dir(thumbs_row, LV_DIR_HOR);
-	lv_obj_set_scrollbar_mode(thumbs_row, LV_SCROLLBAR_MODE_OFF);
-	lv_obj_set_flex_flow(thumbs_row, LV_FLEX_FLOW_ROW);
-	lv_obj_set_flex_align(thumbs_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-	empty_label = lv_label_create(content);
-	lv_label_set_long_mode(empty_label, LV_LABEL_LONG_WRAP);
-	lv_obj_set_width(empty_label, lv_pct(100));
-	lv_obj_add_style(empty_label, &theme_style_text_dim, 0);
-	lv_obj_set_style_text_font(empty_label, compact ? &font_ui_16 : &font_ui_22, 0);
-	lv_label_set_text(empty_label, tr("bootscreen_empty"));
+	// The gallery: a row that scrolls sideways, with the middle picture large
+	// and the ones either side shrinking away from it.
+	carousel = lv_obj_create(content);
+	lv_obj_set_height(carousel, lv_pct(100));
+	lv_obj_set_flex_grow(carousel, 1);
+	lv_obj_set_style_bg_opa(carousel, 0, 0);
+	lv_obj_set_style_border_width(carousel, 0, 0);
+	lv_obj_set_style_radius(carousel, 0, 0);
+	lv_obj_set_style_pad_all(carousel, 0, 0);
+	lv_obj_set_style_pad_gap(carousel, 0, 0);
+	lv_obj_set_style_pad_left(carousel, carousel_pad, 0);
+	lv_obj_set_style_pad_right(carousel, carousel_pad, 0);
+	lv_obj_set_scrollable(carousel, true);
+	lv_obj_set_scroll_dir(carousel, LV_DIR_HOR);
+	lv_obj_set_scrollbar_mode(carousel, LV_SCROLLBAR_MODE_OFF);
+	lv_obj_set_flex_flow(carousel, LV_FLEX_FLOW_ROW);
+	lv_obj_set_flex_align(carousel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+	lv_obj_add_event_cb(carousel, carousel_scroll_cb, LV_EVENT_SCROLL, NULL);
+	lv_obj_add_event_cb(carousel, carousel_scroll_end_cb, LV_EVENT_SCROLL_END, NULL);
 
 	// The one action, at the foot of the page and always in reach.
 	apply_btn = lv_btn_create(bootscreen_screen);
@@ -656,12 +917,38 @@ void bootscreen_init(gui_config_t *cfg) {
 	lv_obj_set_style_text_font(apply_label, compact ? &font_ui_18 : &font_ui_24, 0);
 	lv_obj_center(apply_label);
 
+	// The full-screen preview: a black sheet over the whole page, with the
+	// picture on it. It is created last so it sits above the title, the row and
+	// the Apply button; the status bar and the chevron live on the top layer
+	// and are hidden while it is up.
+	preview_layer = lv_obj_create(bootscreen_screen);
+	lv_obj_set_size(preview_layer, cfg->screen_width, cfg->screen_height);
+	lv_obj_align(preview_layer, LV_ALIGN_TOP_LEFT, 0, 0);
+	lv_obj_set_style_bg_color(preview_layer, lv_color_black(), 0);
+	lv_obj_set_style_bg_opa(preview_layer, LV_OPA_COVER, 0);
+	lv_obj_set_style_border_width(preview_layer, 0, 0);
+	lv_obj_set_style_radius(preview_layer, 0, 0);
+	lv_obj_set_style_pad_all(preview_layer, 0, 0);
+	lv_obj_set_scrollable(preview_layer, false);
+	lv_obj_set_clickable(preview_layer, true);
+	lv_obj_add_event_cb(preview_layer, preview_close_cb, LV_EVENT_CLICKED, NULL);
+	lv_obj_set_hidden(preview_layer, true);
+
+	preview_img = lv_image_create(preview_layer);
+	lv_obj_set_size(preview_img, cfg->screen_width, cfg->screen_height);
+	lv_image_set_inner_align(preview_img, LV_IMAGE_ALIGN_CENTER);
+	lv_obj_set_clickable(preview_img, false);
+	lv_obj_set_style_transform_pivot_x(preview_img, (int32_t)cfg->screen_width / 2, 0);
+	lv_obj_set_style_transform_pivot_y(preview_img, (int32_t)cfg->screen_height / 2, 0);
+
 	lv_obj_add_event_cb(bootscreen_screen, screen_loaded_cb, LV_EVENT_SCREEN_LOADED, NULL);
 	lv_obj_add_event_cb(bootscreen_screen, screen_unloaded_cb, LV_EVENT_SCREEN_UNLOADED, NULL);
+	switcher_set_back_guard(bootscreen_screen, preview_back_guard);
+	switcher_set_back_guard_peek(bootscreen_screen, preview_back_guard_peek);
 	theme_register_refresh(repaint_cb);
 
 	// The gallery is read when the page is opened, not here: the card may not
 	// have been mounted yet, and a page the user never visits should not spend
-	// the startup decoding thumbnails.
+	// startup decoding pictures.
 	refresh_apply_button();
 }
