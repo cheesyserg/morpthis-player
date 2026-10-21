@@ -189,6 +189,10 @@ morpthis_screen_t *morpthis_screen_create(const char *title) {
 	lv_obj_set_style_border_width(screen->content, 0, 0);
 	lv_obj_set_style_bg_opa(screen->content, LV_OPA_TRANSP, 0);
 	lv_obj_set_scrollable(screen->content, false);
+	// The page takes the presses its widgets do not. touch_event_cb hangs off
+	// this object; a plain lv_obj is clickable by default, but say so, because
+	// an app that draws its own surface has nothing else to catch a tap.
+	lv_obj_set_clickable(screen->content, true);
 
 	if (!game) {
 		switcher_attach_back_gesture(screen->root);
@@ -480,6 +484,11 @@ morpthis_widget_t *morpthis_image_create(morpthis_screen_t *screen, const char *
 		morpthis_widget_destroy(widget);
 		return NULL;
 	}
+
+	// A picture is not a control: a press on it belongs to the page. Otherwise
+	// a full-screen image would swallow the page's touch callback.
+	lv_obj_set_clickable(widget->obj, false);
+
 	widget->image = sdk_strdup(relative_path);
 	// The size is usually set just after creation; the default box keeps an
 	// icon visible even when the app never calls set_size(). Decoding is
@@ -587,6 +596,11 @@ morpthis_widget_t *morpthis_canvas_create(morpthis_screen_t *screen, int width, 
 	widget->height = height;
 	lv_obj_set_pos(widget->obj, 0, 0);
 	lv_obj_set_size(widget->obj, width, height);
+
+	// The canvas covers the page and is what a game's frames are drawn into,
+	// but it is not a control: the press has to reach screen->content, where
+	// touch_event_cb turns it into MORPTHIS_TOUCH_DOWN/UP for the app.
+	lv_obj_set_clickable(widget->obj, false);
 
 	// LVGL caches an image source by the descriptor's address, so the
 	// descriptor has to live as long as the widget, not on this stack.
