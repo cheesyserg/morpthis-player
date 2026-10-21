@@ -10,17 +10,96 @@
 #include "src/gui/shell/switcher.h"
 #include "src/gui/shell/theme.h"
 #include "src/gui/shell/toast.h"
+#include "src/gui/shell/topbar.h"
 
 // ---------------------------------------------------------------------------
 // Screens
 // ---------------------------------------------------------------------------
+
+static bool app_is_game(void) {
+	return sdk_app && sdk_app->category == APP_CATEGORY_GAME;
+}
 
 int morpthis_ui_width(void) {
 	return sdk_cfg ? (int)sdk_cfg->screen_width : 240;
 }
 
 int morpthis_ui_height(void) {
-	return sdk_cfg ? (int)sdk_cfg->screen_height - sdk_content_top() : 320;
+	if (!sdk_cfg) {
+		return 320;
+	}
+	if (app_is_game()) {
+		return (int)sdk_cfg->screen_height;
+	}
+	return (int)sdk_cfg->screen_height - sdk_content_top();
+}
+
+// A game owns the whole panel: the status bar and chevron go away, and the
+// edge swipe with them. They come back when the app leaves.
+static void game_loaded_cb(lv_event_t *e) {
+	(void)e;
+	topbar_set_hidden(true);
+	back_btn_force_hidden(true);
+	back_gesture_blocked(true);
+}
+
+static void game_unloaded_cb(lv_event_t *e) {
+	(void)e;
+	back_gesture_blocked(false);
+	back_btn_force_hidden(false);
+	topbar_set_hidden(false);
+}
+
+// The top edge of a game: a downward swipe brings the status bar back for a
+// second. The bar is on the top layer then, so its own drag handler takes the
+// next swipe and opens the control centre.
+static void game_edge_cb(lv_event_t *e) {
+	static lv_point_t start;
+	static bool tracking;
+	static bool engaged;
+
+	if (!sdk_cfg) {
+		return;
+	}
+	lv_indev_t *indev = lv_indev_active();
+	if (!indev) {
+		return;
+	}
+
+	lv_point_t point;
+	lv_indev_get_point(indev, &point);
+	lv_event_code_t code = lv_event_get_code(e);
+
+	if (code == LV_EVENT_PRESSED) {
+		tracking = point.y < sdk_cfg->top_bar_height;
+		engaged = false;
+		if (tracking) {
+			start = point;
+		}
+		return;
+	}
+	if (!tracking) {
+		return;
+	}
+
+	int dy = point.y - start.y;
+	if (code == LV_EVENT_PRESSING) {
+		if (!engaged && dy > 8) {
+			engaged = true;
+			topbar_peek();
+		}
+		return;
+	}
+	if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+		bool was_engaged = engaged;
+		tracking = false;
+		engaged = false;
+		// A flick can end between two reads of the panel, with no PRESSING at
+		// all; the release is then the only place the gesture can be seen.
+		if (!was_engaged && code == LV_EVENT_RELEASED && dy >= 24) {
+			topbar_peek();
+		}
+	}
 }
 
 static void touch_event_cb(lv_event_t *e) {
@@ -94,8 +173,12 @@ morpthis_screen_t *morpthis_screen_create(const char *title) {
 
 	// The player owns the heading row and the space under it. The app's
 	// coordinates start below it, so its 0,0 is the first pixel it may draw.
-	screen->title_label = settingsrow_title(screen->root, sdk_cfg, title ? title : "");
-	screen->content_top = sdk_content_top();
+	// A game has no heading row: its 0,0 is the first pixel of the panel.
+	const bool game = app_is_game();
+	if (!game) {
+		screen->title_label = settingsrow_title(screen->root, sdk_cfg, title ? title : "");
+	}
+	screen->content_top = game ? 0 : sdk_content_top();
 
 	screen->content = lv_obj_create(screen->root);
 	lv_obj_remove_style_all(screen->content);
@@ -107,9 +190,11 @@ morpthis_screen_t *morpthis_screen_create(const char *title) {
 	lv_obj_set_style_bg_opa(screen->content, LV_OPA_TRANSP, 0);
 	lv_obj_set_scrollable(screen->content, false);
 
-	switcher_attach_back_gesture(screen->root);
-	switcher_attach_back_gesture(screen->content);
-	switcher_set_back_guard(screen->root, back_guard);
+	if (!game) {
+		switcher_attach_back_gesture(screen->root);
+		switcher_attach_back_gesture(screen->content);
+		switcher_set_back_guard(screen->root, back_guard);
+	}
 
 	// Raw touch, for an app that draws its own surface. Widgets receive their
 	// own taps; the events here are the ones that land on the page itself.
@@ -117,6 +202,17 @@ morpthis_screen_t *morpthis_screen_create(const char *title) {
 	lv_obj_add_event_cb(screen->content, touch_event_cb, LV_EVENT_PRESSING, screen);
 	lv_obj_add_event_cb(screen->content, touch_event_cb, LV_EVENT_RELEASED, screen);
 	lv_obj_add_event_cb(screen->content, touch_event_cb, LV_EVENT_PRESS_LOST, screen);
+
+	if (game) {
+		// No edge swipe and no chevron: the whole panel belongs to the game.
+		// The top edge is the only chrome, and it is ours.
+		lv_obj_add_event_cb(screen->root, game_loaded_cb, LV_EVENT_SCREEN_LOADED, NULL);
+		lv_obj_add_event_cb(screen->root, game_unloaded_cb, LV_EVENT_SCREEN_UNLOADED, NULL);
+		lv_obj_add_event_cb(screen->content, game_edge_cb, LV_EVENT_PRESSED, NULL);
+		lv_obj_add_event_cb(screen->content, game_edge_cb, LV_EVENT_PRESSING, NULL);
+		lv_obj_add_event_cb(screen->content, game_edge_cb, LV_EVENT_RELEASED, NULL);
+		lv_obj_add_event_cb(screen->content, game_edge_cb, LV_EVENT_PRESS_LOST, NULL);
+	}
 
 	screen->next = sdk_app->screens;
 	sdk_app->screens = screen;
@@ -469,6 +565,76 @@ int morpthis_slider_value(const morpthis_widget_t *slider) {
 	return slider && slider->kind == SDK_WIDGET_SLIDER ? slider->value : 0;
 }
 
+morpthis_widget_t *morpthis_canvas_create(morpthis_screen_t *screen, int width, int height) {
+	if (width <= 0 || height <= 0) {
+		errno = EINVAL;
+		return NULL;
+	}
+
+	morpthis_widget_t *widget = widget_new(screen, SDK_WIDGET_CANVAS);
+	if (!widget) {
+		return NULL;
+	}
+
+	widget->pixels = calloc((size_t)width * (size_t)height, sizeof(uint16_t));
+	widget->obj = lv_image_create(screen->content);
+	if (!widget->pixels || !widget->obj) {
+		morpthis_widget_destroy(widget);
+		return NULL;
+	}
+
+	widget->width = width;
+	widget->height = height;
+	lv_obj_set_pos(widget->obj, 0, 0);
+	lv_obj_set_size(widget->obj, width, height);
+
+	// LVGL caches an image source by the descriptor's address, so the
+	// descriptor has to live as long as the widget, not on this stack.
+	lv_image_dsc_t *dsc = &widget->dsc;
+	memset(dsc, 0, sizeof(*dsc));
+	dsc->header.magic = LV_IMAGE_HEADER_MAGIC;
+	dsc->header.cf = LV_COLOR_FORMAT_RGB565;
+	dsc->header.w = (uint32_t)width;
+	dsc->header.h = (uint32_t)height;
+	dsc->header.stride = (uint32_t)width * 2;
+	dsc->data_size = (uint32_t)width * (uint32_t)height * 2;
+	dsc->data = (const uint8_t *)widget->pixels;
+	lv_image_set_src(widget->obj, dsc);
+
+	return widget;
+}
+
+uint16_t *morpthis_canvas_buffer(morpthis_widget_t *canvas) {
+	if (!canvas || canvas->kind != SDK_WIDGET_CANVAS) {
+		return NULL;
+	}
+	return canvas->pixels;
+}
+
+void morpthis_canvas_invalidate(morpthis_widget_t *canvas, int x, int y, int width, int height) {
+	if (!canvas || !canvas->obj || canvas->kind != SDK_WIDGET_CANVAS || width <= 0 || height <= 0) {
+		return;
+	}
+
+	lv_area_t base;
+	lv_obj_get_coords(canvas->obj, &base);
+	lv_area_t area = {
+		.x1 = base.x1 + x,
+		.y1 = base.y1 + y,
+		.x2 = base.x1 + x + width - 1,
+		.y2 = base.y1 + y + height - 1,
+	};
+	lv_obj_invalidate_area(canvas->obj, &area);
+}
+
+void morpthis_ui_refresh(void) {
+	// A game draws on its own clock; without this the frame it just wrote waits
+	// for the display timer's own phase, which shows as jitter at 60 steps a
+	// second. Safe here: a posted callback runs between renders, never inside
+	// one.
+	lv_refr_now(NULL);
+}
+
 void morpthis_widget_destroy(morpthis_widget_t *widget) {
 	if (!widget) {
 		return;
@@ -486,12 +652,13 @@ void morpthis_widget_destroy(morpthis_widget_t *widget) {
 	}
 
 	if (widget->obj) {
-		if (widget->kind == SDK_WIDGET_IMAGE) {
+		if (widget->kind == SDK_WIDGET_IMAGE || widget->kind == SDK_WIDGET_CANVAS) {
 			lv_image_set_src(widget->obj, NULL);
 		}
 		lv_obj_delete(widget->obj);
 	}
 	cover_free(&widget->cover);
+	free(widget->pixels);
 	free(widget->text);
 	free(widget->image);
 	free(widget);
@@ -523,7 +690,7 @@ void morpthis_widget_set_pos(morpthis_widget_t *widget, int x, int y) {
 }
 
 void morpthis_widget_set_size(morpthis_widget_t *widget, int width, int height) {
-	if (!widget || !widget->obj) {
+	if (!widget || !widget->obj || widget->kind == SDK_WIDGET_CANVAS) {
 		return;
 	}
 	widget->width = width < 0 ? 0 : width;

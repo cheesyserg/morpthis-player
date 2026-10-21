@@ -28,6 +28,11 @@ apphost_result_t apphost_launch(const app_t *app, char *error, size_t error_size
 // True when an app is loaded. Transport keys are the app's while it is: they
 // are delivered to its button callback if it set one.
 bool apphost_active(void);
+
+// True when the loaded app asked for the game category: no title row, no status
+// bar, no chevron or edge swipe, and the top-edge pull-down is the game's.
+bool apphost_game_active(void);
+
 bool apphost_handle_key(gui_key_t key);
 
 // Queues the app's teardown. Idempotent; called by morpthis_app_quit() and by

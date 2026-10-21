@@ -122,6 +122,10 @@ bool apphost_active(void) {
 	return sdk_app && sdk_app->alive;
 }
 
+bool apphost_game_active(void) {
+	return sdk_app && sdk_app->alive && sdk_app->category == APP_CATEGORY_GAME;
+}
+
 bool apphost_handle_key(gui_key_t key) {
 	morpthis_app_t *app = sdk_app;
 	if (!app || !app->alive || !app->button_cb) {
@@ -223,6 +227,7 @@ apphost_result_t apphost_launch(const app_t *meta, char *error, size_t error_siz
 	snprintf(app->version, sizeof(app->version), "%s", meta->version);
 	snprintf(app->folder, sizeof(app->folder), "%s", meta->folder);
 	app->tier = meta->tier;
+	app->category = meta->category;
 	app->dl_handle = handle;
 	app->alive = true;
 	sdk_set_app(app);

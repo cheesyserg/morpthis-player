@@ -37,6 +37,8 @@ morpthis-apps/
 - `icon` is `icon.png` (square, 64×64 or 128×128).
 - `description` is one sentence, no trailing period.
 - `min_player` is the oldest player build the app was tested on.
+- `category` is `app` (the default) or `game`. A game gets the whole panel: no
+  title row, no chevron, no swipe-back.
 - `tier` is `light` unless the app cannot fit otherwise; `heavy` stops playback
   and releases the player's caches before loading. Use it for an emulator or a
   game, not for a utility.

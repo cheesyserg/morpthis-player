@@ -97,6 +97,17 @@ static bool read_manifest(const char *folder, const char *dirname, app_t *app) {
 		app->tier = APP_TIER_LIGHT;
 		fprintf(stderr, "apps: %s names unknown tier \"%s\", using light\n", path, tier);
 	}
+
+	char category[APPS_CATEGORY_MAX];
+	json_obj_str(&doc, root, "category", category, sizeof(category));
+	if (!category[0] || strcasecmp(category, "app") == 0) {
+		app->category = APP_CATEGORY_APP;
+	} else if (strcasecmp(category, "game") == 0) {
+		app->category = APP_CATEGORY_GAME;
+	} else {
+		app->category = APP_CATEGORY_APP;
+		fprintf(stderr, "apps: %s names unknown category \"%s\", using app\n", path, category);
+	}
 	json_free(&doc);
 
 	if (!app->id[0]) {

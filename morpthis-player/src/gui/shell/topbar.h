@@ -47,6 +47,10 @@ void topbar_set_library_check(topbar_library_t state);
 void topbar_set_hidden(bool hidden);
 bool topbar_is_hidden(void);
 
+// Shows the bar for one second, for a game whose chrome is otherwise hidden.
+// Swiping down on the bar itself then opens the control centre.
+void topbar_peek(void);
+
 // Draws the bar above everything else on the top layer. The control centre
 // asks for this on the way in: its sheet covers the whole screen, and the
 // clock, battery and volume have to stay readable over it.

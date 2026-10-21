@@ -10,6 +10,7 @@
 #include "lvgl/lvgl.h"
 
 #include "src/gui/fonts/fonts.h"
+#include "src/gui/apps/apphost.h"
 #include "src/gui/shell/icons.h"
 #include "src/gui/nowplaying/player.h"
 #include "src/gui/shell/quickpanel.h"
@@ -86,6 +87,8 @@ static int battery_icon_size = BATTERY_ICON_SIZE;
 #define FLICK_OPEN_PX 24
 
 static lv_obj_t *top_bar;
+static lv_timer_t *peek_timer;
+static void peek_timer_cb(lv_timer_t *timer);
 static lv_obj_t *bat_widget;
 static lv_obj_t *bat_fill;
 static lv_obj_t *bat_shell;
@@ -1271,6 +1274,11 @@ void topbar_init(gui_config_t *cfg) {
 	lv_timer_ready(radio_timer);
 	power_pause_in_standby(radio_timer);
 
+	// The peek a game gets: one second of status bar, then gone again unless the
+	// control centre is open over it.
+	peek_timer = lv_timer_create(peek_timer_cb, 1000, NULL);
+	lv_timer_pause(peek_timer);
+
 	// Last, once everything that lives on the bar exists: see the note over the
 	// function. The bar keeps its own CLICKABLE, which is what the drag hangs
 	// off; only what is inside it gives presses up.
@@ -1282,6 +1290,26 @@ void topbar_init(gui_config_t *cfg) {
 }
 
 bool topbar_is_hidden(void) { return top_bar && lv_obj_is_hidden(top_bar); }
+
+static void peek_timer_cb(lv_timer_t *timer) {
+	lv_timer_pause(timer);
+	// A different page while the second is running: the bar belongs to that
+	// page now, and the game's timer must not take it away.
+	if (apphost_game_active() && !quickpanel_is_open()) {
+		topbar_set_hidden(true);
+	}
+}
+
+void topbar_peek(void) {
+	if (!top_bar) {
+		return;
+	}
+	topbar_set_hidden(false);
+	if (peek_timer) {
+		lv_timer_reset(peek_timer);
+		lv_timer_resume(peek_timer);
+	}
+}
 
 void topbar_set_battery_percent(bool shown) {
 	if (!bat_label) {

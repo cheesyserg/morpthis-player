@@ -8,7 +8,9 @@ that knows about it. The page is reached from **More → Apps**.
 A UI app runs inside the player through the SDK, on its own page with the
 player's top bar, chevron and swipe-back. A headless tool still runs as a child
 process. Each app declares a **tier**: a light app keeps the player's playback
-and caches, a heavy app asks the player to release them first.
+and caches, a heavy app asks the player to release them first. It also declares
+a **category**: an `app` keeps the player's chrome, a `game` gets the whole
+panel and none of it.
 
 This document is the on-card contract. The SDK and the apps repository are
 described in [app-sdk.md](app-sdk.md) and [apps-repo.md](apps-repo.md).
@@ -51,6 +53,7 @@ described in [app-sdk.md](app-sdk.md) and [apps-repo.md](apps-repo.md).
 | `entry` | string | **yes** | — | Relative to the app folder |
 | `icon` | string | no | empty | Relative to the app folder |
 | `description` | string | no | empty | One line under the name |
+| `category` | string | no | `app` | `app` or `game`; a game owns the panel |
 | `tier` | string | no | `light` | `light` or `heavy`; heavy reclaims player memory first |
 | `min_player` | number | no | 0 | Minimum player build; 0 = no requirement |
 
@@ -86,6 +89,23 @@ logs `MemAvailable` before and after, so the effect is visible. A heavy app that
 needs the player's audio should be light instead, because heavy stops the
 transport (the app can start it again through the SDK).
 
+## App categories
+
+| Category | What the player does | Use it for |
+| --- | --- | --- |
+| `app` (default) | The title row, the floating chevron and the swipe-back gesture stay. `morpthis_ui_height()` is the content area below the title. | Anything built from widgets. |
+| `game` | No title row, no chevron and no edge swipe; the app's 0,0 is the first pixel of the panel and `morpthis_ui_height()` is the full display. | A game that draws its own canvas. |
+
+A game is left through a control of its own; the player does not provide a back
+affordance. The one piece of chrome left is the top edge: a downward swipe
+brings the status bar back for a second, and a second swipe while it is up
+opens the control centre. The bar hides itself again after the peek, and when
+the control centre closes.
+
+Category and tier are independent. A game is usually heavy because it wants the
+room, but a small game can be light, and a heavy app that is not a game keeps
+the player's chrome.
+
 ## Launch model
 
 The player tries the in-process path first. It `dlopen`s the entry as a shared
@@ -93,7 +113,8 @@ object, checks the API version the app was built against, and calls
 `morpthis_app_main()` on the GUI thread. The app creates a screen; the player
 puts it up with its top bar, floating chevron and swipe-back, and destroys it
 when the app quits. The chevron and swipe both deliver `MORPTHIS_BUTTON_BACK`
-to an app that subscribed, then quit the app.
+to an app that subscribed, then quit the app. A `game` screen is put up without
+the top bar, the chevron or the gesture, and the app quits itself.
 
 If the entry is not a shared object, or has no SDK entry point, the player falls
 back to the separate-process model: fork, `execve` the entry from the card, and

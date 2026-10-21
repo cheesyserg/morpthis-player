@@ -33,6 +33,12 @@
 // playback path and cache memory before the app loads; the queue is kept, so
 // pressing play afterwards restarts the current track.
 //
+// `category` is "app" (the default) or "game". A game gets the whole display:
+// no title row, no status bar and no back chevron or edge swipe, and its content
+// starts at the top of the panel. A downward swipe from the top edge shows the
+// status bar for a second; swiping down again opens the control centre. See
+// docs/apps.md.
+//
 // The launch model is a separate process for headless tools and the SDK's
 // in-process model for UI apps. The player tries the plugin first and falls
 // back to fork/execve for a tool. See docs/apps.md and docs/app-sdk.md.
@@ -47,11 +53,17 @@
 #define APPS_DESC_MAX 160
 #define APPS_FOLDER_MAX 512
 #define APPS_TIER_MAX 16
+#define APPS_CATEGORY_MAX 16
 
 typedef enum {
 	APP_TIER_LIGHT = 0,
 	APP_TIER_HEAVY,
 } app_tier_t;
+
+typedef enum {
+	APP_CATEGORY_APP = 0,
+	APP_CATEGORY_GAME,
+} app_category_t;
 
 typedef struct {
 	char id[APPS_ID_MAX];
@@ -63,6 +75,7 @@ typedef struct {
 	char dir[APPS_ID_MAX];		 // the folder name under Apps/
 	char folder[APPS_FOLDER_MAX]; // the absolute path to that folder
 	app_tier_t tier;
+	app_category_t category;
 	int min_player;				 // 0 when the manifest does not say
 } app_t;
 

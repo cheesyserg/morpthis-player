@@ -29,6 +29,7 @@
 #include "src/system/net/wifitransfer.h"
 #include "src/gui/shell/switcher.h"
 #include "src/gui/shell/topbar.h"
+#include "src/gui/apps/apphost.h"
 #include "src/gui/wireless/wifisettings.h"
 #include "src/system/remote/airplay.h"
 #include "src/system/audio/alsa-controls.h"
@@ -489,6 +490,13 @@ static bool raised_topbar;
 // the bar would be hidden on that page a fifth of a second after it appeared,
 // taking the pull-down handle with it.
 static void restore_topbar(void) {
+	// A game keeps its bar out of the way: the peek that let the control centre
+	// be reached does not outlive the sheet.
+	if (apphost_game_active()) {
+		raised_topbar = false;
+		topbar_set_hidden(true);
+		return;
+	}
 	if (raised_topbar) {
 		raised_topbar = false;
 		if (player_sheet_is_open()) {

@@ -23,6 +23,7 @@ typedef enum {
 	SDK_WIDGET_LIST,
 	SDK_WIDGET_IMAGE,
 	SDK_WIDGET_SLIDER,
+	SDK_WIDGET_CANVAS,
 } sdk_widget_kind_t;
 
 struct morpthis_widget {
@@ -60,6 +61,11 @@ struct morpthis_widget {
 
 	cover_image_t cover; // decoded pixels for an image widget
 
+	// A canvas: the app's own RGB565 framebuffer and the image source that
+	// describes it. The descriptor lives here because LVGL caches the pointer.
+	uint16_t *pixels;
+	lv_image_dsc_t dsc;
+
 	struct morpthis_widget *next;
 };
 
@@ -80,6 +86,7 @@ struct morpthis_app {
 	char version[APPS_VERSION_MAX];
 	char folder[APPS_FOLDER_MAX];
 	app_tier_t tier;
+	app_category_t category;
 
 	void *dl_handle;
 	bool alive;
