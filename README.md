@@ -1,56 +1,12 @@
 # Morpthis
 
-![Morpthis for TempoTec Variations V1 with the Tokyo Night main menu](screenshots/readme-banner.png)
+![Morpthis for TempoTec Variations V1 with the Tokyo Night main menu](screenshots/readme-banner.jpg)
 
 **Morpthis** is a community port and rebrand of the original **[Sonix Player](https://github.com/Jepl4r/sonix-player)** project by **[Jepl4r](https://github.com/Jepl4r)** — a replacement music player for the HiBy R3 Pro II and HiBy R1 — to the **TempoTec Variations V1**. The player and the firmware packer come from that project; this fork adds the V1 board profile, the V1 packaging path, the Morpthis identity and the V1 documentation. See [Credits](#credits).
 
 The firmware builder starts with an official V1 update package, replaces the stock music player and its interface with Morpthis, then repackages the update as `v1.upt`.
 
 This is not an official TempoTec or HiBy release. **The port has been tested on physical TempoTec Variations V1 hardware and works perfectly on the tested device.** It targets the **TempoTec Variations V1 only**; compatibility with the V1-A or other players in the Variations family is not established.
-
-
-## Previews
-
-Interface previews of the stock UI of Morpthis, rendered at the V1's native 240 × 320 resolution. Click any picture to open it full size. (This is not the default font neither the color)
-
-<table>
-  <tr>
-    <td align="center">
-      <a href="screenshots/main-menu.png"><img src="screenshots/main-menu.png" width="180" alt="Main menu"></a>
-      <br><sub><b>Main menu</b></sub>
-    </td>
-    <td align="center">
-      <a href="screenshots/music.png"><img src="screenshots/music.png" width="180" alt="Music"></a>
-      <br><sub><b>Music</b></sub>
-    </td>
-    <td align="center">
-      <a href="screenshots/more.png"><img src="screenshots/more.png" width="180" alt="More"></a>
-      <br><sub><b>More</b></sub>
-    </td>
-    <td align="center">
-      <a href="screenshots/wireless.png"><img src="screenshots/wireless.png" width="180" alt="Wireless"></a>
-      <br><sub><b>Wireless</b></sub>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <a href="screenshots/settings.png"><img src="screenshots/settings.png" width="180" alt="Settings"></a>
-      <br><sub><b>Settings</b></sub>
-    </td>
-    <td align="center">
-      <a href="screenshots/now-playing.png"><img src="screenshots/now-playing.png" width="180" alt="Now Playing"></a>
-      <br><sub><b>Now Playing</b></sub>
-    </td>
-    <td align="center">
-      <a href="screenshots/file-browser.png"><img src="screenshots/file-browser.png" width="180" alt="File Browser"></a>
-      <br><sub><b>File Browser</b></sub>
-    </td>
-    <td align="center">
-      <a href="screenshots/streaming.png"><img src="screenshots/streaming.png" width="180" alt="Streaming"></a>
-      <br><sub><b>Streaming</b></sub>
-    </td>
-  </tr>
-</table>
 
 ## Contents
 
@@ -216,4 +172,3 @@ Third-party components carried in the tree, or fetched by the build, keep their 
 | the [Rockbox](https://rockbox.org) toolchain scripts in `sonix-player/rockboxdev/` | the MIPS cross-compiler |
 
 The licence notice for each component sits with it in the source tree; [LICENSE](LICENSE) covers the project as a whole. The official TempoTec V1 firmware used as the base of a build is not part of this repository, and TempoTec, HiBy and the other vendors own their names and firmware.
-
