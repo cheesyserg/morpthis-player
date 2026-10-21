@@ -578,6 +578,7 @@ void appearance_init(gui_config_t *cfg) {
 	font_pills_rebuild();
 
 	refresh_buttons();
+	refresh_style_buttons();
 	refresh_clock_buttons();
 	refresh_accent_buttons();
 	refresh_text_size_pills();
