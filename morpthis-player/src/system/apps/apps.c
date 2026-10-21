@@ -1,17 +1,21 @@
 #include "apps.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
+#include "src/system/core/json.h"
 #include "src/system/device/system.h"
 
 // How often the parent looks at the child while waiting. Ten milliseconds is
@@ -19,12 +23,150 @@
 // otherwise asleep.
 #define APPS_POLL_MS 10
 
+// A manifest is a few hundred bytes. Four kilobytes is room for a long
+// description and a comment or two, and small enough that a file which is not
+// a manifest at all is refused before it is parsed.
+#define MANIFEST_MAX 4096
+
 static void set_error(apps_result_t *out, const char *text) {
 	snprintf(out->error, sizeof(out->error), "%s", text ? text : "unknown error");
 }
 
 static void set_errno(apps_result_t *out, const char *what, int err) {
 	snprintf(out->error, sizeof(out->error), "%s: %s", what, strerror(err));
+}
+
+// A path from a manifest is relative to the app's own folder and may not leave
+// it. ".." anywhere is refused rather than resolved: a manifest is data from a
+// removable card, and the one thing it must not be able to do is name a file
+// outside the folder the player is about to run.
+static bool safe_relative(const char *path) {
+	if (!path || !path[0] || path[0] == '/') {
+		return false;
+	}
+	if (strstr(path, "..") || strchr(path, '\\')) {
+		return false;
+	}
+	return true;
+}
+
+static bool read_manifest(const char *folder, const char *dirname, app_t *app) {
+	char path[APPS_FOLDER_MAX + 16];
+	int n = snprintf(path, sizeof(path), "%s/app.json", folder);
+	if (n < 0 || (size_t)n >= sizeof(path)) {
+		return false;
+	}
+
+	FILE *f = fopen(path, "rb");
+	if (!f) {
+		return false;
+	}
+	char text[MANIFEST_MAX];
+	size_t got = fread(text, 1, sizeof(text) - 1, f);
+	bool too_big = got == sizeof(text) - 1 && fgetc(f) != EOF;
+	fclose(f);
+	if (too_big) {
+		fprintf(stderr, "apps: %s is larger than %d bytes, ignored\n", path, MANIFEST_MAX);
+		return false;
+	}
+	text[got] = '\0';
+
+	json_doc_t doc;
+	if (!json_parse(text, &doc)) {
+		fprintf(stderr, "apps: %s is not valid JSON, ignored\n", path);
+		return false;
+	}
+
+	memset(app, 0, sizeof(*app));
+	int root = json_root(&doc);
+	json_obj_str(&doc, root, "id", app->id, sizeof(app->id));
+	json_obj_str(&doc, root, "name", app->name, sizeof(app->name));
+	json_obj_str(&doc, root, "version", app->version, sizeof(app->version));
+	json_obj_str(&doc, root, "entry", app->entry, sizeof(app->entry));
+	json_obj_str(&doc, root, "icon", app->icon, sizeof(app->icon));
+	json_obj_str(&doc, root, "description", app->description, sizeof(app->description));
+	app->min_player = (int)json_obj_long(&doc, root, "min_player", 0);
+	json_free(&doc);
+
+	if (!app->id[0]) {
+		snprintf(app->id, sizeof(app->id), "%s", dirname);
+	}
+	if (!app->name[0]) {
+		snprintf(app->name, sizeof(app->name), "%s", app->id);
+	}
+	if (!safe_relative(app->entry)) {
+		fprintf(stderr, "apps: %s has no usable entry, ignored\n", path);
+		return false;
+	}
+	if (app->icon[0] && !safe_relative(app->icon)) {
+		fprintf(stderr, "apps: %s names an icon outside the app folder, ignored\n", path);
+		return false;
+	}
+
+	snprintf(app->dir, sizeof(app->dir), "%s", dirname);
+	snprintf(app->folder, sizeof(app->folder), "%s", folder);
+	return true;
+}
+
+static int by_name(const void *a, const void *b) {
+	return strcasecmp(((const app_t *)a)->name, ((const app_t *)b)->name);
+}
+
+int apps_scan(app_t *out, int max) {
+	if (!out || max <= 0) {
+		return 0;
+	}
+
+	const char *root = storage_sd_root();
+	if (!root || !root[0]) {
+		return -1;
+	}
+
+	char dir[APPS_FOLDER_MAX];
+	int n = snprintf(dir, sizeof(dir), "%s/%s", root, APPS_DIR);
+	if (n < 0 || (size_t)n >= sizeof(dir)) {
+		return 0;
+	}
+
+	DIR *d = opendir(dir);
+	if (!d) {
+		return 0; // no Apps folder yet is not an error
+	}
+
+	int count = 0;
+	struct dirent *entry;
+	while ((entry = readdir(d)) != NULL && count < max) {
+		if (entry->d_name[0] == '.') {
+			continue;
+		}
+
+		char folder[APPS_FOLDER_MAX];
+		n = snprintf(folder, sizeof(folder), "%s/%s", dir, entry->d_name);
+		if (n < 0 || (size_t)n >= sizeof(folder)) {
+			continue;
+		}
+
+		struct stat st;
+		if (stat(folder, &st) != 0 || !S_ISDIR(st.st_mode)) {
+			continue;
+		}
+
+		if (read_manifest(folder, entry->d_name, &out[count])) {
+			count++;
+		}
+	}
+	closedir(d);
+
+	qsort(out, (size_t)count, sizeof(*out), by_name);
+	return count;
+}
+
+bool apps_icon_path(const app_t *app, char *out, size_t size) {
+	if (!app || !app->icon[0] || !out || size == 0) {
+		return false;
+	}
+	int n = snprintf(out, size, "%s/%s", app->folder, app->icon);
+	return n > 0 && (size_t)n < size;
 }
 
 // The child inherits the player's handlers -- the crash handler that writes to
@@ -75,7 +217,7 @@ bool apps_run(const char *relative, int timeout_ms, apps_result_t *out) {
 		return false;
 	}
 
-	char path[600];
+	char path[APPS_FOLDER_MAX + APPS_ENTRY_MAX + 8];
 	if (snprintf(path, sizeof(path), "%s/%s", root, relative) >= (int)sizeof(path)) {
 		set_error(out, "path too long");
 		return false;
@@ -97,7 +239,7 @@ bool apps_run(const char *relative, int timeout_ms, apps_result_t *out) {
 
 	// The app's own folder, so a binary can find the files beside it without
 	// knowing where the card is mounted.
-	char dir[600];
+	char dir[sizeof(path)];
 	snprintf(dir, sizeof(dir), "%s", path);
 	char *slash = strrchr(dir, '/');
 	if (slash) {
@@ -218,4 +360,24 @@ bool apps_run(const char *relative, int timeout_ms, apps_result_t *out) {
 
 		usleep(APPS_POLL_MS * 1000);
 	}
+}
+
+bool apps_launch(const app_t *app, int timeout_ms, apps_result_t *out) {
+	if (!out) {
+		return false;
+	}
+	if (!app || !app->entry[0] || !app->dir[0]) {
+		memset(out, 0, sizeof(*out));
+		set_error(out, "no app");
+		return false;
+	}
+
+	char relative[APPS_ID_MAX + APPS_ENTRY_MAX + 8];
+	int n = snprintf(relative, sizeof(relative), "%s/%s/%s", APPS_DIR, app->dir, app->entry);
+	if (n < 0 || (size_t)n >= sizeof(relative)) {
+		memset(out, 0, sizeof(*out));
+		set_error(out, "path too long");
+		return false;
+	}
+	return apps_run(relative, timeout_ms, out);
 }

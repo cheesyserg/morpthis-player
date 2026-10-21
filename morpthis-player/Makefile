@@ -5,9 +5,6 @@ HOST_BIN = morpthis_player_host
 TARGET_BIN = morpthis_player
 # Built from launcher/, see "morpthis_launch" below.
 LAUNCH_BIN = morpthis_launch
-# The sideloading spike's test app, built from tools/hello.c. It lives on the
-# card, not in the image.
-HELLO_BIN = hello
 
 # The unstripped copy of the target binary, kept beside the stripped one.
 #
@@ -238,20 +235,6 @@ $(LAUNCH_BIN): launcher/morpthis_launch.c $(CROSS_CC)
 	@echo "morpthis_launch: $$(wc -c < $@) bytes"
 
 # ---------------------------------------------------------------------------
-# hello
-#
-# The sideloading spike's test app: a static MIPS binary that lives on the
-# card, not in the image. `make hello` builds it; copy it to <card>/Apps/hello
-# and run it from Developer options -> Run app from card. Static so it depends
-# on nothing in the rootfs -- the device's glibc is 2.22 and the toolchain's is
-# 2.27, which a static link sidesteps entirely.
-# ---------------------------------------------------------------------------
-
-$(HELLO_BIN): tools/hello.c $(CROSS_CC)
-	$(CROSS_CC) -Os -Wall -Wextra -march=mips32r2 -static -o $@ $<
-	@echo "hello: $$(wc -c < $@) bytes -- copy it to <card>/Apps/hello"
-
-# ---------------------------------------------------------------------------
 # Splitting the link output in two
 #
 # Runs after check-abi, which deletes both files when it fails: there is then
@@ -342,7 +325,7 @@ compile_commands.json:
 	@python3 generate_compile_commands.py
 
 clean:
-	rm -rf build_host build_target build_gen $(HOST_BIN) $(TARGET_BIN) $(TARGET_DEBUG_BIN) $(LAUNCH_BIN) $(HELLO_BIN) compile_commands.json compile_flags.txt
+	rm -rf build_host build_target build_gen $(HOST_BIN) $(TARGET_BIN) $(TARGET_DEBUG_BIN) $(LAUNCH_BIN) compile_commands.json compile_flags.txt
 
 # The bundled libraries and their extracted sources. The downloaded tarballs stay.
 .PHONY: libs-clean

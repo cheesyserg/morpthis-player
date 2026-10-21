@@ -5,6 +5,7 @@
 #include "lvgl/lvgl.h"
 
 #include "src/gui/audio/dacpage.h"
+#include "src/gui/apps/appspage.h"
 #include "src/gui/board_profile.h"
 #include "src/gui/library/filespage.h"
 #include "src/gui/nowplaying/player.h"
@@ -33,6 +34,9 @@ static bool more_tokyo_icon(const char *label, const lv_image_dsc_t **icon, them
 	if (strcmp(label, "dac") == 0) {
 		*icon = &icon_usbaudioout;
 		*tone = THEME_SEMANTIC_CYAN;
+	} else if (strcmp(label, "apps") == 0) {
+		*icon = &icon_files_game;
+		*tone = THEME_SEMANTIC_GREEN;
 	} else if (strcmp(label, "file_explorer") == 0) {
 		*icon = &icon_folder;
 		*tone = THEME_SEMANTIC_BLUE;
@@ -94,6 +98,10 @@ static void more_refresh_theme(void) {
 void morepage_init(gui_config_t *cfg) {
 	const grid_entry_t entries[] = {
 		{"dac", &icon_menu_dac, &dacpage_screen, NULL},
+		// The apps installed under <card>/Apps. A screen rather than an action:
+		// the page itself rescans on every open, so the tile only has to point
+		// at it.
+		{"apps", &icon_files_game, &appspage_screen, NULL},
 		// An action rather than a screen: the listing is read when the page is
 		// entered, so a card that changed under the player shows what is on it
 		// now.

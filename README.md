@@ -178,12 +178,15 @@ See [setup, design, limitations and the V1 validation checklist](docs/subsonic.m
 
 ## Project files and documentation
 
-- `sonix-player/` — player sources, LVGL configuration, launcher and build system.
-- `sonix-packer/` — stock-image preparation, firmware packaging and validation scripts.
+- `morpthis-player/` — player sources, LVGL configuration, launcher and build system.
+- `morpthis-packer/` — stock-image preparation, firmware packaging and validation scripts.
 - `docs/collecting-logs.md` — which logs to send with a bug report, and how to take them.
 - `docs/subsonic.md` — Subsonic/Gonic setup, RAM transport and hardware validation.
 - `docs/sgm31324-led-control.md` — driving the RGB status LED directly over I²C.
-- `sonix-player/tools/morpthis-bugreport.sh` — one-file diagnostic bundle, run on the device over ADB.
+- `docs/apps.md` — the on-card app contract: layout, manifest, launch model and limits.
+- `docs/app-sdk.md` — the SDK repository: toolchain, ABI, API surface and packaging.
+- `docs/apps-repo.md` — the apps repository: structure, CI, releases and contribution rules.
+- `morpthis-player/tools/morpthis-bugreport.sh` — one-file diagnostic bundle, run on the device over ADB.
 - `FEATURES.md` — detailed feature notes.
 - `PATCHES.md` — device-porting and implementation notes.
 - `LICENSE` — GNU General Public License, version 3. Third-party components retain their own licenses.

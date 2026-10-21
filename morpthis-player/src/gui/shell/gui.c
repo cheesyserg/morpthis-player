@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "src/gui/library/browser.h"
+#include "src/gui/apps/appspage.h"
 #include "src/gui/nowplaying/coverflow.h"
 #include "src/gui/settings/ccsettings.h"
 #include "src/gui/nowplaying/chapters.h"
@@ -630,6 +631,7 @@ void gui_init(gui_config_t *cfg) {
 	dlna_screen = lv_obj_create(NULL);
 	sonixlink_screen = lv_obj_create(NULL);
 	morepage_screen = lv_obj_create(NULL);
+	appspage_screen = lv_obj_create(NULL);
 	filespage_screen = lv_obj_create(NULL);
 	textview_screen = lv_obj_create(NULL);
 	pictureview_screen = lv_obj_create(NULL);
@@ -672,6 +674,7 @@ void gui_init(gui_config_t *cfg) {
 	dacpage_init(cfg);
 	// After dacpage: the More section points at its pages.
 	morepage_init(cfg);
+	appspage_init(cfg);
 	textview_init(cfg); // before filespage: a text file tapped there opens here
 	pictureview_init(cfg); // likewise, for JPEG and PNG pictures
 	filespage_init(cfg);
@@ -742,6 +745,7 @@ void gui_init(gui_config_t *cfg) {
 		btsettings_screen, btaudio_screen,	 airpodspage_screen, airplay_screen,   streaming_screen,
 		radiopage_screen,  radiolist_screen, radiosearch_screen,
 		dlna_screen,	   sonixlink_screen,	 morepage_screen,
+		appspage_screen,
 	};
 	for (size_t i = 0; i < sizeof(back_swipe_screens) / sizeof(back_swipe_screens[0]); i++) {
 		switcher_attach_back_gesture(back_swipe_screens[i]);
