@@ -471,7 +471,14 @@ if [ \"\$boot_sel\" = \"logo:2\" ]; then
     if [ -n \"\$boot_size\" ] && [ \"\$boot_size\" -gt 0 ] && [ \"\$boot_size\" -le 57344 ]; then
         nanddump -q -s 0x22000 -l \"\$boot_size\" /dev/mtd5 -a > /tmp/.bootscreen.jpg 2>/dev/null
         if [ -s /tmp/.bootscreen.jpg ]; then
-            $DISPLAY_CMD /tmp/.bootscreen.jpg && { echo \"drawn=custom\" >> /tmp/.bootlogo_trace; boot_drawn=1; $LEAVE; }
+            # The vendor's display command is not trusted to return 0 on
+            # success -- the stock script never looks at its status -- so the
+            # picture is drawn, the stock chain is shadowed, and the trace is
+            # written regardless of what the command returns.
+            $DISPLAY_CMD /tmp/.bootscreen.jpg
+            echo \"drawn=custom\" >> /tmp/.bootlogo_trace
+            boot_drawn=1
+            $LEAVE
         fi
     fi
 fi

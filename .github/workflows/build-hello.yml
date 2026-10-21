@@ -5,10 +5,13 @@ name: Build hello (sideloading spike)
 # without building a whole firmware, and so a change to tools/hello.c or to the
 # cross toolchain is checked without waiting for the packer.
 #
-# The toolchain is the expensive part. The cache below restores the firmware
-# workflow's cache when there is one, and keeps a toolchain-only cache of its
-# own otherwise -- a separate key, because a cache saved here holds no
-# freetype-target or audio-target and must not shadow the firmware's.
+# The toolchain is the expensive part, and the firmware workflow already builds
+# it. This workflow restores that cache with the firmware's own key and
+# restore-keys, and never saves one of its own: a cache saved here would hold
+# no freetype-target or audio-target and must not shadow the firmware's. A
+# Makefile change moves the exact key, but the restore-keys prefix still finds
+# the toolchain the firmware workflow cached, so the usual run is a restore and
+# a single compile.
 
 on:
   workflow_dispatch:
@@ -52,20 +55,30 @@ jobs:
             libgmp-dev libmpfr-dev libmpc-dev
 
       - name: Restore MIPS toolchain cache
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: |
             morpthis-player/rockbox-toolchain
             morpthis-player/*.tar.gz
             morpthis-player/*.tar.bz2
             morpthis-player/*.tar.xz
-          # Exact key first: a cache this workflow saved before. Then the
-          # firmware workflow's cache, which holds the same toolchain (and the
-          # target libraries this build does not need). The prefix is the
-          # firmware key's, so a toolchain built there is never rebuilt here.
-          key: v3-mips-hello-${{ runner.os }}-morpthis-${{ hashFiles('morpthis-player/Makefile', 'morpthis-player/rockboxdev/**') }}
+          # The firmware workflow's key, exactly. The exact key misses when the
+          # Makefile has changed since that cache was written; the prefix in
+          # restore-keys then finds the newest toolchain it did cache, which is
+          # the same compiler this build needs.
+          key: v3-mips-target-${{ runner.os }}-morpthis-${{ hashFiles('morpthis-player/Makefile', 'morpthis-player/rockboxdev/**') }}
           restore-keys: |
             v3-mips-target-${{ runner.os }}-morpthis-
+
+      - name: Check the toolchain
+        working-directory: morpthis-player
+        run: |
+          if [ -x rockbox-toolchain/bin/mipsel-rockbox-linux-gnu-gcc ]; then
+            echo "toolchain restored from cache"
+            rockbox-toolchain/bin/mipsel-rockbox-linux-gnu-gcc --version | head -1
+          else
+            echo "toolchain not cached; make hello will build it"
+          fi
 
       - name: Build hello
         working-directory: morpthis-player
