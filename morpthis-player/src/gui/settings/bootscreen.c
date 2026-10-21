@@ -2,6 +2,7 @@
 
 #include <dirent.h>
 #include <limits.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,7 +12,6 @@
 
 #include "lvgl/lvgl.h"
 
-#include "src/gui/board_profile.h"
 #include "src/gui/fonts/fonts.h"
 #include "src/gui/nowplaying/cover.h"
 #include "src/gui/shell/icons.h"
@@ -51,6 +51,7 @@ lv_obj_t *bootscreen_screen;
 #define PREVIEW_CLOSE_MS 260
 
 typedef enum {
+	ENTRY_APPLIED,
 	ENTRY_STOCK,
 	ENTRY_RETROSPACE,
 	ENTRY_CUSTOM,
@@ -70,15 +71,15 @@ static int entry_count;
 static int selected = -1;
 static int applied_entry = -1;
 
-static lv_obj_t *applied_img;
-static lv_obj_t *applied_label;
-static lv_obj_t *applied_check;
-static lv_obj_t *separator;
 static lv_obj_t *carousel;
+static lv_obj_t *carousel_separator;
 static lv_obj_t *item_btn[BOOTSCREEN_MAX];
 static lv_obj_t *item_img[BOOTSCREEN_MAX];
+static lv_obj_t *applied_check;
 static lv_obj_t *apply_btn;
 static lv_obj_t *apply_label;
+static bool carousel_rebuilding;
+static bool apply_running;
 
 static lv_obj_t *preview_layer;
 static lv_obj_t *preview_img;
@@ -91,16 +92,9 @@ static int preview_start_x;
 static int preview_start_y;
 static uint32_t preview_start_scale;
 
-static cover_image_t applied_art;
-static bool applied_loaded;
-
 static int item_w;
 static int item_h;
-static int name_h;
 static int carousel_w;
-static int applied_col_w;
-static int applied_w;
-static int applied_h;
 
 // Draws one of the interface's glyphs at `size`, whatever its source art is.
 // The check on the applied picture and on its carousel item are the two users.
@@ -314,6 +308,10 @@ const char *bootscreen_applied_name(void) {
 }
 
 static bool entry_is_applied(const entry_t *entry) {
+	if (entry->kind == ENTRY_APPLIED) {
+		return true;
+	}
+
 	int choice = effective_choice();
 	if (choice == BOOTLOGO_STOCK) {
 		return entry->kind == ENTRY_STOCK;
@@ -327,16 +325,6 @@ static bool entry_is_applied(const entry_t *entry) {
 
 	const char *stored = config_get("ui", "boot_screen_name", "");
 	return stored[0] && strcmp(entry->name, stored) == 0;
-}
-
-static void find_applied_entry(void) {
-	applied_entry = -1;
-	for (int i = 0; i < entry_count; i++) {
-		if (entry_is_applied(&entries[i])) {
-			applied_entry = i;
-			break;
-		}
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -382,22 +370,41 @@ static void add_entry(entry_kind_t kind, const char *name, const char *path) {
 static void scan_entries(void) {
 	clear_entries();
 
+	// The applied picture first, in its own slot at the far left. The vertical
+	// rule after it separates it from the choices.
+	add_entry(ENTRY_APPLIED, bootscreen_applied_name(), applied_path());
+	applied_entry = 0;
+
+	int choice = effective_choice();
+
 	// The two pictures the firmware itself carries. Stock follows the theme,
-	// so the preview is the one the current palette would draw.
-	add_entry(ENTRY_STOCK, "Stock", theme()->dark ? "/etc/logo2.jpeg" : "/etc/logo1.jpeg");
-	add_entry(ENTRY_RETROSPACE, "Retrospace", "/etc/logo.jpeg");
+	// so the preview is the one the current palette would draw. The one that
+	// is already applied is left out: it is the first slot.
+	if (choice != BOOTLOGO_STOCK) {
+		add_entry(ENTRY_STOCK, "Stock", theme()->dark ? "/etc/logo2.jpeg" : "/etc/logo1.jpeg");
+	}
+	if (choice != BOOTLOGO_RETROSPACE) {
+		add_entry(ENTRY_RETROSPACE, "Retrospace", "/etc/logo.jpeg");
+	}
 
 	const char *root = storage_sd_root();
 	if (root && root[0]) {
 		char dir[BOOTSCREEN_PATH_MAX];
 		snprintf(dir, sizeof(dir), "%s/" BOOTSCREEN_DIR, root);
 
+		const char *stored = config_get("ui", "boot_screen_name", "");
 		struct dirent **list = NULL;
 		int n = scandir(dir, &list, NULL, alphasort);
 		if (n > 0) {
 			for (int i = 0; i < n; i++) {
 				const char *name = list[i]->d_name;
 				if (name[0] != '.' && image_file(name)) {
+					// The applied custom picture is already the first slot.
+					if (choice == BOOTLOGO_CUSTOM && stored[0] && strcmp(name, stored) == 0) {
+						free(list[i]);
+						continue;
+					}
+
 					char path[BOOTSCREEN_PATH_MAX];
 					snprintf(path, sizeof(path), "%s/%s", dir, name);
 					struct stat st;
@@ -413,8 +420,7 @@ static void scan_entries(void) {
 		}
 	}
 
-	find_applied_entry();
-	selected = applied_entry >= 0 ? applied_entry : 0;
+	selected = 0;
 }
 
 static void load_art(entry_t *entry) {
@@ -426,26 +432,6 @@ static void load_art(entry_t *entry) {
 	}
 }
 
-static void refresh_applied(void) {
-	if (applied_loaded) {
-		lv_image_set_src(applied_img, NULL);
-		cover_free(&applied_art);
-		applied_loaded = false;
-	}
-
-	const char *path = applied_path();
-	if (path && cover_load_image_file(path, applied_w, applied_h, COVER_FIT_COVER, &applied_art)) {
-		applied_loaded = true;
-		lv_obj_set_size(applied_img, applied_w, applied_h);
-		lv_image_set_src(applied_img, &applied_art.dsc);
-		lv_obj_center(applied_img);
-	} else {
-		lv_obj_set_size(applied_img, 0, 0);
-		lv_image_set_src(applied_img, NULL);
-	}
-
-	lv_label_set_text(applied_label, bootscreen_applied_name());
-}
 
 static void refresh_apply_button(void) {
 	bool applied = selected >= 0 && selected < entry_count && entry_is_applied(&entries[selected]);
@@ -468,7 +454,7 @@ static void refresh_apply_button(void) {
 // smaller the further it sits from that middle, which is what makes the row
 // read as a carousel rather than a list of thumbnails.
 static void carousel_update(void) {
-	if (!carousel) {
+	if (!carousel || carousel_rebuilding) {
 		return;
 	}
 
@@ -513,17 +499,13 @@ static void carousel_update(void) {
 		selected = best;
 		refresh_apply_button();
 	}
-
-	for (int i = 0; i < entry_count; i++) {
-		if (item_btn[i]) {
-			lv_obj_set_style_border_width(item_btn[i], i == selected ? 2 : 0, 0);
-			lv_obj_set_style_border_color(item_btn[i], theme()->accent, 0);
-		}
-	}
 }
 
 static void carousel_scroll_cb(lv_event_t *e) {
 	(void)e;
+	if (carousel_rebuilding) {
+		return;
+	}
 	carousel_update();
 }
 
@@ -555,7 +537,7 @@ static int carousel_target_for(int index) {
 
 static void carousel_scroll_end_cb(lv_event_t *e) {
 	(void)e;
-	if (selected < 0 || selected >= entry_count) {
+	if (carousel_rebuilding || selected < 0 || selected >= entry_count) {
 		return;
 	}
 
@@ -567,7 +549,7 @@ static void carousel_scroll_end_cb(lv_event_t *e) {
 }
 
 static void item_clicked_cb(lv_event_t *e) {
-	if (switcher_back_drag_active()) {
+	if (carousel_rebuilding || switcher_back_drag_active()) {
 		return;
 	}
 
@@ -590,7 +572,15 @@ static void item_clicked_cb(lv_event_t *e) {
 }
 
 static void refresh_carousel(void) {
+	// Rebuilding while a scroll animation is still running is what used to
+	// freeze the page: the animation kept moving a row whose items had just
+	// been deleted. Stop it first, and keep the scroll callback out until the
+	// new row is laid out.
+	carousel_rebuilding = true;
+	lv_obj_scroll_to_x(carousel, lv_obj_get_scroll_x(carousel), LV_ANIM_OFF);
 	lv_obj_clean(carousel);
+	carousel_separator = NULL;
+	applied_check = NULL;
 	for (int i = 0; i < BOOTSCREEN_MAX; i++) {
 		item_btn[i] = NULL;
 		item_img[i] = NULL;
@@ -602,18 +592,13 @@ static void refresh_carousel(void) {
 
 		lv_obj_t *item = lv_btn_create(carousel);
 		item_btn[i] = item;
-		lv_obj_set_size(item, item_w, item_h + name_h + (page_cfg->screen_width < 320 ? 2 : 4));
-		lv_obj_set_style_radius(item, page_cfg->screen_width < 320 ? 8 : 12, 0);
-		lv_obj_set_style_bg_color(item, theme()->surface_pressed, 0);
-		lv_obj_set_style_bg_opa(item, LV_OPA_COVER, 0);
-		lv_obj_set_style_border_width(item, i == selected ? 2 : 0, 0);
-		lv_obj_set_style_border_color(item, theme()->accent, 0);
+		lv_obj_set_size(item, item_w, item_h);
+		lv_obj_set_style_radius(item, 0, 0);
+		lv_obj_set_style_bg_opa(item, LV_OPA_TRANSP, 0);
+		lv_obj_set_style_border_width(item, 0, 0);
 		lv_obj_set_style_shadow_width(item, 0, 0);
 		lv_obj_set_style_pad_all(item, 0, 0);
-		lv_obj_set_style_pad_gap(item, page_cfg->screen_width < 320 ? 2 : 4, 0);
 		lv_obj_set_scrollable(item, false);
-		lv_obj_set_flex_flow(item, LV_FLEX_FLOW_COLUMN);
-		lv_obj_set_flex_align(item, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 		lv_obj_add_event_cb(item, item_clicked_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
 		lv_obj_t *img = lv_image_create(item);
@@ -623,14 +608,7 @@ static void refresh_carousel(void) {
 		if (entry->art_loaded) {
 			lv_image_set_src(img, &entry->art.dsc);
 		}
-
-		lv_obj_t *name = lv_label_create(item);
-		lv_label_set_text(name, entry->name);
-		lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
-		lv_obj_set_width(name, lv_pct(100));
-		lv_obj_set_style_text_align(name, LV_TEXT_ALIGN_CENTER, 0);
-		lv_obj_add_style(name, &theme_style_text_dim, 0);
-		lv_obj_set_style_text_font(name, page_cfg->screen_width < 320 ? &font_ui_14 : &font_ui_18, 0);
+		lv_obj_center(img);
 
 		if (i == applied_entry) {
 			lv_obj_t *check = lv_image_create(item);
@@ -640,6 +618,20 @@ static void refresh_carousel(void) {
 			lv_obj_set_style_image_recolor_opa(check, LV_OPA_COVER, 0);
 			scale_icon(check, &icon_check, page_cfg->screen_width < 320 ? 16 : 22);
 			lv_obj_align(check, LV_ALIGN_TOP_RIGHT, -2, 2);
+			applied_check = check;
+		}
+
+		// The rule between the applied picture and the choices. It is part of
+		// the row, so it scrolls with them.
+		if (i == 0) {
+			carousel_separator = lv_obj_create(carousel);
+			lv_obj_set_size(carousel_separator, 1, item_h);
+			lv_obj_set_style_bg_color(carousel_separator, theme()->text_secondary, 0);
+			lv_obj_set_style_bg_opa(carousel_separator, LV_OPA_20, 0);
+			lv_obj_set_style_border_width(carousel_separator, 0, 0);
+			lv_obj_set_style_radius(carousel_separator, 0, 0);
+			lv_obj_set_style_pad_all(carousel_separator, 0, 0);
+			lv_obj_set_scrollable(carousel_separator, false);
 		}
 	}
 
@@ -647,6 +639,7 @@ static void refresh_carousel(void) {
 	if (selected >= 0 && selected < entry_count) {
 		lv_obj_scroll_to_x(carousel, carousel_target_for(selected), LV_ANIM_OFF);
 	}
+	carousel_rebuilding = false;
 	carousel_update();
 }
 
@@ -683,9 +676,52 @@ static bool encode_custom(const char *path, uint8_t **out, size_t *out_len) {
 	return false;
 }
 
+typedef struct {
+	char path[BOOTSCREEN_PATH_MAX];
+	char name[BOOTSCREEN_NAME_MAX];
+	bool ok;
+} apply_job_t;
+
+static void apply_done_cb(void *user) {
+	apply_job_t *job = user;
+	apply_running = false;
+
+	if (job->ok) {
+		config_set("ui", "boot_screen_name", job->name);
+		theme_set_boot_screen(BOOTLOGO_CUSTOM);
+		scan_entries();
+		refresh_carousel();
+		refresh_apply_button();
+		toast_success("bootscreen_applied_toast");
+	} else {
+		toast_error("bootscreen_apply_failed");
+	}
+
+	free(job);
+}
+
+// Decoding, re-encoding and writing the picture is the slow part of Apply,
+// and on this device it is slow enough to be seen. It runs here, off the UI
+// thread, and the result comes back through gui_post().
+static void *apply_worker(void *arg) {
+	apply_job_t *job = arg;
+	uint8_t *jpeg = NULL;
+	size_t len = 0;
+
+	if (encode_custom(job->path, &jpeg, &len)) {
+		job->ok = bootlogo_custom_store(jpeg, len);
+		free(jpeg);
+	}
+
+	if (!gui_post(apply_done_cb, job)) {
+		free(job);
+	}
+	return NULL;
+}
+
 static void apply_cb(lv_event_t *e) {
 	(void)e;
-	if (switcher_back_drag_active()) {
+	if (carousel_rebuilding || apply_running || switcher_back_drag_active()) {
 		return;
 	}
 	if (selected < 0 || selected >= entry_count) {
@@ -693,40 +729,49 @@ static void apply_cb(lv_event_t *e) {
 	}
 
 	entry_t *entry = &entries[selected];
-	if (entry_is_applied(entry)) {
+	if (entry->kind == ENTRY_APPLIED || entry_is_applied(entry)) {
 		return;
 	}
 
 	if (entry->kind == ENTRY_STOCK) {
 		config_set("ui", "boot_screen_name", "");
 		theme_set_boot_screen(BOOTLOGO_STOCK);
-	} else if (entry->kind == ENTRY_RETROSPACE) {
-		config_set("ui", "boot_screen_name", "");
-		theme_set_boot_screen(BOOTLOGO_RETROSPACE);
-	} else {
-		uint8_t *jpeg = NULL;
-		size_t len = 0;
-		if (!encode_custom(entry->path, &jpeg, &len)) {
-			toast_error("bootscreen_apply_failed");
-			return;
-		}
-
-		bool stored = bootlogo_custom_store(jpeg, len);
-		free(jpeg);
-		if (!stored) {
-			toast_error("bootscreen_apply_failed");
-			return;
-		}
-
-		config_set("ui", "boot_screen_name", entry->name);
-		theme_set_boot_screen(BOOTLOGO_CUSTOM);
+		scan_entries();
+		refresh_carousel();
+		refresh_apply_button();
+		toast_success("bootscreen_applied_toast");
+		return;
 	}
 
-	find_applied_entry();
-	refresh_applied();
-	refresh_carousel();
-	refresh_apply_button();
-	toast_success("bootscreen_applied_toast");
+	if (entry->kind == ENTRY_RETROSPACE) {
+		config_set("ui", "boot_screen_name", "");
+		theme_set_boot_screen(BOOTLOGO_RETROSPACE);
+		scan_entries();
+		refresh_carousel();
+		refresh_apply_button();
+		toast_success("bootscreen_applied_toast");
+		return;
+	}
+
+	apply_job_t *job = calloc(1, sizeof(*job));
+	if (!job) {
+		toast_error("bootscreen_apply_failed");
+		return;
+	}
+	snprintf(job->path, sizeof(job->path), "%s", entry->path);
+	snprintf(job->name, sizeof(job->name), "%s", entry->name);
+
+	apply_running = true;
+	toast_busy("bootscreen_applying");
+
+	pthread_t thread;
+	if (pthread_create(&thread, NULL, apply_worker, job) != 0) {
+		apply_running = false;
+		free(job);
+		toast_error("bootscreen_apply_failed");
+		return;
+	}
+	pthread_detach(thread);
 }
 
 // ---------------------------------------------------------------------------
@@ -739,18 +784,11 @@ static void repaint_cb(void) {
 	}
 
 	refresh_apply_button();
-	for (int i = 0; i < entry_count; i++) {
-		if (item_btn[i]) {
-			lv_obj_set_style_border_width(item_btn[i], i == selected ? 2 : 0, 0);
-			lv_obj_set_style_border_color(item_btn[i], theme()->accent, 0);
-			lv_obj_set_style_bg_color(item_btn[i], theme()->surface_pressed, 0);
-		}
-	}
 	if (applied_check) {
 		lv_obj_set_style_image_recolor(applied_check, theme()->accent, 0);
 	}
-	if (separator) {
-		lv_obj_set_style_bg_color(separator, theme()->text_secondary, 0);
+	if (carousel_separator) {
+		lv_obj_set_style_bg_color(carousel_separator, theme()->text_secondary, 0);
 	}
 }
 
@@ -759,7 +797,6 @@ static void screen_loaded_cb(lv_event_t *e) {
 	// The card may have been inserted, removed or written to since the last
 	// visit, so the folder is read again every time.
 	scan_entries();
-	refresh_applied();
 	refresh_carousel();
 	refresh_apply_button();
 }
@@ -783,12 +820,9 @@ static void screen_unloaded_cb(lv_event_t *e) {
 	// reads the folder again. The items go before the pictures they draw: an
 	// image object must not outlive the buffer it points at.
 	lv_obj_clean(carousel);
+	carousel_separator = NULL;
+	applied_check = NULL;
 	clear_entries();
-	if (applied_loaded) {
-		lv_image_set_src(applied_img, NULL);
-		cover_free(&applied_art);
-		applied_loaded = false;
-	}
 	if (preview_art_loaded) {
 		lv_image_set_src(preview_img, NULL);
 		cover_free(&preview_art);
@@ -804,14 +838,9 @@ void bootscreen_init(gui_config_t *cfg) {
 	// previewed is what the boot script will draw.
 	item_w = compact ? 120 : 300;
 	item_h = item_w * 4 / 3;
-	name_h = lv_font_get_line_height(compact ? &font_ui_14 : &font_ui_18);
-
-	applied_col_w = compact ? 56 : 90;
-	applied_w = compact ? 40 : 64;
-	applied_h = applied_w * 4 / 3;
 
 	int gap = compact ? 6 : 10;
-	carousel_w = (int)cfg->screen_width - 2 * cfg->padding - applied_col_w - 1 - 2 * gap;
+	carousel_w = (int)cfg->screen_width - 2 * cfg->padding;
 	if (carousel_w < 1) {
 		carousel_w = 1;
 	}
@@ -821,7 +850,6 @@ void bootscreen_init(gui_config_t *cfg) {
 	}
 
 	lv_obj_add_style(bootscreen_screen, &theme_style_screen, 0);
-	settingsrow_title(bootscreen_screen, cfg, "appearance_boot_screen");
 
 	int top = settingsrow_content_top(cfg);
 	int apply_h = compact ? 44 : 64;
@@ -830,8 +858,6 @@ void bootscreen_init(gui_config_t *cfg) {
 		content_h = 1;
 	}
 
-	// One row: the applied picture, a rule, then the carousel. The rule is
-	// what keeps the applied picture from reading as another item in the row.
 	lv_obj_t *content = lv_obj_create(bootscreen_screen);
 	lv_obj_set_size(content, lv_pct(100), content_h);
 	lv_obj_align(content, LV_ALIGN_TOP_LEFT, 0, top);
@@ -839,61 +865,21 @@ void bootscreen_init(gui_config_t *cfg) {
 	lv_obj_set_style_border_width(content, 0, 0);
 	lv_obj_set_style_radius(content, 0, 0);
 	lv_obj_set_style_pad_all(content, cfg->padding, 0);
-	lv_obj_set_style_pad_gap(content, gap, 0);
+	lv_obj_set_style_pad_gap(content, 0, 0);
 	lv_obj_set_scrollable(content, false);
 	lv_obj_set_flex_flow(content, LV_FLEX_FLOW_ROW);
 	lv_obj_set_flex_align(content, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-	// The applied picture, in its own column at the far left.
-	lv_obj_t *applied_col = lv_obj_create(content);
-	lv_obj_set_size(applied_col, applied_col_w, lv_pct(100));
-	lv_obj_add_style(applied_col, &theme_style_card, 0);
-	lv_obj_set_style_radius(applied_col, compact ? 8 : 12, 0);
-	lv_obj_set_style_border_width(applied_col, 0, 0);
-	lv_obj_set_style_shadow_width(applied_col, 0, 0);
-	lv_obj_set_style_pad_all(applied_col, compact ? 4 : 8, 0);
-	lv_obj_set_style_pad_gap(applied_col, compact ? 4 : 8, 0);
-	lv_obj_set_scrollable(applied_col, false);
-	lv_obj_set_flex_flow(applied_col, LV_FLEX_FLOW_COLUMN);
-	lv_obj_set_flex_align(applied_col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-	applied_check = lv_image_create(applied_col);
-	lv_image_set_src(applied_check, &icon_check);
-	lv_obj_add_style(applied_check, &theme_style_icon, 0);
-	lv_obj_set_style_image_recolor(applied_check, theme()->accent, 0);
-	lv_obj_set_style_image_recolor_opa(applied_check, LV_OPA_COVER, 0);
-	scale_icon(applied_check, &icon_check, compact ? 16 : 22);
-
-	applied_img = lv_image_create(applied_col);
-	lv_obj_set_size(applied_img, applied_w, applied_h);
-	lv_obj_set_clickable(applied_img, false);
-
-	applied_label = lv_label_create(applied_col);
-	lv_label_set_long_mode(applied_label, LV_LABEL_LONG_DOT);
-	lv_obj_set_width(applied_label, lv_pct(100));
-	lv_obj_set_style_text_align(applied_label, LV_TEXT_ALIGN_CENTER, 0);
-	lv_obj_add_style(applied_label, &theme_style_text_dim, 0);
-	lv_obj_set_style_text_font(applied_label, compact ? &font_ui_14 : &font_ui_18, 0);
-
-	separator = lv_obj_create(content);
-	lv_obj_set_size(separator, 1, lv_pct(100));
-	lv_obj_set_style_bg_color(separator, theme()->text_secondary, 0);
-	lv_obj_set_style_bg_opa(separator, LV_OPA_20, 0);
-	lv_obj_set_style_border_width(separator, 0, 0);
-	lv_obj_set_style_radius(separator, 0, 0);
-	lv_obj_set_style_pad_all(separator, 0, 0);
-	lv_obj_set_scrollable(separator, false);
-
 	// The gallery: a row that scrolls sideways, with the middle picture large
-	// and the ones either side shrinking away from it.
+	// and the ones either side shrinking away from it. The applied picture is
+	// the first item, behind the vertical rule.
 	carousel = lv_obj_create(content);
-	lv_obj_set_height(carousel, lv_pct(100));
-	lv_obj_set_flex_grow(carousel, 1);
+	lv_obj_set_size(carousel, lv_pct(100), lv_pct(100));
 	lv_obj_set_style_bg_opa(carousel, 0, 0);
 	lv_obj_set_style_border_width(carousel, 0, 0);
 	lv_obj_set_style_radius(carousel, 0, 0);
 	lv_obj_set_style_pad_all(carousel, 0, 0);
-	lv_obj_set_style_pad_gap(carousel, 0, 0);
+	lv_obj_set_style_pad_gap(carousel, gap, 0);
 	lv_obj_set_style_pad_left(carousel, carousel_pad, 0);
 	lv_obj_set_style_pad_right(carousel, carousel_pad, 0);
 	lv_obj_set_scrollable(carousel, true);
