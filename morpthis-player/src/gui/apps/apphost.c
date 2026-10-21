@@ -1,7 +1,9 @@
 #include "apphost.h"
 
 #include <dlfcn.h>
+#include <elf.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,6 +28,31 @@ static void set_error(char *out, size_t size, const char *format, ...) {
 	va_start(args, format);
 	vsnprintf(out, size, format, args);
 	va_end(args);
+}
+
+// A shared object is a plugin even when it cannot be loaded: an unresolved SDK
+// symbol, a missing dependency. Handing it to execve() next can only produce
+// ENOEXEC or SIGILL, which hides the loader's reason. The SDK's tools are
+// ordinary executables (ET_EXEC), so the ELF type separates the two cases.
+static bool is_shared_object(const char *path) {
+	FILE *f = fopen(path, "rb");
+	if (!f) {
+		return false;
+	}
+
+	unsigned char ident[EI_NIDENT];
+	unsigned char type[2];
+	bool shared = false;
+	if (fread(ident, 1, sizeof(ident), f) == sizeof(ident) &&
+		memcmp(ident, ELFMAG, SELFMAG) == 0 &&
+		fread(type, 1, sizeof(type), f) == sizeof(type)) {
+		uint16_t e_type = ident[EI_DATA] == ELFDATA2MSB ? (uint16_t)((type[0] << 8) | type[1])
+																: (uint16_t)((type[1] << 8) | type[0]);
+		shared = e_type == ET_DYN;
+	}
+
+	fclose(f);
+	return shared;
 }
 
 static void apphost_teardown(morpthis_app_t *app) {
@@ -142,6 +169,12 @@ apphost_result_t apphost_launch(const app_t *meta, char *error, size_t error_siz
 	void *handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
 	if (!handle) {
 		const char *why = dlerror();
+		if (is_shared_object(path)) {
+			set_error(error, error_size, "%s", why ? why : "cannot load the plugin");
+			fprintf(stderr, "apps: %s is a plugin that cannot load: %s\n", path,
+					why ? why : "no dlopen error");
+			return APPHOST_FAILED;
+		}
 		// Not a plugin is the normal case for a headless tool. The apps page
 		// takes the fork/execve path next; the log line is what explains why a
 		// UI app took it too.
@@ -153,6 +186,12 @@ apphost_result_t apphost_launch(const app_t *meta, char *error, size_t error_siz
 	sdk_entry_fn entry = (sdk_entry_fn)dlsym(handle, "morpthis_app_main");
 	sdk_api_fn required = (sdk_api_fn)dlsym(handle, "morpthis_app_api_required");
 	if (!entry) {
+		if (is_shared_object(path)) {
+			set_error(error, error_size, "no morpthis_app_main");
+			fprintf(stderr, "apps: %s is a plugin without morpthis_app_main\n", path);
+			dlclose(handle);
+			return APPHOST_FAILED;
+		}
 		fprintf(stderr, "apps: %s has no morpthis_app_main; trying it as a tool\n", path);
 		dlclose(handle);
 		return APPHOST_NOT_PLUGIN;

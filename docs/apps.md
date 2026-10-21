@@ -138,7 +138,8 @@ memory notes in [app-sdk.md](app-sdk.md#memory).
 | `app.json` missing or invalid | The folder is skipped; the log says why |
 | `entry` missing or not executable | The row is listed; launching reports the error |
 | `execve` refused | The row reports the `errno` (`EACCES`, `ENOEXEC`, ...) |
-| `dlopen`/entry missing | Falls back to the tool path |
+| Entry is not a shared object, or has no SDK entry point | Falls back to the tool path |
+| Plugin cannot be loaded | `name: <loader error>`, e.g. `undefined symbol: ...` |
 | App needs a newer API | `name: needs a newer player` |
 | `morpthis_app_main` returns non-zero | `name: entry returned N` |
 | App returns without a screen | `name: did not load a screen` |
