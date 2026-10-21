@@ -160,11 +160,14 @@ The device has 64 MB, and with the player running `MemAvailable` is around
 the first thing to reclaim before a large app: the streaming pages' static
 arrays alone are several megabytes.
 
-A package is uncompressed squashfs. That makes the file on the card larger, but
-the kernel maps its blocks straight from the card through the page cache: no
-decompression workspace, no extraction pass, and no second copy of the app's
-assets in RAM. Mounting costs a loop device and a directory, not a copy of the
-image.
+A package is uncompressed squashfs: data, inode, fragment and xattr blocks are
+all stored as-is. The superblock still names a compressor, and the device
+kernel must have it even when nothing is compressed; packages name LZO because
+the stock rootfs uses LZO and the kernel has that decompressor, not zlib.
+`-b 4096` keeps the driver's one-block input buffer at 4 KB. The kernel maps the
+blocks straight from the card through the page cache: no extraction pass and no
+second copy of the app's assets in RAM. Mounting costs a loop device and a
+directory, not a copy of the image.
 
 A **light** app leaves everything alone. A **heavy** app triggers the reclaim
 before it loads:
@@ -191,6 +194,7 @@ memory notes in [app-sdk.md](app-sdk.md#memory).
 | No `Apps/pkgmerps/` folder | "No apps yet..." |
 | `app.json` missing or invalid | The package is skipped; the log says why |
 | Package is not a squashfs image | The package is skipped; the log says why |
+| Package uses a compressor the kernel lacks | `mount: Invalid argument`; the kernel log names it (`Filesystem uses "zlib" compression. This is not supported`). Rebuild with the kernel's compressor, LZO on the V1. |
 | `entry` missing or not executable | The row is listed; launching reports the error |
 | `execve` refused | The row reports the `errno` (`EACCES`, `ENOEXEC`, ...) |
 | Entry is not a shared object, or has no SDK entry point | Falls back to the tool path |

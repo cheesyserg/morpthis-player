@@ -175,10 +175,13 @@ The SDK should:
 - Encourage loading assets on demand, not all at once.
 - Never allocate in the draw path.
 
-Packages are uncompressed squashfs images. The kernel serves their data straight
-from the card through the page cache, so an asset costs no decompression
-workspace and no extracted copy; a large package is a card-space problem, not a
-RAM one.
+Packages are uncompressed squashfs images: every data, inode, fragment and
+xattr block is stored as-is. The superblock names LZO because the stock kernel
+has that decompressor (its rootfs is LZO); zlib is not built in. `-b 4096`
+keeps the driver's one-block input buffer at 4 KB. The kernel serves file data
+straight from the card through the page cache, so an asset costs no
+decompression and no extracted copy; the fixed mount cost is that 4 KB buffer,
+and a large package is a card-space problem, not a RAM one.
 - Declare `tier` honestly. `heavy` is the escape hatch for a game or emulator:
   the player stops playback, releases the audio path and SQLite page caches,
   and drops the decoded artwork and list thumbnails first. It does not make
