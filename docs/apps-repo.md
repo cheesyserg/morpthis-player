@@ -54,10 +54,12 @@ is a build failure, not a runtime surprise.
 
 ## CI
 
-- Matrix over `apps/*`.
-- Build, run `check-abi`, validate the manifest, package `.mapp`.
-- Upload one artifact per app; attach them to a release on a tag.
-- A tag names the app and the version: `calculator-v1.0.0`.
+- Every push validates the manifests and runs the host tests in
+  `morpthis-apps`.
+- Device builds live in `morpthis-build`: it builds the pinned toolchain, runs
+  `check-abi`, packages the `.mapp` files and uploads one artifact per app.
+- On a tag, the packages are attached to a release. A tag names the app and the
+  version: `calculator-v1.0.0`.
 
 ## Releases
 
