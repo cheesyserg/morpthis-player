@@ -96,15 +96,19 @@ does not have to build binutils, GCC and glibc to compile a calculator.
 Keep the first version small enough to ship:
 
 - `app`: name, version, app folder, API version, `post()`, `quit()`.
-- `ui`: screen, label, button, list, image, slider, toast.
+- `ui`: screen, label, button, list, image, slider, toast; rotation, opacity and
+  `raise` for image overlays and moving parts.
 - `input`: button events, touch events, back gesture.
 - `audio`: play/pause/next/prev, current track, volume; or "leave the player's
-  audio alone" for apps that do not need it.
+  audio alone" for apps that do not need it. Plus a raw PCM stream
+  (`open`/`write`/`close`) for an app that mixes its own effects.
 - `fs`: the app folder, read/write helpers, card root.
 - `log`: one line to the player's log.
 
-Do not add networking, Bluetooth or DAC control in the first version. They are
-the player's, and an app that needs them can ask for them later.
+Do not add networking or Bluetooth in the first version. They are the player's,
+and an app that needs them can ask for them later. The DAC is different: an app
+can take it, but there is no mixer, so it is one writer at a time and the app
+closes the stream before it quits.
 
 ## Packaging
 

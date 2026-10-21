@@ -542,6 +542,40 @@ void morpthis_widget_set_visible(morpthis_widget_t *widget, bool visible) {
 	lv_obj_set_hidden(widget->obj, !visible);
 }
 
+void morpthis_widget_set_rotation(morpthis_widget_t *widget, int degrees) {
+	if (!widget || !widget->obj || widget->kind != SDK_WIDGET_IMAGE) {
+		return;
+	}
+
+	// LVGL turns in tenths of a degree, clockwise, and wants the angle in
+	// 0..3599. The pivot is the picture's centre.
+	int angle = degrees % 360;
+	if (angle < 0) {
+		angle += 360;
+	}
+	lv_image_set_rotation(widget->obj, angle * 10);
+}
+
+void morpthis_widget_set_opacity(morpthis_widget_t *widget, int opacity) {
+	if (!widget || !widget->obj) {
+		return;
+	}
+	if (opacity < 0) {
+		opacity = 0;
+	}
+	if (opacity > 100) {
+		opacity = 100;
+	}
+	lv_obj_set_style_opa(widget->obj, (lv_opa_t)((opacity * 255 + 50) / 100), 0);
+}
+
+void morpthis_widget_raise(morpthis_widget_t *widget) {
+	if (!widget || !widget->obj) {
+		return;
+	}
+	lv_obj_move_foreground(widget->obj);
+}
+
 void morpthis_widget_set_enabled(morpthis_widget_t *widget, bool enabled) {
 	if (!widget || !widget->obj) {
 		return;

@@ -7,7 +7,9 @@
 
 #include "src/gui/shell/topbar.h"
 #include "src/system/audio/alsa-controls.h"
+#include "src/system/audio/audio.h"
 #include "src/system/playback/device_state.h"
+#include "src/system/streaming/radio.h"
 
 // ---------------------------------------------------------------------------
 // audio.h
@@ -102,4 +104,51 @@ bool morpthis_audio_set_volume(int volume) {
 	set_volume_percent(volume);
 	topbar_refresh_volume(volume);
 	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Raw output
+// ---------------------------------------------------------------------------
+
+// Open, write and close all come from the app's mixer thread, which is why
+// there is no lock here. audio_external_write() blocks at the rate the DAC
+// plays, and a lock held across it would only make close wait behind it.
+static bool external_open;
+
+bool morpthis_audio_open(int rate, int channels, int buffer_ms) {
+	if (external_open) {
+		return true;
+	}
+	if (rate <= 0 || channels < 1 || channels > 2 || buffer_ms < 0) {
+		return false;
+	}
+
+	// One writer on the DAC. The queue is kept, so the player can resume the
+	// track it was on once the app has closed the output.
+	audio_stop();
+	if (radio_is_playing()) {
+		radio_stop();
+	}
+
+	external_open = audio_external_begin_latency(rate, channels, 16, buffer_ms);
+	return external_open;
+}
+
+size_t morpthis_audio_write(const int16_t *pcm, size_t frames) {
+	if (!external_open || !pcm || frames == 0) {
+		return 0;
+	}
+	if (frames > (size_t)INT_MAX) {
+		frames = (size_t)INT_MAX;
+	}
+	int written = audio_external_write(pcm, (int)frames);
+	return written > 0 ? (size_t)written : 0;
+}
+
+void morpthis_audio_close(void) {
+	if (!external_open) {
+		return;
+	}
+	audio_external_end();
+	external_open = false;
 }
