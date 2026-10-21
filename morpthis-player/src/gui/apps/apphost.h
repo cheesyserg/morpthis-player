@@ -22,8 +22,25 @@ typedef enum {
 // Called once from gui_init(), after the theme exists.
 void apphost_init(gui_config_t *cfg);
 
-// Tries the in-process path. `error` is filled when APPHOST_FAILED is returned.
-apphost_result_t apphost_launch(const app_t *app, char *error, size_t error_size);
+// Tries the in-process path. The app's package is mounted for the lifetime of
+// the app and released by the teardown. `error` is filled when APPHOST_FAILED
+// is returned.
+apphost_result_t apphost_launch(app_t *app, char *error, size_t error_size);
+
+// The Apps page is on screen. While it is, and while an app or a tool is
+// running, USB mass storage stays away from the card: a package is mounted
+// from it and the export would unmount the card underneath.
+void apphost_set_page_visible(bool visible);
+void apphost_set_tool_running(bool running);
+
+// A USB host wants the card while the Apps feature holds it. Called on the GUI
+// thread via gui_post(); puts up the confirmation that closes the open app(s),
+// leaves the Apps page and lets the watcher export the card.
+void apphost_prompt_mass_storage(void *unused);
+
+// True while a confirmed mass-storage handover is closing the app(s). The tool
+// result is suppressed in that case; the USB sharing popup is the relevant one.
+bool apphost_mass_storage_closing(void);
 
 // True when an app is loaded. Transport keys are the app's while it is: they
 // are delivered to its button callback if it set one.

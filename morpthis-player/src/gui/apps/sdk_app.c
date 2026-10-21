@@ -139,8 +139,8 @@ bool sdk_safe_relative(const char *path) {
 	return !strstr(path, "..") && !strchr(path, '\\');
 }
 
-int sdk_resolve_path(const char *relative, char *out, size_t size) {
-	if (!sdk_app || !sdk_app->folder[0]) {
+int sdk_resolve_in(const char *base, const char *relative, char *out, size_t size) {
+	if (!base || !base[0]) {
 		errno = ENODEV;
 		return -1;
 	}
@@ -148,12 +148,16 @@ int sdk_resolve_path(const char *relative, char *out, size_t size) {
 		errno = EINVAL;
 		return -1;
 	}
-	int n = snprintf(out, size, "%s/%s", sdk_app->folder, relative);
+	int n = snprintf(out, size, "%s/%s", base, relative);
 	if (n < 0 || (size_t)n >= size) {
 		errno = ENAMETOOLONG;
 		return -1;
 	}
 	return 0;
+}
+
+int sdk_resolve_path(const char *relative, char *out, size_t size) {
+	return sdk_resolve_in(sdk_app ? sdk_app->folder : NULL, relative, out, size);
 }
 
 int sdk_content_top(void) {

@@ -39,7 +39,7 @@ morpthis-sdk/
     ui.h           // screens, widgets, events
     input.h        // buttons, touch, gestures
     audio.h        // playback control, PCM access
-    fs.h           // card paths, app folder
+    fs.h           // card paths, package and data folders
     log.h          // logging
     version.h      // MORPTHIS_APP_API_VERSION
   src/             // SDK runtime, if the API needs a shim
@@ -95,7 +95,8 @@ does not have to build binutils, GCC and glibc to compile a calculator.
 
 Keep the first version small enough to ship:
 
-- `app`: name, version, app folder, API version, `post()`, `quit()`.
+- `app`: name, version, package folder, data folder, API version, `post()`,
+  `quit()`.
 - `ui`: screen, label, button, list, image, slider, toast; rotation, opacity and
   `raise` for image overlays and moving parts; a canvas the app draws into
   (`create`, `buffer`, `invalidate`) and `refresh()` to put it on the panel now.
@@ -103,7 +104,8 @@ Keep the first version small enough to ship:
 - `audio`: play/pause/next/prev, current track, volume; or "leave the player's
   audio alone" for apps that do not need it. Plus a raw PCM stream
   (`open`/`write`/`close`) for an app that mixes its own effects.
-- `fs`: the app folder, read/write helpers, card root.
+- `fs`: the package root, the writable data folder, read/write helpers, card
+  root, and a resolve call for libraries that open files themselves.
 - `log`: one line to the player's log.
 
 Do not add networking or Bluetooth in the first version. They are the player's,
@@ -113,24 +115,42 @@ closes the stream before it quits.
 
 ## Packaging
 
-An app package is a zip with the app folder at its root:
+An app package is one uncompressed squashfs image with the app folder at its
+root:
 
 ```text
-calculator-1.0.0.mapp
+calculator.pkgmerp
   app.json
   icon.png
   calculator
 ```
 
-The on-card layout is the same folder under `Apps/`. A future player version
-can install a `.mapp` directly; today the user extracts it.
+The player mounts it read-only through a loop device, so there is no install
+step and no extracted copy: the file the user copies is the file that runs.
+The package name carries no version, because the card holds at most one package
+per app id; replacing the file is the update.
+
+An app's writable state lives beside it in `merp_data/<id>/`, never inside the
+image. `fs.h` presents the two as one tree: reads fall back from data to
+package, writes go to data, and a shipped file opened for update is copied to
+data first. That is what lets a package be replaced without losing a save.
+
+While the Apps page, a loaded app or a tool is using the card, the player keeps
+USB mass storage away from it: exporting the raw device would unmount the card
+under the running squashfs mount. If a PC attaches, the player asks before
+taking the card; confirming closes the app through its normal teardown and
+exports the card. An app with threads, a network connection or the raw audio
+output should export `morpthis_app_shutdown()` so that close stops its work
+cleanly; the player calls it once on the GUI thread before destroying screens
+and unloading the shared object.
 
 ## CI
 
 - Build every sample with the pinned toolchain.
 - Run `check-abi` against glibc 2.22.
-- Package each sample as a `.mapp`.
-- Upload the packages as artifacts; attach them to a release on a tag.
+- Package each sample as a `.pkgmerp`.
+- Upload one artifact per package and the whole set as a zip; attach them to a
+  release on a tag.
 - Optionally run a QEMU smoke test of a headless sample.
 
 ## Versioning
@@ -154,6 +174,11 @@ The SDK should:
 - Provide a `morpthis_mem_available()` call so an app can refuse to start.
 - Encourage loading assets on demand, not all at once.
 - Never allocate in the draw path.
+
+Packages are uncompressed squashfs images. The kernel serves their data straight
+from the card through the page cache, so an asset costs no decompression
+workspace and no extracted copy; a large package is a card-space problem, not a
+RAM one.
 - Declare `tier` honestly. `heavy` is the escape hatch for a game or emulator:
   the player stops playback, releases the audio path and SQLite page caches,
   and drops the decoded artwork and list thumbnails first. It does not make

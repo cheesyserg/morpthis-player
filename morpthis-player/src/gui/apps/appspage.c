@@ -52,6 +52,19 @@ static void launch_done_cb(void *user) {
 	launch_result_t *done = user;
 	char text[APPS_NAME_MAX + 96];
 
+	// The card is free again for whichever reason the tool ended. The guard is
+	// dropped before the result is shown; if the page is still up it stays on
+	// because the page itself holds it. Capture the handover first: dropping
+	// the tool guard may finish it and clear the flag.
+	bool closing = apphost_mass_storage_closing();
+	apphost_set_tool_running(false);
+	if (closing) {
+		// The tool was stopped because the card is going to the host. The USB
+		// popup is the result the user needs, not "signal 15".
+		free(done);
+		return;
+	}
+
 	if (!done->result.started) {
 		snprintf(text, sizeof(text), "%s: %s", done->name, done->result.error);
 		toast_error(text);
@@ -88,7 +101,7 @@ static void *launch_thread(void *arg) {
 	return NULL;
 }
 
-static void launch_app(const app_t *app) {
+static void launch_app(app_t *app) {
 	// The in-process path first. It runs on the GUI thread because the entry
 	// point builds screens; a plugin that cannot start is reported here rather
 	// than run as a tool, which would only produce ENOEXEC.
@@ -114,15 +127,21 @@ static void launch_app(const app_t *app) {
 	}
 	job->app = *app;
 
+	// The tool runs from the package mount, so keep USB mass storage off the
+	// card until the worker has finished with it. The worker posts the result
+	// back to the GUI thread, and launch_done_cb() drops the guard there.
+	apphost_set_tool_running(true);
+
 	pthread_t thread;
 	if (pthread_create(&thread, NULL, launch_thread, job) == 0) {
 		pthread_detach(thread);
 	} else {
+		apphost_set_tool_running(false);
 		free(job);
 	}
 }
 
-static void launch_tile_cb(void *user) { launch_app((const app_t *)user); }
+static void launch_tile_cb(void *user) { launch_app((app_t *)user); }
 
 static void free_icons(void) {
 	for (int i = 0; i < APPS_MAX; i++) {
@@ -173,7 +192,17 @@ static void rebuild(void) {
 
 static void screen_loaded_cb(lv_event_t *e) {
 	(void)e;
+	// The card must be back before the scan mounts a package from it. This is
+	// also what turns a card already exported to a PC into the player's again.
+	apphost_set_page_visible(true);
 	rebuild();
+}
+
+static void screen_unloaded_cb(lv_event_t *e) {
+	(void)e;
+	// An app launch unloads this page too; the app itself holds the guard, so
+	// this only releases the page's reason.
+	apphost_set_page_visible(false);
 }
 
 static void scan_cb(lv_event_t *e) {
@@ -220,4 +249,5 @@ void appspage_init(gui_config_t *cfg) {
 	empty_panel = gridpage_empty_panel(appspage_screen, cfg, &icon_menu_more, "apps_empty_note", scan_cb);
 
 	lv_obj_add_event_cb(appspage_screen, screen_loaded_cb, LV_EVENT_SCREEN_LOADED, NULL);
+	lv_obj_add_event_cb(appspage_screen, screen_unloaded_cb, LV_EVENT_SCREEN_UNLOADED, NULL);
 }

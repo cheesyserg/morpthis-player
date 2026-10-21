@@ -23,6 +23,7 @@
 #include "src/system/audio/usbaudio.h"
 #include "src/system/core/utils.h"
 #include "src/system/streaming/radio.h"
+#include "src/gui/apps/apphost.h"
 #include "src/gui/nowplaying/cover.h"
 
 #include "lvgl/lvgl.h"
@@ -63,6 +64,11 @@ static char sd_device[128];
 static char sd_mount[256];
 
 static volatile bool storage_active;
+
+// True once usb_start() has found a card device and a VBUS node. Until then
+// there is no gadget to build and no watcher to export anything; the Apps
+// guard still records its state so a later start sees it.
+static bool usb_started;
 
 // Export and restore run on the watcher thread, and a restore is also asked for
 // by the threads that start DAC mode and switch ADB. One at a time: a restore
@@ -170,6 +176,11 @@ static bool adb_gadget_bound(void) {
 // should not have. Honoured in the two places that build or bind anything.
 static volatile bool dac_owns_usb;
 
+// Set while the Apps feature is using the card. The watcher keeps running its
+// cable and parking housekeeping but never exports the medium; an export in
+// flight when this goes up is taken back by usb_set_apps_mode().
+static volatile bool apps_own_usb;
+
 // Entering and leaving DAC mode moves the card back and forth exactly the way
 // a cable being plugged in does, which would announce "Memoria di nuovo
 // disponibile" or "Collegato al PC" for something the user did not do and
@@ -213,6 +224,38 @@ void usb_set_dac_mode(bool on) {
 
 bool usb_dac_mode(void) {
 	return dac_owns_usb;
+}
+
+void usb_set_apps_mode(bool on) {
+	if (apps_own_usb == on) {
+		return;
+	}
+
+	// The flag goes up before the export can be started or the card taken
+	// back: the watcher thread must see it first.
+	apps_own_usb = on;
+	owner_changed();
+
+	if (!usb_started) {
+		return;
+	}
+
+	suppress_popups = true;
+	if (on) {
+		// An app runs from a file on the card, so a card already handed to a
+		// host has to come back. Only when it was exported: a restore with
+		// nothing exported still unmounts and remounts the card.
+		take_card_back("apps are using the card");
+	} else if (!dac_owns_usb && !(adb_switched_on() && adb_is_running())) {
+		// Put the empty-medium reader back on the controller; the watcher
+		// exports on its next poll if a host is still there. With ADB running
+		// the controller is its gadget's; binding the reader first would only
+		// be undone a second later.
+		ensure_storage_gadget();
+	}
+	suppress_popups = false;
+
+	fprintf(stderr, "usb: mass storage %s while apps are in use\n", on ? "disabled" : "enabled");
 }
 
 // ---------------------------------------------------------------------------
@@ -304,7 +347,7 @@ static void typec_force_sink(void) {
 // then just writing the block device into lun.0/file (the medium clicks in);
 // un-exporting writes it empty again. The gadget itself never unbinds.
 static void ensure_storage_gadget(void) {
-	if (dac_owns_usb || usbaudio_active()) {
+	if (dac_owns_usb || apps_own_usb || usbaudio_active()) {
 		return;
 	}
 
@@ -692,6 +735,14 @@ static bool host_ejected(void) {
 // Hands the card to the host. Ordering is what the stock player does: stop
 // touching the filesystem, unmount, then export the raw device.
 static void storage_export(void) {
+	if (apps_own_usb) {
+		// The Apps feature has the card. The watcher checks this before
+		// calling, but a check here closes the window between its poll and
+		// this function taking the lock.
+		fprintf(stderr, "usb: apps are using the card; not exporting\n");
+		return;
+	}
+
 	fprintf(stderr, "usb: host attached, exporting %s\n", sd_device);
 
 	// Said first, not last.
@@ -931,6 +982,9 @@ static void *usb_thread(void *arg) {
 	// Said once, not once a second.
 	bool said_adb = false;
 
+	// And once for a host that turns up while the Apps feature holds the card.
+	bool said_apps = false;
+
 	// The gadget is unbound from the controller while the device sits in
 	// standby with no cable (see below).
 	bool parked = false;
@@ -972,6 +1026,8 @@ static void *usb_thread(void *arg) {
 			seen_owner = owner;
 			await_unplug = false;
 			said_adb = false;
+			said_apps = false;
+			said_apps = false;
 		}
 		if (exported && !storage_active) {
 			exported = false;
@@ -993,6 +1049,7 @@ static void *usb_thread(void *arg) {
 				exported = false;
 			}
 			await_unplug = false;
+			said_apps = false;
 
 			// No cable, panel dark: take the gadget off the controller. A
 			// bound gadget keeps the USB PHY and the OTG block clocked --
@@ -1036,6 +1093,12 @@ static void *usb_thread(void *arg) {
 		// A cable turned up while the gadget was parked: put it back before
 		// anything else, or the host will never see this device.
 		if (parked) {
+			if (apps_own_usb) {
+				// No point binding a reader that may not take the card. The
+				// state is left parked so the next poll after the guard is
+				// released does the rebind.
+				continue;
+			}
 			// Here there is a host waiting, so this happens whatever playback
 			// is doing -- but by the cheap route first: the gadget was only
 			// unbound, not taken apart, so putting it back is one write.
@@ -1084,6 +1147,20 @@ static void *usb_thread(void *arg) {
 			continue;
 		}
 
+		// The Apps feature has a package mounted from this card. Ask before
+		// taking the card: confirming closes the app (and waits for a tool to
+		// stop), leaves the Apps page and lets the watcher export below.
+		if (apps_own_usb) {
+			if (!said_apps) {
+				fprintf(stderr, "usb: host attached while apps are in use; asking\n");
+				if (gui_post(apphost_prompt_mass_storage, NULL)) {
+					said_apps = true;
+				}
+			}
+			continue;
+		}
+		said_apps = false;
+
 		locked_export();
 		exported = storage_active;
 	}
@@ -1119,6 +1196,7 @@ void usb_start(const char *device, const char *mount_point) {
 
 	snprintf(sd_device, sizeof(sd_device), "%s", device);
 	snprintf(sd_mount, sizeof(sd_mount), "%s", mount_point);
+	usb_started = true;
 
 	// The empty-medium gadget goes up right away, unless ADB owns the
 	// controller -- then its gadget provides the enumeration signal instead.

@@ -84,11 +84,13 @@ struct morpthis_app {
 	char id[APPS_ID_MAX];
 	char name[APPS_NAME_MAX];
 	char version[APPS_VERSION_MAX];
-	char folder[APPS_FOLDER_MAX];
+	char folder[APPS_FOLDER_MAX]; // the mounted, read-only package root
+	char data[APPS_FOLDER_MAX];	  // the writable merp_data folder
 	app_tier_t tier;
 	app_category_t category;
 
 	void *dl_handle;
+	void (*shutdown)(void); // optional app export, called before unload
 	bool alive;
 	bool quitting;
 
@@ -113,6 +115,7 @@ extern gui_config_t *sdk_cfg;
 // sdk_app.c
 char *sdk_strdup(const char *text);
 bool sdk_safe_relative(const char *path);
+int sdk_resolve_in(const char *base, const char *relative, char *out, size_t size);
 int sdk_resolve_path(const char *relative, char *out, size_t size);
 size_t sdk_mem_available(void);
 int sdk_content_top(void);

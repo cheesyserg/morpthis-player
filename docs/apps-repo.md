@@ -23,8 +23,8 @@ morpthis-apps/
   .github/workflows/build.yml
 ```
 
-- One directory per app. The directory name is the app id and the folder name
-  on the card.
+- One directory per app in this repository. The directory name is the app id
+  and the name of the package on the card.
 - Each app owns its `app.json`, icon, source and build. There is no shared
   `main.c` and no app registry to edit.
 - The top-level build loops over `apps/*`; adding an app is adding a directory.
@@ -52,20 +52,42 @@ is a build failure, not a runtime surprise.
 - The SDK supplies the compiler, flags, ABI check and packaging.
 - C apps link statically or against the device's libc; C++ apps link
   `-static-libstdc++ -static-libgcc`.
-- The build output is a folder that can be copied to `Apps/<id>/` as it is.
+- The build output is a `.pkgmerp`: an uncompressed squashfs image that the
+  player mounts, not a folder it has to extract.
+
+## Packaging
+
+```sh
+make package
+```
+
+writes `dist/<id>.pkgmerp`. The image holds the app folder at its root:
+
+```text
+calculator.pkgmerp
+  app.json
+  icon.png
+  calculator
+```
+
+The name carries no version: one package per app, replaced in place on the
+card. A user copies it to `Apps/pkgmerps/<id>.pkgmerp`; the app's writable
+files live in `merp_data/<id>/`, which survives the replacement. There is no
+install step in the player yet.
 
 ## CI
 
 - Every push validates the manifests and runs the host tests in
   `morpthis-apps`.
 - Device builds live in `morpthis-build`: it builds the pinned toolchain, runs
-  `check-abi`, packages the `.mapp` files and uploads one artifact per app.
+  `check-abi`, packages the `.pkgmerp` files and uploads one artifact per app
+  plus the whole set as a zip.
 - On a tag, the packages are attached to a release. A tag names the app and the
   version: `calculator-v1.0.0`.
 
 ## Releases
 
-- One GitHub release per app version, with the `.mapp` attached.
+- One GitHub release per app version, with the `.pkgmerp` attached.
 - The release notes say what changed and the minimum player build.
 - The player's Apps page does not download anything; the user copies the
   package to the card.
@@ -104,4 +126,5 @@ Start with the ones that prove the API without needing the display handoff:
 - Streaming credentials or API keys.
 - A copy of the player's source. The SDK is the interface; the player is a
   separate repository.
-- Build outputs. Releases carry the `.mapp`; the repository carries the source.
+- Build outputs. Releases carry the `.pkgmerp`; the repository carries the
+  source.

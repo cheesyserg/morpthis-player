@@ -9,12 +9,117 @@
 
 #include "src/system/device/system.h"
 
+// The package is a read-only squashfs mount; the data folder is where an app
+// may write. A relative path names the same file to the app either way:
+//
+//   read          the data folder first, then the package
+//   write/append  the data folder, copying a package file there first when the
+//                 app opens one for update (copy-on-write)
+//
+// So a shipped default file can be edited without touching the image, and the
+// package stays the one file a user deletes to uninstall.
+
 struct morpthis_file {
 	FILE *fp;
 };
 
-const char *morpthis_fs_app_folder(void) {
+static const char *package_folder(void) {
 	return sdk_app ? sdk_app->folder : "";
+}
+
+static const char *data_folder(void) {
+	if (sdk_app && sdk_app->data[0]) {
+		return sdk_app->data;
+	}
+	return package_folder();
+}
+
+static bool path_exists(const char *path) {
+	struct stat st;
+	return path && path[0] && stat(path, &st) == 0;
+}
+
+// Makes the directories a relative path needs under `base`. Used before a
+// package file is copied into the data folder: the subdirectory it lived in
+// may exist only in the image.
+static int make_parents(const char *base, const char *relative) {
+	char path[APPS_FOLDER_MAX + 256];
+	int n = snprintf(path, sizeof(path), "%s/%s", base, relative);
+	if (n < 0 || (size_t)n >= sizeof(path)) {
+		errno = ENAMETOOLONG;
+		return -1;
+	}
+
+	size_t base_length = strlen(base);
+	for (char *p = path + base_length + 1; *p; p++) {
+		if (*p != '/') {
+			continue;
+		}
+		*p = '\0';
+		if (mkdir(path, 0755) != 0 && errno != EEXIST) {
+			return -1;
+		}
+		*p = '/';
+	}
+	return 0;
+}
+
+static bool copy_file(const char *from, const char *to) {
+	if (strcmp(from, to) == 0) {
+		return true; // host runtime: the data folder is the app folder
+	}
+
+	char buffer[4096];
+	FILE *in = fopen(from, "rb");
+	if (!in) {
+		return false;
+	}
+	FILE *out = fopen(to, "wb");
+	if (!out) {
+		fclose(in);
+		return false;
+	}
+
+	bool ok = true;
+	size_t got;
+	while ((got = fread(buffer, 1, sizeof(buffer), in)) > 0) {
+		if (fwrite(buffer, 1, got, out) != got) {
+			ok = false;
+			break;
+		}
+	}
+	if (ferror(in)) {
+		ok = false;
+	}
+	if (fclose(out) != 0) {
+		ok = false;
+	}
+	fclose(in);
+
+	if (!ok) {
+		remove(to);
+		if (!errno) {
+			errno = EIO;
+		}
+	}
+	return ok;
+}
+
+// Copies a package file into the data folder so it can be opened for update.
+static bool copy_package_file(const char *relative, const char *package_path,
+							  const char *data_path) {
+	if (make_parents(data_folder(), relative) != 0) {
+		return false;
+	}
+	return copy_file(package_path, data_path);
+}
+
+const char *morpthis_fs_app_folder(void) {
+	return package_folder();
+}
+
+const char *morpthis_fs_data_folder(void) {
+	return data_folder();
 }
 
 const char *morpthis_fs_card_root(void) {
@@ -22,9 +127,81 @@ const char *morpthis_fs_card_root(void) {
 	return root ? root : "";
 }
 
-morpthis_file_t *morpthis_fs_open(const char *relative, morpthis_fs_mode_t mode) {
+bool morpthis_fs_resolve(const char *relative, char *out, size_t size) {
 	char path[APPS_FOLDER_MAX + 256];
-	if (sdk_resolve_path(relative, path, sizeof(path)) != 0) {
+	if (!out || size == 0) {
+		errno = EINVAL;
+		return false;
+	}
+
+	if (sdk_resolve_in(data_folder(), relative, path, sizeof(path)) != 0) {
+		return false;
+	}
+	if (!path_exists(path)) {
+		if (!sdk_app || !sdk_app->folder[0]) {
+			errno = ENOENT;
+			return false;
+		}
+		if (sdk_resolve_in(sdk_app->folder, relative, path, sizeof(path)) != 0) {
+			return false;
+		}
+		if (!path_exists(path)) {
+			errno = ENOENT;
+			return false;
+		}
+	}
+
+	int n = snprintf(out, size, "%s", path);
+	if (n < 0 || (size_t)n >= size) {
+		errno = ENAMETOOLONG;
+		return false;
+	}
+	return true;
+}
+
+morpthis_file_t *morpthis_fs_open(const char *relative, morpthis_fs_mode_t mode) {
+	char data_path[APPS_FOLDER_MAX + 256];
+	char package_path[APPS_FOLDER_MAX + 256];
+
+	const char *base = data_folder();
+	if (sdk_resolve_in(base, relative, data_path, sizeof(data_path)) != 0) {
+		return NULL;
+	}
+
+	bool in_data = path_exists(data_path);
+	const char *chosen = data_path;
+
+	switch (mode) {
+	case MORPTHIS_FS_READ:
+		if (!in_data) {
+			if (sdk_resolve_in(package_folder(), relative, package_path,
+							   sizeof(package_path)) != 0) {
+				return NULL;
+			}
+			if (!path_exists(package_path)) {
+				errno = ENOENT;
+				return NULL;
+			}
+			chosen = package_path;
+		}
+		break;
+
+	case MORPTHIS_FS_WRITE:
+		break;
+
+	case MORPTHIS_FS_APPEND:
+	case MORPTHIS_FS_READ_WRITE:
+		if (!in_data && sdk_app && sdk_app->folder[0] &&
+			sdk_resolve_in(sdk_app->folder, relative, package_path,
+						   sizeof(package_path)) == 0 &&
+			path_exists(package_path) &&
+			!copy_package_file(relative, package_path, data_path)) {
+			return NULL;
+		}
+		break;
+
+	default:
+		errno = EINVAL;
 		return NULL;
 	}
 
@@ -47,7 +224,7 @@ morpthis_file_t *morpthis_fs_open(const char *relative, morpthis_fs_mode_t mode)
 		return NULL;
 	}
 
-	FILE *fp = fopen(path, flags);
+	FILE *fp = fopen(chosen, flags);
 	if (!fp) {
 		return NULL;
 	}
@@ -157,35 +334,80 @@ long morpthis_fs_read_all(const char *relative, char *buffer, size_t max,
 
 bool morpthis_fs_exists(const char *relative) {
 	char path[APPS_FOLDER_MAX + 256];
-	if (sdk_resolve_path(relative, path, sizeof(path)) != 0) {
-		return false;
+	if (sdk_resolve_in(data_folder(), relative, path, sizeof(path)) == 0 &&
+		path_exists(path)) {
+		return true;
 	}
-	struct stat st;
-	return stat(path, &st) == 0;
+	if (sdk_app && sdk_app->folder[0] &&
+		sdk_resolve_in(sdk_app->folder, relative, path, sizeof(path)) == 0) {
+		return path_exists(path);
+	}
+	return false;
 }
 
 int morpthis_fs_remove(const char *relative) {
-	char path[APPS_FOLDER_MAX + 256];
-	if (sdk_resolve_path(relative, path, sizeof(path)) != 0) {
+	char data_path[APPS_FOLDER_MAX + 256];
+	char package_path[APPS_FOLDER_MAX + 256];
+
+	if (sdk_resolve_in(data_folder(), relative, data_path, sizeof(data_path)) != 0) {
 		return -1;
 	}
-	return remove(path);
+	if (remove(data_path) == 0) {
+		return 0;
+	}
+	if (errno != ENOENT) {
+		return -1;
+	}
+
+	// Removing a shipped file would change the package, which is read-only.
+	if (sdk_app && sdk_app->folder[0] &&
+		sdk_resolve_in(sdk_app->folder, relative, package_path,
+					   sizeof(package_path)) == 0 &&
+		path_exists(package_path)) {
+		errno = EROFS;
+	}
+	return -1;
 }
 
 int morpthis_fs_rename(const char *from, const char *to) {
 	char from_path[APPS_FOLDER_MAX + 256];
 	char to_path[APPS_FOLDER_MAX + 256];
-	if (sdk_resolve_path(from, from_path, sizeof(from_path)) != 0 ||
-		sdk_resolve_path(to, to_path, sizeof(to_path)) != 0) {
+
+	const char *base = data_folder();
+	if (sdk_resolve_in(base, from, from_path, sizeof(from_path)) != 0 ||
+		sdk_resolve_in(base, to, to_path, sizeof(to_path)) != 0) {
 		return -1;
 	}
-	return rename(from_path, to_path);
+
+	if (rename(from_path, to_path) == 0) {
+		return 0;
+	}
+	if (errno != ENOENT) {
+		return -1;
+	}
+
+	char package_path[APPS_FOLDER_MAX + 256];
+	if (sdk_app && sdk_app->folder[0] &&
+		sdk_resolve_in(sdk_app->folder, from, package_path,
+					   sizeof(package_path)) == 0 &&
+		path_exists(package_path)) {
+		errno = EROFS;
+	}
+	return -1;
 }
 
 int morpthis_fs_mkdir(const char *relative) {
-	char path[APPS_FOLDER_MAX + 256];
-	if (sdk_resolve_path(relative, path, sizeof(path)) != 0) {
+	char data_path[APPS_FOLDER_MAX + 256];
+	if (sdk_resolve_in(data_folder(), relative, data_path, sizeof(data_path)) != 0) {
 		return -1;
 	}
-	return mkdir(path, 0755);
+	if (path_exists(data_path)) {
+		errno = EEXIST;
+		return -1;
+	}
+
+	// A directory that exists only in the package is visible to reads, but it
+	// is still read-only. Creating the data one shadows it and gives the app a
+	// place to add files, which is what mkdir is asking for here.
+	return mkdir(data_path, 0755);
 }

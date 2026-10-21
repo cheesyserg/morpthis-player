@@ -37,6 +37,15 @@ bool usb_storage_active(void);
 void usb_set_dac_mode(bool on);
 bool usb_dac_mode(void);
 
+// Keeps the card out of mass-storage mode while the Apps feature is in use.
+//
+// An app runs from a squashfs image on the card, so handing the raw device to
+// a PC would unmount the card out from under it. Setting this takes a card
+// already exported back first; clearing it lets the watcher export again on
+// its next poll. The Apps page, a loaded app and a running tool each hold the
+// guard, so it stays on until the last of them is gone.
+void usb_set_apps_mode(bool on);
+
 // Coordination with ADB, whose init script needs the one USB controller for
 // its own gadget: yield unbinds the storage gadget before adbd starts, reclaim
 // rebuilds and rebinds it after adbd stops (its stop script tears the whole

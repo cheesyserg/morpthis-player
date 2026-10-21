@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,8 +16,27 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "src/system/apps/pkgmerp.h"
 #include "src/system/core/json.h"
 #include "src/system/device/system.h"
+
+extern char **environ;
+
+// The tool child apps_run() is waiting for, or 0. A tool runs in its own
+// session (setsid below), so the GUI can ask the whole tree to stop before the
+// card is handed to a PC. Atomic because the launcher and the worker are on
+// different threads.
+static volatile pid_t running_tool_pid;
+
+static void set_running_tool(pid_t pid) {
+	__atomic_store_n(&running_tool_pid, pid, __ATOMIC_SEQ_CST);
+}
+
+// The cache for icons read out of a package. The image is mounted only while
+// the page scans; the tile needs the picture afterwards, so the few kilobytes
+// of an icon are copied out here. /tmp is the right home for it: it is small,
+// it is rebuilt on every scan, and a reboot cleans it up.
+#define APPS_ICON_CACHE "/tmp/morpthis/pkgmerp-icons"
 
 // How often the parent looks at the child while waiting. Ten milliseconds is
 // below the shortest timeout worth having and costs nothing on a core that is
@@ -32,14 +52,24 @@ static void set_error(apps_result_t *out, const char *text) {
 	snprintf(out->error, sizeof(out->error), "%s", text ? text : "unknown error");
 }
 
+static void set_text(char *out, size_t size, const char *format, ...) {
+	if (!out || size == 0) {
+		return;
+	}
+	va_list args;
+	va_start(args, format);
+	vsnprintf(out, size, format, args);
+	va_end(args);
+}
+
 static void set_errno(apps_result_t *out, const char *what, int err) {
 	snprintf(out->error, sizeof(out->error), "%s: %s", what, strerror(err));
 }
 
-// A path from a manifest is relative to the app's own folder and may not leave
+// A path from a manifest is relative to the package root and may not leave
 // it. ".." anywhere is refused rather than resolved: a manifest is data from a
 // removable card, and the one thing it must not be able to do is name a file
-// outside the folder the player is about to run.
+// outside the image the player is about to run.
 static bool safe_relative(const char *path) {
 	if (!path || !path[0] || path[0] == '/') {
 		return false;
@@ -48,6 +78,115 @@ static bool safe_relative(const char *path) {
 		return false;
 	}
 	return true;
+}
+
+// mkdir -p. Used for the icon cache and the data folder, both of which sit
+// under a parent the player may not have made yet.
+static int make_directories(const char *path) {
+	char work[APPS_FOLDER_MAX];
+	size_t length = strlen(path);
+	if (length == 0 || length >= sizeof(work)) {
+		errno = ENAMETOOLONG;
+		return -1;
+	}
+	memcpy(work, path, length + 1);
+
+	for (char *p = work + 1; *p; p++) {
+		if (*p != '/') {
+			continue;
+		}
+		*p = '\0';
+		if (mkdir(work, 0755) != 0 && errno != EEXIST) {
+			return -1;
+		}
+		*p = '/';
+	}
+
+	if (mkdir(work, 0755) != 0 && errno != EEXIST) {
+		return -1;
+	}
+	return 0;
+}
+
+static bool copy_file(const char *from, const char *to) {
+	char buffer[4096];
+	FILE *in = fopen(from, "rb");
+	if (!in) {
+		return false;
+	}
+	FILE *out_file = fopen(to, "wb");
+	if (!out_file) {
+		fclose(in);
+		return false;
+	}
+
+	bool ok = true;
+	size_t got;
+	while ((got = fread(buffer, 1, sizeof(buffer), in)) > 0) {
+		if (fwrite(buffer, 1, got, out_file) != got) {
+			ok = false;
+			break;
+		}
+	}
+	if (ferror(in)) {
+		ok = false;
+	}
+	if (fclose(out_file) != 0) {
+		ok = false;
+	}
+	fclose(in);
+
+	if (!ok) {
+		remove(to);
+	}
+	return ok;
+}
+
+// Copies the app's icon out of the mounted package. After the unmount the
+// image is gone from the namespace, and the tile still has to draw.
+static void cache_icon(const char *package_root, app_t *app) {
+	if (!app->icon[0]) {
+		return;
+	}
+
+	char source[APPS_FOLDER_MAX + APPS_ICON_MAX + 2];
+	int n = snprintf(source, sizeof(source), "%s/%s", package_root, app->icon);
+	if (n < 0 || (size_t)n >= sizeof(source)) {
+		app->icon[0] = '\0';
+		return;
+	}
+
+	if (make_directories(APPS_ICON_CACHE) != 0) {
+		fprintf(stderr, "apps: %s: icon cache %s: %s\n", app->id, APPS_ICON_CACHE, strerror(errno));
+		app->icon[0] = '\0';
+		return;
+	}
+
+	char cached[APPS_ICON_MAX + 64];
+	n = snprintf(cached, sizeof(cached), "%s/%s.img", APPS_ICON_CACHE, app->dir);
+	if (n < 0 || (size_t)n >= sizeof(cached) || !copy_file(source, cached)) {
+		fprintf(stderr, "apps: %s: icon %s could not be cached\n", app->id, source);
+		app->icon[0] = '\0';
+		return;
+	}
+
+	snprintf(app->icon, sizeof(app->icon), "%s", cached);
+	app->icon_cached = true;
+}
+
+static bool package_name(const char *name) {
+	size_t length = strlen(name);
+	size_t ext = strlen(APPS_PACKAGE_EXT);
+	return length > ext && strcasecmp(name + length - ext, APPS_PACKAGE_EXT) == 0;
+}
+
+static void package_id(const char *name, char *out, size_t size) {
+	size_t length = strlen(name) - strlen(APPS_PACKAGE_EXT);
+	if (length >= size) {
+		length = size - 1;
+	}
+	memcpy(out, name, length);
+	out[length] = '\0';
 }
 
 static bool read_manifest(const char *folder, const char *dirname, app_t *app) {
@@ -121,7 +260,7 @@ static bool read_manifest(const char *folder, const char *dirname, app_t *app) {
 		return false;
 	}
 	if (app->icon[0] && !safe_relative(app->icon)) {
-		fprintf(stderr, "apps: %s names an icon outside the app folder, ignored\n", path);
+		fprintf(stderr, "apps: %s names an icon outside the package, ignored\n", path);
 		return false;
 	}
 
@@ -145,36 +284,64 @@ int apps_scan(app_t *out, int max) {
 	}
 
 	char dir[APPS_FOLDER_MAX];
-	int n = snprintf(dir, sizeof(dir), "%s/%s", root, APPS_DIR);
+	int n = snprintf(dir, sizeof(dir), "%s/%s/%s", root, APPS_DIR, APPS_PACKAGE_DIR);
 	if (n < 0 || (size_t)n >= sizeof(dir)) {
 		return 0;
 	}
 
 	DIR *d = opendir(dir);
 	if (!d) {
-		return 0; // no Apps folder yet is not an error
+		return 0; // no pkgmerps folder yet is not an error
 	}
 
 	int count = 0;
 	struct dirent *entry;
 	while ((entry = readdir(d)) != NULL && count < max) {
-		if (entry->d_name[0] == '.') {
+		if (entry->d_name[0] == '.' || !package_name(entry->d_name)) {
 			continue;
 		}
 
-		char folder[APPS_FOLDER_MAX];
-		n = snprintf(folder, sizeof(folder), "%s/%s", dir, entry->d_name);
-		if (n < 0 || (size_t)n >= sizeof(folder)) {
+		char image[APPS_FOLDER_MAX];
+		n = snprintf(image, sizeof(image), "%s/%s", dir, entry->d_name);
+		if (n < 0 || (size_t)n >= sizeof(image)) {
 			continue;
 		}
 
 		struct stat st;
-		if (stat(folder, &st) != 0 || !S_ISDIR(st.st_mode)) {
+		if (stat(image, &st) != 0 || !S_ISREG(st.st_mode)) {
 			continue;
 		}
 
-		if (read_manifest(folder, entry->d_name, &out[count])) {
-			count++;
+		char id[APPS_ID_MAX];
+		package_id(entry->d_name, id, sizeof(id));
+
+		char mount_point[APPS_FOLDER_MAX];
+		if (!pkgmerp_mount_point(id, mount_point, sizeof(mount_point))) {
+			continue;
+		}
+
+		// A running app's package may already be mounted; the registry hands
+		// out another reference and the unmount below drops only this scan's.
+		char error[128];
+		if (!pkgmerp_mount(image, mount_point, error, sizeof(error))) {
+			fprintf(stderr, "apps: %s: %s, ignored\n", image, error);
+			continue;
+		}
+
+		app_t app;
+		bool readable = read_manifest(mount_point, id, &app);
+		if (readable) {
+			snprintf(app.package, sizeof(app.package), "%s", image);
+			n = snprintf(app.data, sizeof(app.data), "%s/%s/%s", root, APPS_DATA_DIR, id);
+			if (n < 0 || (size_t)n >= sizeof(app.data)) {
+				app.data[0] = '\0';
+			}
+			cache_icon(mount_point, &app);
+		}
+
+		pkgmerp_unmount(mount_point, error, sizeof(error));
+		if (readable) {
+			out[count++] = app;
 		}
 	}
 	closedir(d);
@@ -187,8 +354,59 @@ bool apps_icon_path(const app_t *app, char *out, size_t size) {
 	if (!app || !app->icon[0] || !out || size == 0) {
 		return false;
 	}
-	int n = snprintf(out, size, "%s/%s", app->folder, app->icon);
+	int n;
+	if (app->icon_cached) {
+		n = snprintf(out, size, "%s", app->icon);
+	} else {
+		n = snprintf(out, size, "%s/%s", app->folder, app->icon);
+	}
 	return n > 0 && (size_t)n < size;
+}
+
+bool apps_mount(app_t *app, char *error, size_t error_size) {
+	if (!app || !app->package[0]) {
+		set_text(error, error_size, "no package");
+		return false;
+	}
+
+	if (!app->folder[0] &&
+		!pkgmerp_mount_point(app->dir, app->folder, sizeof(app->folder))) {
+		set_text(error, error_size, "no mount point");
+		return false;
+	}
+
+	char why[128];
+	if (!pkgmerp_mount(app->package, app->folder, why, sizeof(why))) {
+		set_text(error, error_size, "%s", why);
+		return false;
+	}
+
+	const char *root = storage_sd_root();
+	if (!app->data[0] && root && root[0]) {
+		int n = snprintf(app->data, sizeof(app->data), "%s/%s/%s", root, APPS_DATA_DIR, app->dir);
+		if (n < 0 || (size_t)n >= sizeof(app->data)) {
+			app->data[0] = '\0';
+		}
+	}
+
+	// The package is read-only, so this is where everything the app saves
+	// lives. A card that cannot take it still lets the app run; its writes
+	// fail through the SDK, which is the honest outcome.
+	if (app->data[0] && make_directories(app->data) != 0 && errno != EEXIST) {
+		fprintf(stderr, "apps: %s: data folder %s: %s\n", app->id, app->data, strerror(errno));
+	}
+
+	return true;
+}
+
+void apps_unmount(const char *mount_point) {
+	if (!mount_point || !mount_point[0]) {
+		return;
+	}
+	char error[128];
+	if (!pkgmerp_unmount(mount_point, error, sizeof(error))) {
+		fprintf(stderr, "apps: could not release %s: %s\n", mount_point, error);
+	}
 }
 
 // The child inherits the player's handlers -- the crash handler that writes to
@@ -223,25 +441,86 @@ static void reap(pid_t pid) {
 	}
 }
 
-bool apps_run(const char *relative, int timeout_ms, apps_result_t *out) {
+void apps_stop_running_tool(void) {
+	pid_t pid = __atomic_load_n(&running_tool_pid, __ATOMIC_SEQ_CST);
+	if (pid <= 0) {
+		return;
+	}
+
+	// The child is its own session and process group. Signal the group for
+	// anything it started, then the child itself in case setsid() failed.
+	fprintf(stderr, "apps: asking tool %d to stop\n", (int)pid);
+	kill(-pid, SIGTERM);
+	kill(pid, SIGTERM);
+}
+
+#define APPS_ENV_FOLDER "MORPTHIS_APP_FOLDER="
+#define APPS_ENV_DATA "MORPTHIS_APP_DATA="
+
+// Builds the child's environment before fork(). setenv() after fork() is not
+// async-signal-safe in a process with threads, so the two variables are made
+// here and handed to execve() instead.
+static char **build_child_env(const char *folder, const char *data,
+							  char **folder_var, char **data_var) {
+	*folder_var = NULL;
+	*data_var = NULL;
+
+	size_t count = 0;
+	while (environ && environ[count]) {
+		count++;
+	}
+
+	char **envp = calloc(count + 3, sizeof(char *));
+	if (!envp) {
+		return NULL;
+	}
+
+	size_t used = 0;
+	for (size_t i = 0; i < count; i++) {
+		if (strncmp(environ[i], APPS_ENV_FOLDER, strlen(APPS_ENV_FOLDER)) == 0 ||
+			strncmp(environ[i], APPS_ENV_DATA, strlen(APPS_ENV_DATA)) == 0) {
+			continue;
+		}
+		envp[used++] = environ[i];
+	}
+
+	if (folder && folder[0]) {
+		size_t n = strlen(APPS_ENV_FOLDER) + strlen(folder) + 1;
+		*folder_var = malloc(n);
+		if (!*folder_var) {
+			free(envp);
+			return NULL;
+		}
+		snprintf(*folder_var, n, "%s%s", APPS_ENV_FOLDER, folder);
+		envp[used++] = *folder_var;
+	}
+
+	if (data && data[0]) {
+		size_t n = strlen(APPS_ENV_DATA) + strlen(data) + 1;
+		*data_var = malloc(n);
+		if (!*data_var) {
+			free(*folder_var);
+			*folder_var = NULL;
+			free(envp);
+			return NULL;
+		}
+		snprintf(*data_var, n, "%s%s", APPS_ENV_DATA, data);
+		envp[used++] = *data_var;
+	}
+
+	envp[used] = NULL;
+	return envp;
+}
+
+bool apps_run(const char *path, const char *folder, const char *data,
+			  int timeout_ms, apps_result_t *out) {
 	if (!out) {
 		return false;
 	}
 	memset(out, 0, sizeof(*out));
 
-	const char *root = storage_sd_root();
-	if (!root || !root[0]) {
-		set_error(out, "no card");
-		return false;
-	}
-	if (!relative || !relative[0]) {
+	if (!path || !path[0] || path[0] != '/') {
 		set_error(out, "no path");
-		return false;
-	}
-
-	char path[APPS_FOLDER_MAX + APPS_ENTRY_MAX + 8];
-	if (snprintf(path, sizeof(path), "%s/%s", root, relative) >= (int)sizeof(path)) {
-		set_error(out, "path too long");
 		return false;
 	}
 
@@ -259,13 +538,19 @@ bool apps_run(const char *relative, int timeout_ms, apps_result_t *out) {
 		return false;
 	}
 
-	// The app's own folder, so a binary can find the files beside it without
-	// knowing where the card is mounted.
-	char dir[sizeof(path)];
-	snprintf(dir, sizeof(dir), "%s", path);
-	char *slash = strrchr(dir, '/');
-	if (slash) {
-		*slash = '\0';
+	// The package root, so a binary can find the files beside it without
+	// knowing where it was mounted.
+	char derived[APPS_FOLDER_MAX + APPS_ENTRY_MAX + 8];
+	const char *working = folder;
+	if (!working || !working[0]) {
+		snprintf(derived, sizeof(derived), "%s", path);
+		char *slash = strrchr(derived, '/');
+		if (slash == derived) {
+			derived[1] = '\0';
+		} else if (slash) {
+			*slash = '\0';
+		}
+		working = derived;
 	}
 
 	// The pipe is how the parent tells "execve() failed" from "the app exited
@@ -283,6 +568,10 @@ bool apps_run(const char *relative, int timeout_ms, apps_result_t *out) {
 		return false;
 	}
 
+	char *folder_var = NULL;
+	char *data_var = NULL;
+	char **envp = build_child_env(working, data, &folder_var, &data_var);
+
 	long started_at = now_ms();
 	fprintf(stderr, "apps: running %s\n", path);
 
@@ -291,6 +580,9 @@ bool apps_run(const char *relative, int timeout_ms, apps_result_t *out) {
 		set_errno(out, "fork", errno);
 		close(errpipe[0]);
 		close(errpipe[1]);
+		free(folder_var);
+		free(data_var);
+		free(envp);
 		return false;
 	}
 
@@ -298,15 +590,23 @@ bool apps_run(const char *relative, int timeout_ms, apps_result_t *out) {
 		close(errpipe[0]);
 		child_reset_signals();
 
-		if (chdir(dir) != 0) {
+		// A session of its own, so stopping a tool stops anything it started
+		// and cannot reach the player's process group.
+		setsid();
+
+		if (chdir(working) != 0) {
 			int err = errno;
 			ssize_t ignored = write(errpipe[1], &err, sizeof(err));
 			(void)ignored;
 			_exit(126);
 		}
 
-		char *argv[] = {path, NULL};
-		execv(path, argv);
+		char *argv[] = {(char *)path, NULL};
+		if (envp) {
+			execve(path, argv, envp);
+		} else {
+			execv(path, argv);
+		}
 
 		int err = errno;
 		ssize_t ignored = write(errpipe[1], &err, sizeof(err));
@@ -314,7 +614,12 @@ bool apps_run(const char *relative, int timeout_ms, apps_result_t *out) {
 		_exit(127);
 	}
 
+	// The child has its own copy of the environment now.
+	free(folder_var);
+	free(data_var);
+	free(envp);
 	close(errpipe[1]);
+	set_running_tool(pid);
 
 	// Wait for the exec handshake, bounded by the same timeout as the app
 	// itself: a child that never reaches execve() -- a chdir on a card that
@@ -330,6 +635,7 @@ bool apps_run(const char *relative, int timeout_ms, apps_result_t *out) {
 		close(errpipe[0]);
 		kill(pid, SIGKILL);
 		reap(pid);
+		set_running_tool(0);
 		out->timed_out = true;
 		out->signal = SIGKILL;
 		set_error(out, "timed out before exec");
@@ -345,6 +651,7 @@ bool apps_run(const char *relative, int timeout_ms, apps_result_t *out) {
 
 	if (got == (ssize_t)sizeof(exec_errno)) {
 		reap(pid);
+		set_running_tool(0);
 		set_errno(out, "exec", exec_errno);
 		fprintf(stderr, "apps: %s could not be started: %s\n", path, out->error);
 		return false;
@@ -357,6 +664,7 @@ bool apps_run(const char *relative, int timeout_ms, apps_result_t *out) {
 		int status = 0;
 		pid_t done = waitpid(pid, &status, WNOHANG);
 		if (done == pid) {
+			set_running_tool(0);
 			if (WIFEXITED(status)) {
 				out->exit_code = WEXITSTATUS(status);
 				fprintf(stderr, "apps: %s exited with %d\n", path, out->exit_code);
@@ -367,6 +675,7 @@ bool apps_run(const char *relative, int timeout_ms, apps_result_t *out) {
 			return true;
 		}
 		if (done < 0 && errno != EINTR) {
+			set_running_tool(0);
 			set_errno(out, "waitpid", errno);
 			return true;
 		}
@@ -375,6 +684,7 @@ bool apps_run(const char *relative, int timeout_ms, apps_result_t *out) {
 			fprintf(stderr, "apps: %s outlived %d ms, killing it\n", path, timeout_ms);
 			kill(pid, SIGKILL);
 			reap(pid);
+			set_running_tool(0);
 			out->timed_out = true;
 			out->signal = SIGKILL;
 			return true;
@@ -384,7 +694,7 @@ bool apps_run(const char *relative, int timeout_ms, apps_result_t *out) {
 	}
 }
 
-bool apps_launch(const app_t *app, int timeout_ms, apps_result_t *out) {
+bool apps_launch(app_t *app, int timeout_ms, apps_result_t *out) {
 	if (!out) {
 		return false;
 	}
@@ -394,12 +704,23 @@ bool apps_launch(const app_t *app, int timeout_ms, apps_result_t *out) {
 		return false;
 	}
 
-	char relative[APPS_ID_MAX + APPS_ENTRY_MAX + 8];
-	int n = snprintf(relative, sizeof(relative), "%s/%s/%s", APPS_DIR, app->dir, app->entry);
-	if (n < 0 || (size_t)n >= sizeof(relative)) {
+	char error[128];
+	if (!apps_mount(app, error, sizeof(error))) {
+		memset(out, 0, sizeof(*out));
+		set_error(out, error);
+		return false;
+	}
+
+	char path[APPS_FOLDER_MAX + APPS_ENTRY_MAX + 8];
+	int n = snprintf(path, sizeof(path), "%s/%s", app->folder, app->entry);
+	if (n < 0 || (size_t)n >= sizeof(path)) {
+		apps_unmount(app->folder);
 		memset(out, 0, sizeof(*out));
 		set_error(out, "path too long");
 		return false;
 	}
-	return apps_run(relative, timeout_ms, out);
+
+	bool started = apps_run(path, app->folder, app->data, timeout_ms, out);
+	apps_unmount(app->folder);
+	return started;
 }
