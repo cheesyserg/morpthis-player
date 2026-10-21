@@ -13,9 +13,7 @@ This is not an official TempoTec or HiBy release. **The port has been tested on 
 - [Target device](#target-device)
 - [Features](#features)
 - [Screenshots](#screenshots)
-  - [Tokyo Night theme](#tokyo-night-theme)
-  - [Ember theme](#ember-theme)
-  - [OLED theme](#oled-theme)
+  - Soon™️
 - [Build a firmware image](#build-a-firmware-image)
 - [Install or restore firmware](#install-or-restore-firmware)
 - [Streaming credentials](#streaming-credentials)
