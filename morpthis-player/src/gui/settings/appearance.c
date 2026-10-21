@@ -1,4 +1,5 @@
 #include "appearance.h"
+#include "appearance.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -7,6 +8,7 @@
 #include "lvgl/lvgl.h"
 
 #include "src/gui/board_profile.h"
+#include "src/gui/settings/bootscreen.h"
 #include "src/gui/fonts/fonts.h"
 #include "src/gui/nowplaying/player.h"
 #include "src/gui/shell/icons.h"
@@ -18,13 +20,12 @@
 #include "src/gui/shell/topbar.h"
 #include "src/system/core/config.h"
 #include "src/system/core/lang.h"
-#include "src/system/device/bootlogo.h"
 
 lv_obj_t *appearance_screen;
 
 static lv_obj_t *theme_buttons[THEME_KIND_COUNT];
 static lv_obj_t *style_buttons[THEME_STYLE_COUNT];
-static lv_obj_t *btn_boot[BOOTLOGO_RETROSPACE + 1]; // Stock / Retrospace
+static lv_obj_t *boot_value_label;
 static lv_obj_t *btn_clock[4]; // left / centre / right / hidden
 static lv_obj_t *btn_accent[THEME_ACCENT_COUNT]; // the coloured circles
 static lv_obj_t *tint_toggle;
@@ -171,6 +172,15 @@ static void font_pills_reload_cb(lv_event_t *e) {
 	font_pills_rebuild();
 }
 
+// The Boot screen centre may have applied a different picture since this page
+// was built, so the row's value is read again on every visit.
+static void boot_value_reload_cb(lv_event_t *e) {
+	(void)e;
+	if (boot_value_label) {
+		lv_label_set_text(boot_value_label, bootscreen_applied_name());
+	}
+}
+
 // Paints one row of choices: the active one outlined, the rest flat.
 static void refresh_choice_row(lv_obj_t **buttons, int count, int active_index) {
 	for (int i = 0; i < count; i++) {
@@ -302,54 +312,10 @@ static void style_pick_cb(lv_event_t *e) {
 	refresh_style_buttons();
 }
 
-// ---------------------------------------------------------------------------
-// The boot screen: the picture the next power-on opens with
-//
-// Two choices -- Stock and Retrospace -- painted like the theme pair above.
-// The choice is the one setting on this page that is not only a config value:
-// it also goes into the flash marker the boot script reads, because that
-// script runs before any filesystem a config could live on is mounted. What
-// is picked here is therefore what the next boot shows, and nothing before it.
-// ---------------------------------------------------------------------------
-
-static void refresh_boot_buttons(void) {
-	int choice = theme_boot_screen();
-	for (int i = 0; i <= BOOTLOGO_RETROSPACE; i++) {
-		if (!btn_boot[i]) {
-			continue;
-		}
-		bool on = i == choice;
-		lv_obj_set_style_bg_color(btn_boot[i], on ? theme()->accent : theme()->surface_pressed, 0);
-		lv_obj_set_style_text_color(lv_obj_get_child(btn_boot[i], 0),
-									on ? theme_on_accent() : theme()->text_primary, 0);
-	}
-}
-
-static void boot_pick_cb(lv_event_t *e) {
-	int choice = (int)(intptr_t)lv_event_get_user_data(e);
-	theme_set_boot_screen(choice);
-	refresh_boot_buttons();
-}
-
-// The two names are not translated, the way a font's name is not: they are
-// the names this setting gives the two pictures, and they are the words the
-// flash notes and the changelog use.
-static lv_obj_t *make_boot_choice(lv_obj_t *parent, const char *text, int choice, bool compact) {
-	lv_obj_t *btn = lv_btn_create(parent);
-	lv_obj_set_size(btn, LV_SIZE_CONTENT, compact ? 40 : 64);
-	lv_obj_set_style_pad_hor(btn, compact ? 14 : 34, 0);
-	lv_obj_set_style_radius(btn, LV_RADIUS_CIRCLE, 0); // Adwaita pill button
-	lv_obj_set_style_shadow_width(btn, 0, 0);
-	lv_obj_set_style_border_width(btn, 0, 0);
-	lv_obj_add_event_cb(btn, boot_pick_cb, LV_EVENT_CLICKED, (void *)(intptr_t)choice);
-
-	lv_obj_t *label = lv_label_create(btn);
-	lv_label_set_text(label, text);
-	lv_obj_set_style_text_font(label, compact ? &font_ui_18 : &font_ui_24, 0);
-	lv_obj_center(label);
-
-	return btn;
-}
+// The boot screen itself lives on its own page now -- the Boot screen centre,
+// which previews the built-in pictures and whatever the user has put in the
+// card's .bootscreen folder. This page only says which one is applied and
+// opens it.
 
 static lv_obj_t *make_theme_choice(lv_obj_t *parent, const char *text, theme_kind_t kind, bool compact) {
 	lv_obj_t *btn = lv_btn_create(parent);
@@ -470,46 +436,15 @@ void appearance_init(gui_config_t *cfg) {
 	settingsrow_toggle(container, "appearance_home_browse", &main_menu_browse_toggle, main_menu_browse_cb);
 	if (main_menu_browse()) lv_obj_add_state(main_menu_browse_toggle, LV_STATE_CHECKED);
 
-	// A second card: which picture the next power-on shows. Unlike every
-	// other choice on this page it is not only a config value -- it also
-	// goes into the flash marker the boot script reads, so it takes effect
-	// at the next boot and not a moment before.
-	lv_obj_t *boot_card = lv_obj_create(container);
-	lv_obj_set_width(boot_card, lv_pct(100));
-	lv_obj_set_height(boot_card, LV_SIZE_CONTENT);
-	lv_obj_add_style(boot_card, &theme_style_card, 0);
-	lv_obj_set_style_radius(boot_card, compact ? 10 : 12, 0);
-	lv_obj_set_style_border_width(boot_card, 0, 0);
-	lv_obj_set_style_shadow_width(boot_card, 0, 0);
-	lv_obj_set_style_pad_all(boot_card, compact ? 8 : 20, 0);
-	lv_obj_set_style_pad_gap(boot_card, compact ? 8 : 18, 0);
-	lv_obj_set_scrollable(boot_card, false);
-	lv_obj_set_event_bubble(boot_card, true);
-	lv_obj_set_flex_flow(boot_card, LV_FLEX_FLOW_COLUMN);
-	lv_obj_set_flex_align(boot_card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+	// Which picture the next power-on shows. The choice itself is made on the
+	// Boot screen centre, because it is a gallery rather than a pair of pills;
+	// this row says what is applied and opens it.
+	lv_obj_t *boot_row = settingsrow_add(container, "appearance_boot_screen", &boot_value_label, switch_screen_cb,
+										 bootscreen_screen);
+	settingsrow_add_caption(boot_row, "appearance_boot_screen_detail");
+	lv_label_set_text(boot_value_label, bootscreen_applied_name());
 
-	lv_obj_t *boot_name = lv_label_create(boot_card);
-	lv_label_set_text(boot_name, tr("appearance_boot_screen"));
-	lv_obj_add_style(boot_name, &theme_style_text, 0);
-	lv_obj_set_style_text_font(boot_name, compact ? &font_ui_18 : &font_ui_24, 0);
-
-	lv_obj_t *boot_row = lv_obj_create(boot_card);
-	lv_obj_set_size(boot_row, lv_pct(100), LV_SIZE_CONTENT);
-	lv_obj_set_style_bg_opa(boot_row, 0, 0);
-	lv_obj_set_style_border_width(boot_row, 0, 0);
-	lv_obj_set_style_pad_all(boot_row, 0, 0);
-	lv_obj_set_style_pad_gap(boot_row, compact ? 6 : 14, 0);
-	lv_obj_set_scrollable(boot_row, false);
-	lv_obj_set_event_bubble(boot_row, true);
-	// Wrapped like the clock row: a pill that does not fit is drawn off the
-	// card rather than shrunk.
-	lv_obj_set_flex_flow(boot_row, LV_FLEX_FLOW_ROW_WRAP);
-	lv_obj_set_flex_align(boot_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
-
-	btn_boot[BOOTLOGO_STOCK] = make_boot_choice(boot_row, "Stock", BOOTLOGO_STOCK, compact);
-	btn_boot[BOOTLOGO_RETROSPACE] = make_boot_choice(boot_row, "Retrospace", BOOTLOGO_RETROSPACE, compact);
-
-	// Under the card, like the other notes on this page: when the change
+	// Under the row, like the other notes on this page: when the change
 	// becomes visible.
 	lv_obj_t *boot_note = lv_label_create(container);
 	lv_label_set_long_mode(boot_note, LV_LABEL_LONG_WRAP);
@@ -643,13 +578,11 @@ void appearance_init(gui_config_t *cfg) {
 	font_pills_rebuild();
 
 	refresh_buttons();
-	refresh_boot_buttons();
 	refresh_clock_buttons();
 	refresh_accent_buttons();
 	refresh_text_size_pills();
 	theme_register_refresh(refresh_buttons);
 	theme_register_refresh(refresh_style_buttons);
-	theme_register_refresh(refresh_boot_buttons);
 	theme_register_refresh(refresh_text_size_pills);
 	theme_register_refresh(refresh_clock_buttons);
 	theme_register_refresh(refresh_accent_buttons);
@@ -657,6 +590,9 @@ void appearance_init(gui_config_t *cfg) {
 
 	// The card's fonts again on every visit: one copied over the USB cable
 	// while the player was running is offered the next time this page comes
-	// up, and one whose card has been pulled out is gone from the row.
+	// up, and one whose card has been pulled out is gone from the row. The
+	// boot screen's value is refreshed for the same reason: the Boot screen
+	// centre may have changed it since this page was built.
 	lv_obj_add_event_cb(appearance_screen, font_pills_reload_cb, LV_EVENT_SCREEN_LOADED, NULL);
+	lv_obj_add_event_cb(appearance_screen, boot_value_reload_cb, LV_EVENT_SCREEN_LOADED, NULL);
 }

@@ -10,6 +10,7 @@
 #include "src/gui/fonts/fonts.h"
 #include "src/gui/shell/gui.h"
 #include "src/gui/shell/icons.h"
+#include "src/gui/settings/bootscreen.h"
 #include "src/gui/settings/musicsettings.h"
 #include "src/gui/audio/peqpage.h"
 #include "src/gui/library/audiobooks.h"
@@ -491,7 +492,10 @@ static bool raised_topbar;
 static void restore_topbar(void) {
 	if (raised_topbar) {
 		raised_topbar = false;
-		if (player_sheet_is_open()) {
+		// The player and the Boot screen centre are the two things that own
+		// the whole panel and keep the bar away. A page keeps its status bar,
+		// which is why the check is not simply "hide it again".
+		if (player_sheet_is_open() || lv_screen_active() == bootscreen_screen) {
 			topbar_set_hidden(true);
 		}
 	}

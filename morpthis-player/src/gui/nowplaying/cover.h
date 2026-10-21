@@ -43,6 +43,13 @@ bool cover_load_for_dir(const char *dirpath, int box_w, int box_h, cover_fit_t f
 // phone sent to /tmp/cover-<md5>.jpg and hands over that path.
 bool cover_load_image_file(const char *path, int box_w, int box_h, cover_fit_t fit, cover_image_t *out);
 
+// The same decode, but left as RGB888 instead of packed for the display: what
+// a caller that is going to encode the picture again needs. The Boot screen
+// centre uses it to turn whatever the user put on the card into the 240x320
+// JPEG the boot script can draw. The caller owns the buffer and must free()
+// it; `out_w` and `out_h` receive the size actually produced.
+uint8_t *cover_load_image_rgb(const char *path, int box_w, int box_h, cover_fit_t fit, int *out_w, int *out_h);
+
 // What the artwork for this file IS, as one number, without decoding it.
 //
 // The player asks this before it throws a cover away: two tracks of the same

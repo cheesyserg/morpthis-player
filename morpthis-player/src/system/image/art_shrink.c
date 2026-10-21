@@ -99,6 +99,22 @@ static uint8_t *shrink_rgb(const uint8_t *src, int sw, int sh, int dw, int dh) {
 	return dst;
 }
 
+uint8_t *art_encode_jpeg_rgb(const uint8_t *rgb, int w, int h, int quality, size_t *out_len) {
+	if (!rgb || w < 1 || h < 1 || !out_len) {
+		return NULL;
+	}
+
+	sink_t sink = {0};
+	int ok = stbi_write_jpg_to_func(sink_write, &sink, w, h, 3, rgb, quality);
+	if (!ok || sink.failed || sink.len == 0) {
+		free(sink.data);
+		return NULL;
+	}
+
+	*out_len = sink.len;
+	return sink.data;
+}
+
 uint8_t *art_shrink_to_jpeg(const uint8_t *data, size_t size, int max_side, int quality, size_t *out_len) {
 	if (!data || size < 4 || max_side < 16 || !out_len || size <= SMALL_ENOUGH_BYTES) {
 		return NULL;

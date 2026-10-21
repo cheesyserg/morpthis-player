@@ -85,6 +85,8 @@ int fonts_choices(const char **ids, const char **labels, int max) {
 }
 
 void bootlogo_set(int choice, bool dark) { (void)choice; (void)dark; }
+lv_obj_t *bootscreen_screen;
+const char *bootscreen_applied_name(void) { return "Retrospace"; }
 void device_state_get(device_state_t *out) { memset(out, 0, sizeof(*out)); }
 bool gui_card_available(void) { return true; }
 void gui_notify_no_card(void) { assert(!"unexpected missing card"); }

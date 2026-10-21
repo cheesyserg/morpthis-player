@@ -691,6 +691,36 @@ static bool pack_rgb565(const uint8_t *rgb, int w, int h, cover_image_t *out) {
 	return true;
 }
 
+// The source rectangle and output size a fit asks for. COVER_FIT_COVER crops
+// to the box's aspect ratio and fills it; anything else fits the whole image
+// inside the box, never blowing it up.
+static void scaled_geometry(const raw_image_t *src, int box_w, int box_h, cover_fit_t fit, crop_t *crop, int *dst_w,
+							int *dst_h) {
+	if (fit == COVER_FIT_COVER) {
+		*crop = crop_to_aspect(src->w, src->h, box_w, box_h);
+		*dst_w = box_w;
+		*dst_h = box_h;
+		return;
+	}
+
+	*crop = (crop_t){0, 0, src->w, src->h};
+	*dst_w = src->w;
+	*dst_h = src->h;
+
+	if (*dst_w > box_w) {
+		*dst_h = (int)((int64_t)*dst_h * box_w / *dst_w);
+		*dst_w = box_w;
+	}
+	if (*dst_h > box_h) {
+		*dst_w = (int)((int64_t)*dst_w * box_h / *dst_h);
+		*dst_h = box_h;
+	}
+	if (*dst_w < 1)
+		*dst_w = 1;
+	if (*dst_h < 1)
+		*dst_h = 1;
+}
+
 // Builds the visible picture: COVER_FIT_COVER crops to the box's aspect ratio,
 // anything else fits the whole image inside the box.
 static bool make_scaled(const raw_image_t *src, int box_w, int box_h, cover_fit_t fit, cover_image_t *out) {
@@ -700,31 +730,7 @@ static bool make_scaled(const raw_image_t *src, int box_w, int box_h, cover_fit_
 
 	crop_t crop;
 	int dst_w, dst_h;
-
-	if (fit == COVER_FIT_COVER) {
-		crop = crop_to_aspect(src->w, src->h, box_w, box_h);
-		dst_w = box_w;
-		dst_h = box_h;
-	} else {
-		// Whole picture, scaled down to fit the box, never blown up: a small
-		// cover looks better small than stretched.
-		crop = (crop_t){0, 0, src->w, src->h};
-		dst_w = src->w;
-		dst_h = src->h;
-
-		if (dst_w > box_w) {
-			dst_h = (int)((int64_t)dst_h * box_w / dst_w);
-			dst_w = box_w;
-		}
-		if (dst_h > box_h) {
-			dst_w = (int)((int64_t)dst_w * box_h / dst_h);
-			dst_h = box_h;
-		}
-		if (dst_w < 1)
-			dst_w = 1;
-		if (dst_h < 1)
-			dst_h = 1;
-	}
+	scaled_geometry(src, box_w, box_h, fit, &crop, &dst_w, &dst_h);
 
 	uint8_t *rgb = resample_rgb(src, &crop, dst_w, dst_h, false);
 	if (!rgb)
@@ -1286,6 +1292,70 @@ bool cover_load_image_file(const char *path, int box_w, int box_h, cover_fit_t f
 	bool ok = build_images_safely(data, got, &req, 1, out);
 	free(data);
 	return ok;
+}
+
+// The same decode as cover_load_image_file(), but left as RGB888: a caller
+// that is going to encode the picture again (the Boot screen centre) cannot
+// use the RGB565 the display draws, and going through it would throw away
+// colour depth for no reason.
+uint8_t *cover_load_image_rgb(const char *path, int box_w, int box_h, cover_fit_t fit, int *out_w, int *out_h) {
+	if (out_w)
+		*out_w = 0;
+	if (out_h)
+		*out_h = 0;
+
+	if (!path || !path[0] || box_w < 1 || box_h < 1)
+		return NULL;
+
+	FILE *f = fopen(path, "rb");
+	if (!f)
+		return NULL;
+
+	fseek(f, 0, SEEK_END);
+	long size = ftell(f);
+	fseek(f, 0, SEEK_SET);
+
+	if (size <= 0 || (size_t)size > ALBUMART_MAX_BYTES) {
+		fclose(f);
+		return NULL;
+	}
+
+	uint8_t *data = malloc((size_t)size);
+	if (!data) {
+		fclose(f);
+		return NULL;
+	}
+
+	size_t got = fread(data, 1, (size_t)size, f);
+	fclose(f);
+
+	if (got != (size_t)size) {
+		free(data);
+		return NULL;
+	}
+
+	int max_box = box_w > box_h ? box_w : box_h;
+	raw_image_t raw;
+	if (!decode_raw(data, got, max_box, &raw)) {
+		free(data);
+		return NULL;
+	}
+	free(data);
+
+	crop_t crop;
+	int dst_w, dst_h;
+	scaled_geometry(&raw, box_w, box_h, fit, &crop, &dst_w, &dst_h);
+
+	uint8_t *rgb = resample_rgb(&raw, &crop, dst_w, dst_h, false);
+	raw_free(&raw);
+	if (!rgb)
+		return NULL;
+
+	if (out_w)
+		*out_w = dst_w;
+	if (out_h)
+		*out_h = dst_h;
+	return rgb;
 }
 
 

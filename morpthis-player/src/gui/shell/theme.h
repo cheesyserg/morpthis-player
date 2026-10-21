@@ -193,11 +193,11 @@ void theme_set_dark(bool dark);
 void theme_set_kind(theme_kind_t kind);
 
 // The picture the next power-on shows (Appearance > Boot screen):
-// BOOTLOGO_STOCK, the firmware's own light/dark pair, or BOOTLOGO_RETROSPACE,
-// the single picture carried by /etc/logo.jpeg. The choice is kept in the
-// config like every other setting, and pushed to the flash marker the boot
-// script reads -- see bootlogo.h for why it cannot be a file. Retrospace is
-// the default.
+// BOOTLOGO_STOCK, the firmware's own light/dark pair, BOOTLOGO_RETROSPACE, the
+// single picture carried by /etc/logo.jpeg, or BOOTLOGO_CUSTOM, a picture from
+// the Boot screen centre. The choice is kept in the config like every other
+// setting, and pushed to the flash marker the boot script reads -- see
+// bootlogo.h for why it cannot be a file. Retrospace is the default.
 int theme_boot_screen(void);
 void theme_set_boot_screen(int choice);
 

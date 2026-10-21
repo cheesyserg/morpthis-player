@@ -431,16 +431,48 @@ build_one() {
 		fi
 		[ -n "$DISPLAY_CMD" ] || DISPLAY_CMD="cmd_jpeg_display"
 
-		# The second field is read as part of one aligned 14-byte read, the same
-		# call shape the vendor's own read uses, and split in the shell: an
-		# unaligned -s is one more thing a vendor nanddump could stumble over,
-		# and this has been wrong often enough to owe us a trace. The trace
-		# file is what the player's Developer options page shows after a boot.
+		# How the block leaves the vendor script running. The V1 display logic
+		# lives in a function that, after drawing, raises the panel backlight;
+		# an exit there would draw our picture onto a dark panel. So a display
+		# command that is a plain name is shadowed with a no-op function once
+		# ours has drawn: the vendor's own branches then run to the end,
+		# backlight and all, and draw nothing over ours. A command that is a
+		# path, or carries arguments, cannot be shadowed that way and exits
+		# instead, keeping the picture at the cost of the vendor's tail.
+		case "$DISPLAY_CMD" in
+			*" "*) LEAVE="exit 0" ;;
+			/*) LEAVE="exit 0" ;;
+			*) LEAVE="$DISPLAY_CMD() { :; }" ;;
+		esac
+
+		# The marker is read as one aligned 64-byte read, the same call shape
+		# the vendor's own read uses, and split in the shell: an unaligned -s
+		# is one more thing a vendor nanddump could stumble over, and this has
+		# been wrong often enough to owe us a trace. The trace file is what the
+		# player's Developer options page shows after a boot.
+		#
+		# A custom picture is not a file the boot script can read: the rootfs
+		# is read-only and /usr/data is not mounted yet. The player writes it
+		# into the same erase block as the marker, one page in, and the marker
+		# carries its length. The block copies it out to /tmp and hands that to
+		# the vendor's own display command. A missing picture, a bad length or
+		# a failed display falls through to the stock chain, so what a device
+		# can lose is the choice, not the boot.
 		BOOT_BLOCK="# --- morpthis boot screen choice (added by the firmware packer) ---
-boot_raw=\$(nanddump -q -s 0x20000 -l 14 /dev/mtd5 -a 2>/dev/null)
-boot_sel=\${boot_raw#* }
+boot_raw=\$(nanddump -q -s 0x20000 -l 64 /dev/mtd5 -a 2>/dev/null)
+boot_rest=\${boot_raw#* }
+boot_sel=\${boot_rest%% *}
 echo \"sel=\$boot_sel raw=\$boot_raw\" > /tmp/.bootlogo_trace 2>/dev/null
-echo \"drawn=stock-chain\" >> /tmp/.bootlogo_trace 2>/dev/null
+if [ \"\$boot_sel\" = \"logo:2\" ]; then
+    boot_size=\$(echo \"\$boot_raw\" | sed -n 's/.*size:\\([0-9][0-9]*\\).*/\\1/p')
+    if [ -n \"\$boot_size\" ] && [ \"\$boot_size\" -gt 0 ] && [ \"\$boot_size\" -le 57344 ]; then
+        nanddump -q -s 0x21000 -l \"\$boot_size\" /dev/mtd5 -a > /tmp/.bootscreen.jpg 2>/dev/null
+        if [ -s /tmp/.bootscreen.jpg ]; then
+            $DISPLAY_CMD /tmp/.bootscreen.jpg && { echo \"drawn=custom\" >> /tmp/.bootlogo_trace; boot_drawn=1; $LEAVE; }
+        fi
+    fi
+fi
+[ -n \"\$boot_drawn\" ] || echo \"drawn=stock-chain\" >> /tmp/.bootlogo_trace 2>/dev/null
 # --- end morpthis boot screen choice ---
 "
 		# The anchor: the line that reads the marker, a plain assignment at the
@@ -472,7 +504,7 @@ echo \"drawn=stock-chain\" >> /tmp/.bootlogo_trace 2>/dev/null
 			echo "-- the logo files in the image:"
 			ls -l "$SQUASH_DIR"/etc/logo*.jpeg 2>/dev/null | sed 's|.*/||; s/^/   /' || echo "   (none)"
 			echo "-- the script as it goes into the image:"
-			sed -n '1,44p' "$BOOT_SCRIPT" | sed 's/^/   /'
+			sed -n '1,70p' "$BOOT_SCRIPT" | sed 's/^/   /'
 		} >> "$REPORT"
 	fi
 	echo "" >> "$REPORT"
