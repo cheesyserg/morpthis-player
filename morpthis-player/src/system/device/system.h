@@ -111,6 +111,11 @@ void storage_release_for_shutdown(void);
 // until set.
 void input_set_key_lock(bool on);
 
+// One volume step, as if a volume key had been pressed. The input thread uses
+// this directly; the GUI thread uses it as the fallback when a game does not
+// take the volume keys it was offered.
+void input_volume_step(bool up);
+
 // "Hold power for the menu": with it on -- the default -- holding the power key
 // brings up the power menu, and switching off or rebooting takes a slide to
 // confirm on the screen. With it off the same hold switches the player off

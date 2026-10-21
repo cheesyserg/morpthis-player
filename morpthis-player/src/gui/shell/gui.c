@@ -515,6 +515,14 @@ static void key_async_cb(void *user_data) {
 		return;
 	}
 
+	// The input thread offers the volume keys to a running game before
+	// changing the level. If the game had no button callback (or just stopped),
+	// the keys are still the player's.
+	if (key == GUI_KEY_VOLUME_UP || key == GUI_KEY_VOLUME_DOWN) {
+		input_volume_step(key == GUI_KEY_VOLUME_UP);
+		return;
+	}
+
 	// Receiver mode is the exception, and the only one: the press still means
 	// what it says, it just has somewhere else to go. The music is on the phone
 	// at the other end, so the key is sent there over AVRCP -- which is exactly
@@ -536,6 +544,9 @@ static void key_async_cb(void *user_data) {
 			return;
 		}
 		break;
+	case GUI_KEY_VOLUME_UP:
+	case GUI_KEY_VOLUME_DOWN:
+		break;
 	}
 
 	switch (key) {
@@ -547,6 +558,9 @@ static void key_async_cb(void *user_data) {
 		break;
 	case GUI_KEY_PREV:
 		player_key_prev();
+		break;
+	case GUI_KEY_VOLUME_UP:
+	case GUI_KEY_VOLUME_DOWN:
 		break;
 	}
 }

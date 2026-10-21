@@ -15,3 +15,10 @@ void morpthis_input_set_touch_cb(morpthis_touch_cb cb, void *user) {
 	sdk_app->touch_cb = cb;
 	sdk_app->touch_user = user;
 }
+
+void morpthis_input_set_gameplay(bool active) {
+	if (!sdk_app) {
+		return;
+	}
+	sdk_app->gameplay = active;
+}

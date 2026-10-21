@@ -92,6 +92,11 @@ struct morpthis_app {
 	bool alive;
 	bool quitting;
 
+	// Set by the app through morpthis_input_set_gameplay(); read on the input
+	// thread. A game in active play owns the volume keys; in a menu or pause
+	// they go back to the player.
+	volatile bool gameplay;
+
 	morpthis_screen_t *screens;
 	morpthis_screen_t *active;
 

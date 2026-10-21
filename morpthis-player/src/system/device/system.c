@@ -19,6 +19,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "src/gui/apps/apphost.h"
 #include "src/gui/nowplaying/cover.h"
 #include "src/gui/settings/screensaver.h"
 #include "src/gui/shell/gui.h"
@@ -1173,6 +1174,8 @@ static void apply_volume_step(int code) {
 	gui_notify_volume(device_state_get_volume_percent());
 }
 
+void input_volume_step(bool up) { apply_volume_step(up ? KEY_VOLUMEUP : KEY_VOLUMEDOWN); }
+
 // ---------------------------------------------------------------------------
 // Key lock: volume down + power, with the screen off
 //
@@ -1484,10 +1487,21 @@ static void run_mapped_action(keymap_button_t button) {
 		gui_notify_key(GUI_KEY_NEXT);
 		break;
 	case KEYMAP_ACTION_VOLUME_UP:
-		apply_volume_step(KEY_VOLUMEUP);
+		// A game in active play owns the side keys. Offer it the volume keys as
+		// game controls and leave the player's level alone. In a menu or pause
+		// the game has said so, and the rocker is a volume control again.
+		if (apphost_gameplay_active()) {
+			gui_notify_key(GUI_KEY_VOLUME_UP);
+		} else {
+			input_volume_step(true);
+		}
 		break;
 	case KEYMAP_ACTION_VOLUME_DOWN:
-		apply_volume_step(KEY_VOLUMEDOWN);
+		if (apphost_gameplay_active()) {
+			gui_notify_key(GUI_KEY_VOLUME_DOWN);
+		} else {
+			input_volume_step(false);
+		}
 		break;
 	case KEYMAP_ACTION_NONE:
 	default:

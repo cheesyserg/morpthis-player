@@ -126,6 +126,10 @@ bool apphost_game_active(void) {
 	return sdk_app && sdk_app->alive && sdk_app->category == APP_CATEGORY_GAME;
 }
 
+bool apphost_gameplay_active(void) {
+	return apphost_game_active() && sdk_app->gameplay;
+}
+
 bool apphost_handle_key(gui_key_t key) {
 	morpthis_app_t *app = sdk_app;
 	if (!app || !app->alive || !app->button_cb) {
@@ -142,6 +146,12 @@ bool apphost_handle_key(gui_key_t key) {
 		break;
 	case GUI_KEY_PREV:
 		button = MORPTHIS_BUTTON_PREV;
+		break;
+	case GUI_KEY_VOLUME_UP:
+		button = MORPTHIS_BUTTON_VOLUME_UP;
+		break;
+	case GUI_KEY_VOLUME_DOWN:
+		button = MORPTHIS_BUTTON_VOLUME_DOWN;
 		break;
 	default:
 		return false;

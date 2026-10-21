@@ -33,6 +33,11 @@ bool apphost_active(void);
 // bar, no chevron or edge swipe, and the top-edge pull-down is the game's.
 bool apphost_game_active(void);
 
+// True when the loaded game has told the player it is in active play rather
+// than a menu or pause (morpthis_input_set_gameplay). Only then do the volume
+// keys belong to the game instead of the player's volume control.
+bool apphost_gameplay_active(void);
+
 bool apphost_handle_key(gui_key_t key);
 
 // Queues the app's teardown. Idempotent; called by morpthis_app_quit() and by
