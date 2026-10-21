@@ -1,6 +1,8 @@
 #include "devoptions.h"
 
+#include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "lvgl/lvgl.h"
 
@@ -9,6 +11,8 @@
 #include "src/gui/shell/settingsrow.h"
 #include "src/gui/shell/switcher.h"
 #include "src/gui/shell/theme.h"
+#include "src/gui/shell/toast.h"
+#include "src/system/apps/apps.h"
 #include "src/system/bluetooth/btlog.h"
 #include "src/system/device/adb.h"
 #include "src/system/core/lang.h"
@@ -153,6 +157,57 @@ static void db_log_toggled_cb(lv_event_t *e) {
 	library_set_log_database(lv_obj_has_state(db_log_switch, LV_STATE_CHECKED));
 }
 
+// Running an app from the card is a fork, an exec and a wait: none of that
+// belongs on the GUI thread, which on this device is also the thread that
+// draws. The worker does the work and hands the answer back through
+// gui_post(), the only bridge into LVGL.
+#define RUN_APP_PATH "Apps/hello"
+#define RUN_APP_TIMEOUT_MS 5000
+
+static void run_app_done_cb(void *user) {
+	apps_result_t *result = user;
+	char text[192];
+
+	if (!result->started) {
+		snprintf(text, sizeof(text), "hello: %s", result->error);
+		toast_error(text);
+	} else if (result->timed_out) {
+		toast_error("hello: timed out");
+	} else if (result->signal) {
+		snprintf(text, sizeof(text), "hello: killed by signal %d", result->signal);
+		toast_error(text);
+	} else {
+		snprintf(text, sizeof(text), "hello: exit %d", result->exit_code);
+		toast_success(text);
+	}
+
+	free(result);
+}
+
+static void *run_app_thread(void *arg) {
+	(void)arg;
+
+	apps_result_t *result = calloc(1, sizeof(*result));
+	if (!result) {
+		return NULL;
+	}
+
+	apps_run(RUN_APP_PATH, RUN_APP_TIMEOUT_MS, result);
+	if (!gui_post(run_app_done_cb, result)) {
+		free(result);
+	}
+	return NULL;
+}
+
+static void run_app_cb(lv_event_t *e) {
+	(void)e;
+
+	pthread_t thread;
+	if (pthread_create(&thread, NULL, run_app_thread, NULL) == 0) {
+		pthread_detach(thread);
+	}
+}
+
 static void adb_poll_cb(lv_timer_t *timer) {
 	(void)timer;
 	update_adb_row();
@@ -215,6 +270,11 @@ void devoptions_init(gui_config_t *cfg) {
 				 status ? "\n" : "", status ? status : "(marker untouched so far)");
 		lv_label_set_text(trace_label, trace_text);
 	}
+
+	// The sideloading spike: runs <card>/Apps/hello and says what happened.
+	// A developer tool, not the app platform -- see src/system/apps/apps.h.
+	settingsrow_action(container, "devoptions_run_app", run_app_cb, NULL);
+	add_note(container, "devoptions_run_app_note");
 
 	// Opens the page showing RAM and running processes. A navigation row with a
 	// chevron, like the developer options entry on the previous page.

@@ -1,0 +1,135 @@
+name: Build hello (sideloading spike)
+
+# The test app for the sideloading work: a static MIPS binary that lives on the
+# card, not in the image. This workflow builds it on its own so it can be tried
+# without building a whole firmware, and so a change to tools/hello.c or to the
+# cross toolchain is checked without waiting for the packer.
+#
+# The toolchain is the expensive part. The cache below restores the firmware
+# workflow's cache when there is one, and keeps a toolchain-only cache of its
+# own otherwise -- a separate key, because a cache saved here holds no
+# freetype-target or audio-target and must not shadow the firmware's.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/build-hello.yml
+      - morpthis-player/tools/hello.c
+      - morpthis-player/Makefile
+      - morpthis-player/rockboxdev/**
+  pull_request:
+    paths:
+      - .github/workflows/build-hello.yml
+      - morpthis-player/tools/hello.c
+      - morpthis-player/Makefile
+      - morpthis-player/rockboxdev/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hello-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hello:
+    name: Cross-compile hello for MIPS
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Install toolchain build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git wget curl ca-certificates \
+            texinfo bison flex gawk gperf patch xz-utils bzip2 gzip \
+            autoconf automake libtool libtool-bin \
+            libgmp-dev libmpfr-dev libmpc-dev
+
+      - name: Restore MIPS toolchain cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            morpthis-player/rockbox-toolchain
+            morpthis-player/*.tar.gz
+            morpthis-player/*.tar.bz2
+            morpthis-player/*.tar.xz
+          # Exact key first: a cache this workflow saved before. Then the
+          # firmware workflow's cache, which holds the same toolchain (and the
+          # target libraries this build does not need). The prefix is the
+          # firmware key's, so a toolchain built there is never rebuilt here.
+          key: v3-mips-hello-${{ runner.os }}-morpthis-${{ hashFiles('morpthis-player/Makefile', 'morpthis-player/rockboxdev/**') }}
+          restore-keys: |
+            v3-mips-target-${{ runner.os }}-morpthis-
+
+      - name: Build hello
+        working-directory: morpthis-player
+        run: |
+          set -euo pipefail
+          # A cache miss builds binutils, gcc, glibc and the rest from scratch,
+          # and rockboxdev.sh sends each tool's output to
+          # tmp/rbdev-build/build-<tool>.log. Without this the job shows only
+          # "ROCKBOXDEV: glibc-2.27/make" for ten minutes and looks hung.
+          (
+            while :; do
+              log="$(ls -t tmp/rbdev-build/*.log 2>/dev/null | head -n 1 || true)"
+              if [ -n "$log" ]; then
+                echo "--- $log (last 5 lines)"
+                tail -n 5 "$log"
+              fi
+              sleep 30
+            done
+          ) &
+          watcher=$!
+          trap 'kill "$watcher" 2>/dev/null || true' EXIT
+          make hello
+
+      - name: Check the binary
+        working-directory: morpthis-player
+        run: |
+          set -euo pipefail
+          file hello
+          readelf -h hello | sed -n '1,20p'
+          # The two things a wrong build would trip over on the device: the
+          # architecture (MIPS o32, mips32r2) and the libc (static, so no
+          # loader and no glibc 2.22 symbol versions are asked for).
+          file hello | grep -q 'ELF 32-bit LSB executable, MIPS'
+          readelf -d hello 2>&1 | grep -q 'no dynamic section'
+
+      - name: Assemble the artifact
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/morpthis-hello"
+          mkdir -p "$out"
+          cp morpthis-player/hello "$out/"
+          cat > "$out/README.txt" <<'EOF'
+          hello -- the sideloading spike's test app
+
+          Copy it to the card:
+
+              adb push hello /mnt/sd_0/Apps/hello
+
+          or copy it with a card reader into Apps/hello at the card's root.
+
+          On the player: Settings -> System -> tap the build number five times,
+          then Developer options -> Run app from card. A green toast saying
+          "hello: exit 42" means the player started a binary from the card and
+          read its exit status back.
+
+          The player's log (<card>/.local/morpthis_player.log) carries the same
+          answer as lines beginning "apps:".
+          EOF
+          ls -l "$out"
+
+      - name: Upload hello
+        uses: actions/upload-artifact@v5
+        with:
+          name: morpthis-hello-${{ github.sha }}
+          path: ${{ runner.temp }}/morpthis-hello/
+          if-no-files-found: error
+          retention-days: 14
