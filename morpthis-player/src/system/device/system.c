@@ -1410,6 +1410,12 @@ static bool mapped_action_seeks(keymap_button_t button) {
 	return action == KEYMAP_ACTION_NEXT || action == KEYMAP_ACTION_PREV;
 }
 
+// In active play the app maps the previous-track action to fire. It has to act
+// on the press and repeat while held, instead of waiting to become a seek.
+static bool game_fire_action(keymap_button_t button) {
+	return apphost_gameplay_active() && effective_action(button) == KEYMAP_ACTION_PREV;
+}
+
 // One step, in whichever direction the button means. Nothing is asked of the
 // decoder here: the step moves the scrub position, the interface follows it,
 // and the seek itself happens when the button is let go (device_state.h).
@@ -1448,6 +1454,9 @@ static bool key_repeats_held(int code, bool headset) {
 		return code == KEY_VOLUMEUP || code == KEY_VOLUMEDOWN;
 	}
 	keymap_button_t button = keymap_button_for_code(code);
+	if (game_fire_action(button)) {
+		return true;
+	}
 	return mapped_action_repeats(button) || mapped_action_seeks(button);
 }
 
@@ -1457,10 +1466,34 @@ static bool key_seeks_held(int code, bool headset) {
 	if (code < 0 || headset) {
 		return false;
 	}
-	return mapped_action_seeks(keymap_button_for_code(code));
+	keymap_button_t button = keymap_button_for_code(code);
+	if (game_fire_action(button)) {
+		return false;
+	}
+	return mapped_action_seeks(button);
 }
 
 static void run_mapped_action(keymap_button_t button);
+
+// A game uses the volume keys as camera controls, and the previous-track key
+// as fire. The app turns each press into a short key pulse, so the first repeat
+// has to arrive before that pulse ends; otherwise holding the key turns or
+// fires briefly, stops through the volume repeat delay, and only then goes
+// continuously. The player's own volume keys keep the slower first delay.
+static uint32_t first_repeat_delay(int code, bool headset, bool seeking) {
+	if (seeking) {
+		return SEEK_HOLD_MS;
+	}
+	if (!headset && apphost_gameplay_active()) {
+		keymap_button_t button = keymap_button_for_code(code);
+		if (button != KEYMAP_BTN_COUNT &&
+			(mapped_action_repeats(button) ||
+			 effective_action(button) == KEYMAP_ACTION_PREV)) {
+			return VOLUME_REPEAT_PERIOD_MS;
+		}
+	}
+	return VOLUME_REPEAT_DELAY_MS;
+}
 
 static void repeat_held(int code, bool headset) {
 	if (headset) {
@@ -1468,6 +1501,10 @@ static void repeat_held(int code, bool headset) {
 		return;
 	}
 	keymap_button_t button = keymap_button_for_code(code);
+	if (game_fire_action(button)) {
+		run_mapped_action(button);
+		return;
+	}
 	if (mapped_action_seeks(button)) {
 		seek_step(button);
 		return;
@@ -1834,7 +1871,7 @@ static void *input_thread_func(void *arg) {
 			held = ev.code;
 			held_since = now_ms();
 			bool seeks = key_seeks_held(held, info->headset);
-			next_repeat = held_since + (seeks ? SEEK_HOLD_MS : VOLUME_REPEAT_DELAY_MS);
+			next_repeat = held_since + first_repeat_delay(held, info->headset, seeks);
 			long_press_done = false;
 			deferred = false;
 			seeked = false;
