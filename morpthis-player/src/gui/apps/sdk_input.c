@@ -22,3 +22,10 @@ void morpthis_input_set_gameplay(bool active) {
 	}
 	sdk_app->gameplay = active;
 }
+
+void morpthis_input_set_game_menu(bool active) {
+	if (!sdk_app) {
+		return;
+	}
+	sdk_app->game_menu = active;
+}

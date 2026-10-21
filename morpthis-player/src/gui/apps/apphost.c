@@ -130,6 +130,14 @@ bool apphost_gameplay_active(void) {
 	return apphost_game_active() && sdk_app->gameplay;
 }
 
+bool apphost_game_menu_active(void) {
+	return apphost_game_active() && sdk_app->game_menu;
+}
+
+bool apphost_game_input_active(void) {
+	return apphost_game_active() && (sdk_app->gameplay || sdk_app->game_menu);
+}
+
 bool apphost_handle_key(gui_key_t key) {
 	morpthis_app_t *app = sdk_app;
 	if (!app || !app->alive || !app->button_cb) {

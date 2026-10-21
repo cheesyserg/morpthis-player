@@ -1524,17 +1524,17 @@ static void run_mapped_action(keymap_button_t button) {
 		gui_notify_key(GUI_KEY_NEXT);
 		break;
 	case KEYMAP_ACTION_VOLUME_UP:
-		// A game in active play owns the side keys. Offer it the volume keys as
-		// game controls and leave the player's level alone. In a menu or pause
-		// the game has said so, and the rocker is a volume control again.
-		if (apphost_gameplay_active()) {
+		// A game in active play or in its own menu owns the side keys. Offer it
+		// the volume keys as controls and leave the player's level alone. Every
+		// other screen still adjusts the volume here.
+		if (apphost_game_input_active()) {
 			gui_notify_key(GUI_KEY_VOLUME_UP);
 		} else {
 			input_volume_step(true);
 		}
 		break;
 	case KEYMAP_ACTION_VOLUME_DOWN:
-		if (apphost_gameplay_active()) {
+		if (apphost_game_input_active()) {
 			gui_notify_key(GUI_KEY_VOLUME_DOWN);
 		} else {
 			input_volume_step(false);

@@ -38,6 +38,13 @@ bool apphost_game_active(void);
 // keys belong to the game instead of the player's volume control.
 bool apphost_gameplay_active(void);
 
+// True when the game's own menu is on screen and has asked for the volume
+// keys. Menus and save-name entry use this; it does not mean active play.
+bool apphost_game_menu_active(void);
+
+// True when the game should receive the volume keys: active play or its menu.
+bool apphost_game_input_active(void);
+
 bool apphost_handle_key(gui_key_t key);
 
 // Queues the app's teardown. Idempotent; called by morpthis_app_quit() and by
