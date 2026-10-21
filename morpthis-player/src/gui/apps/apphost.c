@@ -15,6 +15,7 @@
 #include "src/gui/shell/morepage.h"
 #include "src/gui/shell/switcher.h"
 #include "src/system/apps/apps_reclaim.h"
+#include "src/system/device/adb.h"
 #include "src/system/device/usb.h"
 
 morpthis_app_t *sdk_app;
@@ -25,8 +26,9 @@ static void apphost_finish_mass_storage(void);
 
 // Set from the mass-storage confirmation. The card cannot be exported until
 // the app and the Apps page have let go, and this is what tells teardown and
-// the tool callback to finish the handover once they do.
-static bool close_for_mass_storage;
+// the tool callback to finish the handover once they do. Read by the USB
+// watcher through apphost_mass_storage_closing(), hence volatile.
+static volatile bool close_for_mass_storage;
 
 typedef int (*sdk_entry_fn)(const morpthis_app_t *app);
 typedef int (*sdk_api_fn)(void);
@@ -186,6 +188,16 @@ static void apphost_finish_mass_storage(void) {
 static void mass_storage_confirmed(void *user) {
 	(void)user;
 	close_for_mass_storage = true;
+
+	// One controller, one gadget: choosing the card reader means ADB must let
+	// go of it. The switch goes off before the app is closed, so the stop has
+	// already begun by the time the watcher is free to export -- and a gadget
+	// rebuilt while adbd sits between states is exactly what used to leave
+	// mass storage dead until ADB was toggled by hand.
+	if (adb_switched_on() || adb_is_running()) {
+		fprintf(stderr, "usb: mass storage chosen; switching ADB off\n");
+		adb_set_enabled(false);
+	}
 
 	if (sdk_app && sdk_app->alive) {
 		// The normal quit path: the app's optional shutdown hook runs before

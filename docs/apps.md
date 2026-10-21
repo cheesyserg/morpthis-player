@@ -149,9 +149,11 @@ If a PC does attach while the Apps feature holds the card, the player asks
 whether to use USB storage mode. Confirming closes the running app through its
 normal teardown (the optional `morpthis_app_shutdown()` hook runs first, so it
 can stop its threads and audio), leaves the Apps page and exports the card.
-Cancelling leaves the card with the player; the PC sees a card reader with no
-medium. Opening the Apps page later takes the card back again, the same way DAC
-mode does.
+The USB controller holds one gadget at a time, so confirming also switches ADB
+off; turning ADB back on in Developer options takes the controller back.
+Cancelling leaves the card with the player and ADB as it was; the PC sees a
+card reader with no medium. Opening the Apps page later takes the card back
+again, the same way DAC mode does.
 
 ## Memory
 

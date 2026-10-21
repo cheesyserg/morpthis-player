@@ -138,11 +138,12 @@ data first. That is what lets a package be replaced without losing a save.
 While the Apps page, a loaded app or a tool is using the card, the player keeps
 USB mass storage away from it: exporting the raw device would unmount the card
 under the running squashfs mount. If a PC attaches, the player asks before
-taking the card; confirming closes the app through its normal teardown and
-exports the card. An app with threads, a network connection or the raw audio
-output should export `morpthis_app_shutdown()` so that close stops its work
-cleanly; the player calls it once on the GUI thread before destroying screens
-and unloading the shared object.
+taking the card; confirming closes the app through its normal teardown, switches
+ADB off (one USB controller, one gadget) and exports the card. An app with
+threads, a network connection or the raw audio output should export
+`morpthis_app_shutdown()` so that close stops its work cleanly; the player
+calls it once on the GUI thread before destroying screens and unloading the
+shared object.
 
 ## CI
 

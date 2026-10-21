@@ -169,6 +169,15 @@ static bool adb_gadget_bound(void) {
 	return bound;
 }
 
+// ADB owns the controller from the moment its switch is on, not only once
+// adbd is running. It may still be starting, and a card reader bound in that
+// window keeps ADB's gadget off the controller for good (adb_keep_controller()
+// describes the same race at boot). Mass storage is therefore a choice that
+// turns ADB off, not something the two share.
+static bool adb_owns_controller(void) {
+	return adb_switched_on() || adb_is_running();
+}
+
 // Set while DAC mode owns the USB controller: nothing in this file may touch
 // the gadget then. Without it the watcher thread sees a cable, calls
 // ensure_storage_gadget() and rebuilds the mass-storage gadget straight over
@@ -213,7 +222,7 @@ void usb_set_dac_mode(bool on) {
 		// ADB on it goes back to that one (adb_keep_controller(), at the next
 		// poll): binding the card reader first would only be undone a second
 		// later.
-		if (adb_switched_on() && adb_is_running()) {
+		if (adb_owns_controller()) {
 			fprintf(stderr, "usb: ADB is on; its gadget gets the controller back\n");
 		} else {
 			ensure_storage_gadget();
@@ -246,11 +255,11 @@ void usb_set_apps_mode(bool on) {
 		// host has to come back. Only when it was exported: a restore with
 		// nothing exported still unmounts and remounts the card.
 		take_card_back("apps are using the card");
-	} else if (!dac_owns_usb && !(adb_switched_on() && adb_is_running())) {
+	} else if (!dac_owns_usb && !adb_owns_controller()) {
 		// Put the empty-medium reader back on the controller; the watcher
-		// exports on its next poll if a host is still there. With ADB running
-		// the controller is its gadget's; binding the reader first would only
-		// be undone a second later.
+		// exports on its next poll if a host is still there. With ADB on the
+		// controller is its gadget's, and mass storage is a separate choice
+		// that turns ADB off (see apphost).
 		ensure_storage_gadget();
 	}
 	suppress_popups = false;
@@ -640,6 +649,12 @@ void usb_resume_restore(void) {
 	if (!sd_device[0]) {
 		return;
 	}
+	if (adb_owns_controller()) {
+		// adb_keep_controller() binds ADB's gadget on the next poll. Building the
+		// reader here first would take the one controller from it.
+		fprintf(stderr, "usb: ADB is on; leaving it the controller after resume\n");
+		return;
+	}
 	ensure_storage_gadget();
 	fprintf(stderr, "usb: storage gadget rebound after resume\n");
 }
@@ -742,6 +757,13 @@ static void storage_export(void) {
 		fprintf(stderr, "usb: apps are using the card; not exporting\n");
 		return;
 	}
+	if (adb_owns_controller()) {
+		// ADB was switched on between the watcher's check and this call. Do not
+		// unmount the card or touch a gadget: the next poll sees ADB and waits,
+		// and confirming USB storage is what turns ADB off (see apphost).
+		fprintf(stderr, "usb: ADB is on; not exporting\n");
+		return;
+	}
 
 	fprintf(stderr, "usb: host attached, exporting %s\n", sd_device);
 
@@ -817,11 +839,30 @@ static void storage_export(void) {
 		fprintf(stderr, "usb: could not unmount %s; exporting anyway (read-mostly card)\n", sd_mount);
 	}
 
-	// With ADB holding the USB controller its gadget must carry the storage
-	// too -- a second gadget can never bind. Otherwise the player's own,
-	// already-bound gadget just gets the medium inserted: one write into
-	// lun.0/file.
+	// ADB is off (checked above), but its stopped gadget can still hold the
+	// controller for the moment before the stop thread reclaims it. Let it go
+	// so the reader can bind; a second gadget can never attach.
 	if (adb_gadget_bound()) {
+		fprintf(stderr, "usb: releasing the stopped ADB gadget\n");
+		FILE *adb_udc = fopen(ADB_GADGET "/UDC", "w");
+		if (adb_udc) {
+			fputs("\n", adb_udc);
+			fclose(adb_udc);
+		}
+		owner_changed();
+	}
+
+	// The reader is the only gadget now. ensure_storage_gadget() returns
+	// immediately when it is already built and bound, and after an ADB stop it
+	// is what puts it back. Without this, the medium write below races the stop
+	// thread and fails against a gadget that is not there yet -- the card then
+	// stays invisible until ADB is toggled again.
+	ensure_storage_gadget();
+
+	if (adb_switched_on() && adb_gadget_bound()) {
+		// Kept for a controller whose ADB gadget is deliberately shared, but
+		// the watcher never reaches here with ADB on: storage and ADB are
+		// exclusive now.
 		composite_export();
 		export_mode = EXPORT_ADB_COMPOSITE;
 	} else {
@@ -1074,14 +1115,14 @@ static void *usb_thread(void *arg) {
 				continue;
 			}
 
-			if (!parked && !power_screen_is_on() && !adb_is_running()) {
+			if (!parked && !power_screen_is_on() && !adb_owns_controller()) {
 				gadget_unbind();
 				parked = true;
 				fprintf(stderr, "usb: no cable and the screen is dark; gadget unbound\n");
 			} else if (parked && power_screen_is_on()) {
 				// Unless ADB has been switched on meanwhile: the controller is
 				// its gadget's now, and adb_keep_controller() sees to it.
-				if (!adb_switched_on() && !gadget_rebind()) {
+				if (!adb_owns_controller() && !gadget_rebind()) {
 					ensure_storage_gadget();
 				}
 				parked = false;
@@ -1103,7 +1144,7 @@ static void *usb_thread(void *arg) {
 			// is doing -- but by the cheap route first: the gadget was only
 			// unbound, not taken apart, so putting it back is one write.
 			typec_force_sink();
-			if (!adb_switched_on() && !gadget_rebind()) {
+			if (!adb_owns_controller() && !gadget_rebind()) {
 				ensure_storage_gadget();
 			}
 			parked = false;
@@ -1125,20 +1166,6 @@ static void *usb_thread(void *arg) {
 			continue;
 		}
 
-		// ADB is on: the cable is here to carry a shell, not to be a card
-		// reader. Exporting the card now unmounts it from under that shell --
-		// which is why /mnt/sd_0 came back "Read-only file system" over ADB --
-		// and the stock firmware does not do it either. Leave the card where
-		// it is.
-		if (adb_is_running()) {
-			if (!said_adb) {
-				fprintf(stderr, "usb: ADB is running; the card stays mounted (no mass storage)\n");
-				said_adb = true;
-			}
-			continue;
-		}
-		said_adb = false;
-
 		// VBUS alone is not a PC -- a wall charger raises it too, and taking
 		// the card away (stopping the music with it) for a power brick was
 		// exactly the "track would not start while charging" bug. Only a host
@@ -1149,9 +1176,11 @@ static void *usb_thread(void *arg) {
 
 		// The Apps feature has a package mounted from this card. Ask before
 		// taking the card: confirming closes the app (and waits for a tool to
-		// stop), leaves the Apps page and lets the watcher export below.
+		// stop), turns ADB off if it was on, leaves the Apps page and lets the
+		// watcher export below. Asked before the ADB check so a host that is
+		// there for storage is not silently answered with a shell instead.
 		if (apps_own_usb) {
-			if (!said_apps) {
+			if (!said_apps && !apphost_mass_storage_closing()) {
 				fprintf(stderr, "usb: host attached while apps are in use; asking\n");
 				if (gui_post(apphost_prompt_mass_storage, NULL)) {
 					said_apps = true;
@@ -1160,6 +1189,21 @@ static void *usb_thread(void *arg) {
 			continue;
 		}
 		said_apps = false;
+
+		// ADB is on: the cable is here to carry a shell, not to be a card
+		// reader. Exporting the card now unmounts it from under that shell --
+		// which is why /mnt/sd_0 came back "Read-only file system" over ADB --
+		// and the stock firmware does not do it either. Leave the card where
+		// it is. The Apps prompt above is the way out: confirming USB storage
+		// switches ADB off first.
+		if (adb_owns_controller()) {
+			if (!said_adb) {
+				fprintf(stderr, "usb: ADB is on; the card stays mounted (no mass storage)\n");
+				said_adb = true;
+			}
+			continue;
+		}
+		said_adb = false;
 
 		locked_export();
 		exported = storage_active;
@@ -1203,7 +1247,7 @@ void usb_start(const char *device, const char *mount_point) {
 	// "Owns" includes the moment before adbd has bound it: started just
 	// before this, it may not have got that far, and a card reader bound now
 	// would keep it off the controller (see adb_keep_controller()).
-	if (!adb_gadget_bound() && !(adb_switched_on() && adb_is_running())) {
+	if (!adb_gadget_bound() && !adb_owns_controller()) {
 		ensure_storage_gadget();
 	}
 
