@@ -24,6 +24,16 @@ typedef struct {
 	// Checked only when `target` is NULL; entries that set neither are the
 	// dimmed not-yet-available tiles.
 	void (*action)(void);
+
+	// A tile whose action needs an argument, for a page rebuilt from data (the
+	// apps page). Checked after `target` and `action`. The entry array must
+	// outlive the grid: the tile keeps a pointer to its entry.
+	void (*action_user)(void *user);
+	void *user;
+
+	// The icon is a colour drawing (an app's own icon) and is left alone in
+	// every layout, including the monochrome one. Menu glyphs leave it false.
+	bool keep_color;
 } grid_entry_t;
 
 // Fills `screen` with a `columns` x `rows` grid of tiles sized from the config.
@@ -76,5 +86,9 @@ lv_obj_t *gridpage_empty_panel(lv_obj_t *screen, gui_config_t *cfg, const lv_ima
 
 // Either the tiles or the panel.
 void gridpage_show_empty(lv_obj_t *grid, lv_obj_t *panel, bool empty);
+
+// Changes the panel's sentence, for a page whose empty reason varies (no card,
+// nothing installed).
+void gridpage_empty_set_text(lv_obj_t *panel, const char *text);
 
 #endif /* GRIDPAGE_H */

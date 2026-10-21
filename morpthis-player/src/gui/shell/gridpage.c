@@ -36,6 +36,9 @@ typedef struct {
 	int count;
 	const lv_image_dsc_t *normal_icons[GRIDPAGE_THEME_TILE_MAX];
 	const char *labels[GRIDPAGE_THEME_TILE_MAX];
+	// A tile whose icon is a colour drawing (an app's own icon) keeps it in
+	// every layout: no recolour, no Tokyo Night replacement.
+	bool keep_color[GRIDPAGE_THEME_TILE_MAX];
 } gridpage_theme_page_t;
 
 static gridpage_theme_page_t theme_pages[GRIDPAGE_THEME_PAGE_MAX];
@@ -66,6 +69,20 @@ static void action_cb(lv_event_t *e) {
 
 	void (*action)(void) = (void (*)(void))lv_event_get_user_data(e);
 	action();
+}
+
+// A tile on a page rebuilt from data (the apps page): the entry carries the
+// action and its argument. The entry must outlive the tile, which is why the
+// apps page keeps its entries in a static array.
+static void action_user_cb(lv_event_t *e) {
+	if (player_sheet_drag_active() || switcher_back_drag_active() || coverflow_drag_active()) {
+		return; // a swipe, not a tap
+	}
+
+	const grid_entry_t *entry = lv_event_get_user_data(e);
+	if (entry && entry->action_user) {
+		entry->action_user(entry->user);
+	}
 }
 
 // The two children add_tile() puts on every tile, in the order it makes them.
@@ -267,16 +284,21 @@ static void gridpage_apply_theme_page(gridpage_theme_page_t *page) {
 	}
 
 	bool tokyo = theme_uses_function_glyphs();
-	bool horizontal = tokyo && compact_grid();
 	for (int i = 0; i < page->count; i++) {
 		const lv_image_dsc_t *icon = page->normal_icons[i];
 		theme_semantic_t tone = THEME_SEMANTIC_BLUE;
-		if (tokyo) {
+		bool keep = page->keep_color[i];
+		if (tokyo && !keep) {
 			gridpage_tokyo_icon(page->labels[i], &icon, &tone);
 		}
-		gridpage_set_tile_icon_style(page->grid, i, icon, tokyo ? (compact_grid() ? 22 : 42) :
-							 compact_grid() ? COMPACT_TILE_ICON_MAX : 0,
-							 tokyo, theme_semantic_color(tone), false);
+		// A colour icon is drawn as it came, at the classic size; only the
+		// monochrome menu glyphs take the layout's accent and compact size.
+		bool tinted = tokyo && !keep;
+		bool horizontal = tinted && compact_grid();
+		gridpage_set_tile_icon_style(page->grid, i, icon,
+									 tinted ? (compact_grid() ? 22 : 42)
+											: (compact_grid() ? COMPACT_TILE_ICON_MAX : 0),
+									 tinted, theme_semantic_color(tone), false);
 		gridpage_set_tile_orientation(page->grid, i, horizontal);
 
 		lv_obj_t *tile = lv_obj_get_child(page->grid, i);
@@ -310,11 +332,20 @@ static gridpage_theme_page_t *gridpage_theme_page_for(lv_obj_t *grid) {
 }
 
 static void gridpage_register_theme_page(lv_obj_t *grid, const grid_entry_t *entries, int count) {
-	if (!grid || !entries || count < 0 || count > GRIDPAGE_THEME_TILE_MAX) {
+	if (!grid) {
 		return;
 	}
 
 	gridpage_theme_page_t *page = gridpage_theme_page_for(grid);
+	if (!entries || count < 0 || count > GRIDPAGE_THEME_TILE_MAX) {
+		// More tiles than the page table holds. Drop the old registration rather
+		// than leave it naming icons the caller may free.
+		if (page) {
+			page->count = 0;
+		}
+		return;
+	}
+
 	if (!page) {
 		if (theme_page_count >= GRIDPAGE_THEME_PAGE_MAX) {
 			return;
@@ -326,6 +357,7 @@ static void gridpage_register_theme_page(lv_obj_t *grid, const grid_entry_t *ent
 	for (int i = 0; i < count; i++) {
 		page->normal_icons[i] = entries[i].icon;
 		page->labels[i] = entries[i].label;
+		page->keep_color[i] = entries[i].keep_color;
 	}
 	if (!theme_refresh_registered) {
 		theme_register_refresh(gridpage_refresh_theme);
@@ -513,6 +545,8 @@ static void add_tile(lv_obj_t *grid, const grid_entry_t *entry, int width, int h
 		lv_obj_add_event_cb(tile, switch_screen_cb, LV_EVENT_CLICKED, *entry->target);
 	} else if (entry->action) {
 		lv_obj_add_event_cb(tile, action_cb, LV_EVENT_CLICKED, (void *)entry->action);
+	} else if (entry->action_user) {
+		lv_obj_add_event_cb(tile, action_user_cb, LV_EVENT_CLICKED, (void *)entry);
 	} else {
 		lv_obj_add_event_cb(tile, unavailable_cb, LV_EVENT_CLICKED, (void *)entry->label);
 		lv_obj_set_style_opa(icon, LV_OPA_40, 0);
@@ -698,5 +732,17 @@ void gridpage_show_empty(lv_obj_t *grid, lv_obj_t *panel, bool empty) {
 		} else {
 			lv_obj_set_hidden(panel, true);
 		}
+	}
+}
+
+void gridpage_empty_set_text(lv_obj_t *panel, const char *text) {
+	if (!panel || !text) {
+		return;
+	}
+	// gridpage_empty_panel() builds the picture, then the sentence, then the
+	// button; the sentence is the label that is not inside the button.
+	lv_obj_t *label = lv_obj_get_child(panel, 1);
+	if (label && lv_obj_check_type(label, &lv_label_class)) {
+		lv_label_set_text(label, tr(text));
 	}
 }

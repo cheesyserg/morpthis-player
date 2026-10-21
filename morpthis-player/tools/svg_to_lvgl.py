@@ -55,6 +55,8 @@ ICONS = [
     ("folder.svg", "folder", 32),
     # The Music page corner button when Playlists has taken the tile.
     ("folder.svg", "folder_corner", 34),
+    # The apps page's corner button: what lives in Apps/ and how to put it there.
+    ("info.svg", "info", 34),
     ("folder-root.svg", "folder_root", 34), # browser corner: back to the card root
     ("file.svg", "file", 32),
     ("music-settings.svg", "music_settings", 34),

@@ -39,9 +39,10 @@ described in [app-sdk.md](app-sdk.md) and [apps-repo.md](apps-repo.md).
   the log says why.
 - `entry` names the executable, relative to the app's folder. It must be a
   regular file with the execute bit set.
-- `icon` is optional. The current page draws a generic glyph in Tokyo Night and
-  a plain row in Dark/Light; per-app icons are a follow-up (see
-  [Current limitations](#current-limitations)).
+- `icon` is optional. When present it is drawn on the app's tile, decoded to
+  the tile size; a missing or unreadable icon falls back to the generic apps
+  glyph. The tiles follow the player's menu layout in Dark, Light and Tokyo
+  Night.
 
 ## Manifest
 
@@ -180,7 +181,6 @@ until then, install apps you trust.
 
 ## Current limitations
 
-- Per-app icons are not drawn yet; the list uses a generic glyph.
 - A UI app is not sandboxed: a fault in it takes the player down.
 - Heavy reclaim is best-effort; static pages of the player stay mapped.
 - No install/uninstall UI: copy or delete the folder.
@@ -190,8 +190,7 @@ until then, install apps you trust.
 
 ## Roadmap
 
-1. Per-app icons decoded from the card.
-2. An app-mode reclaim of the UI caches themselves, so heavy apps get more than
+1. An app-mode reclaim of the UI caches themselves, so heavy apps get more than
    the audio path and SQLite pages.
-3. `.mapp` package install from the file manager or Wi-Fi transfer.
-4. Signing and a permission manifest.
+2. `.mapp` package install from the file manager or Wi-Fi transfer.
+3. Signing and a permission manifest.
