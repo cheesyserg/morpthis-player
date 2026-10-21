@@ -1,5 +1,6 @@
 #include "device_state.h"
 
+#include "src/gui/apps/apphost.h"
 #include "src/system/audio/alsa-controls.h"
 #include "src/system/audio/audio.h"
 #include "src/system/playback/audiobook.h"
@@ -504,7 +505,10 @@ static void load_and_play_at(const char *filepath, double position) {
 
 	// A file and a stream cannot both have the output. Starting a track ends
 	// the radio outright -- not merely stops it -- because from here on the
-	// player belongs to the track.
+	// player belongs to the track. The same applies to an app left playing in
+	// the background: its raw output is closed before the local decoder opens
+	// the DAC, or the open would sit in the busy-retry loop and fail.
+	apphost_release_audio();
 	radio_clear();
 
 	// Callers may replay the already-loaded track by passing current_metadata_file

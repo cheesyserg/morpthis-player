@@ -2,11 +2,13 @@
 
 #include <dlfcn.h>
 #include <elf.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "src/gui/apps/appspage.h"
 #include "src/gui/apps/sdk_internal.h"
@@ -15,6 +17,7 @@
 #include "src/gui/shell/morepage.h"
 #include "src/gui/shell/switcher.h"
 #include "src/system/apps/apps_reclaim.h"
+#include "src/system/audio/audio.h"
 #include "src/system/device/adb.h"
 #include "src/system/device/usb.h"
 
@@ -69,6 +72,118 @@ static bool is_shared_object(const char *path) {
 	return shared;
 }
 
+// How long an app gets to stop before the host detaches it. Three seconds is
+// long enough for a socket shutdown and a thread join, short enough that a
+// hung app does not freeze the switch.
+#define APPS_CLOSE_TIMEOUT_MS 3000
+#define APPS_ZOMBIES_MAX 4
+
+typedef struct {
+	pthread_mutex_t lock;
+	pthread_cond_t cond;
+	bool done;
+	void (*fn)(void);
+} shutdown_job_t;
+
+static void *shutdown_thread(void *arg) {
+	shutdown_job_t *job = arg;
+	if (job->fn) {
+		job->fn();
+	}
+	pthread_mutex_lock(&job->lock);
+	job->done = true;
+	pthread_cond_broadcast(&job->cond);
+	pthread_mutex_unlock(&job->lock);
+	return NULL;
+}
+
+// Runs the app's shutdown on a worker so a hang cannot hold the GUI thread.
+// False means the worker did not return in time; the caller must then leave the
+// shared object and its screens mapped. The detached worker owns `job` on that
+// path, which is deliberately leaked rather than freed under it.
+static bool run_shutdown_bounded(void (*fn)(void)) {
+	if (!fn) {
+		return true;
+	}
+	shutdown_job_t *job = calloc(1, sizeof(*job));
+	if (!job) {
+		fn();
+		return true;
+	}
+	pthread_mutex_init(&job->lock, NULL);
+	pthread_cond_init(&job->cond, NULL);
+	job->fn = fn;
+
+	pthread_t thread;
+	// A small stack: this thread only calls the app's shutdown and waits for its
+	// threads. The default would reserve megabytes of address space on a device
+	// where the app budget is measured in kilobytes.
+	pthread_attr_t attr;
+	pthread_attr_init(&attr);
+	pthread_attr_setstacksize(&attr, 128 * 1024);
+	int rc = pthread_create(&thread, &attr, shutdown_thread, job);
+	pthread_attr_destroy(&attr);
+	if (rc != 0) {
+		fn();
+		pthread_mutex_destroy(&job->lock);
+		pthread_cond_destroy(&job->cond);
+		free(job);
+		return true;
+	}
+	pthread_detach(thread);
+
+	struct timespec deadline;
+	clock_gettime(CLOCK_REALTIME, &deadline);
+	deadline.tv_sec += APPS_CLOSE_TIMEOUT_MS / 1000;
+	deadline.tv_nsec += (long)(APPS_CLOSE_TIMEOUT_MS % 1000) * 1000000L;
+	if (deadline.tv_nsec >= 1000000000L) {
+		deadline.tv_sec++;
+		deadline.tv_nsec -= 1000000000L;
+	}
+
+	pthread_mutex_lock(&job->lock);
+	while (!job->done) {
+		if (pthread_cond_timedwait(&job->cond, &job->lock, &deadline) != 0) {
+			break;
+		}
+	}
+	bool done = job->done;
+	pthread_mutex_unlock(&job->lock);
+
+	if (done) {
+		pthread_mutex_destroy(&job->lock);
+		pthread_cond_destroy(&job->cond);
+		free(job);
+	}
+	return done;
+}
+
+// A force-closed app keeps its .so and package mounted. There is no safe way to
+// dlclose a library that still has a running thread. Four entries cover the
+// realistic case; beyond that the leak is the same and only the log changes.
+typedef struct {
+	void *handle;
+	char folder[APPS_FOLDER_MAX];
+} app_zombie_t;
+
+static app_zombie_t zombies[APPS_ZOMBIES_MAX];
+static int zombie_count;
+
+static void remember_zombie(void *handle, const char *folder) {
+	if (zombie_count >= APPS_ZOMBIES_MAX) {
+		fprintf(stderr, "apps: no zombie slot for %s; its library stays mapped\n", folder ? folder : "?");
+		return;
+	}
+	zombies[zombie_count].handle = handle;
+	snprintf(zombies[zombie_count].folder, sizeof(zombies[zombie_count].folder), "%s", folder ? folder : "");
+	zombie_count++;
+}
+
+// A confirmed app switch: called after the outgoing app has released the card
+// and the DAC.
+static void (*close_done_cb)(void *user);
+static void *close_done_user;
+
 static void apphost_teardown(morpthis_app_t *app) {
 	if (!app || sdk_app != app) {
 		return;
@@ -80,12 +195,18 @@ static void apphost_teardown(morpthis_app_t *app) {
 	// set it here too so a shutdown that calls morpthis_app_quit() cannot post
 	// a second teardown from inside this one.
 	app->quitting = true;
+	bool clean = true;
 	if (app->shutdown) {
-		app->shutdown();
+		clean = run_shutdown_bounded(app->shutdown);
 		app->shutdown = NULL;
 	}
 
 	app->alive = false;
+
+	// The app's raw output must not outlive it: a clean shutdown closes it
+	// itself, but a force-closed app may still think it owns the DAC. This also
+	// drops the status-bar indicator back to the player's own playback.
+	sdk_audio_app_reset();
 
 	// Leave the app's screen before deleting it: LVGL must never be sitting on
 	// an object that is about to go away. When a PC is taking the card, go to
@@ -98,24 +219,38 @@ static void apphost_teardown(morpthis_app_t *app) {
 		switch_screen(morepage_screen);
 	}
 
-	while (app->screens) {
-		sdk_screen_destroy(app->screens);
+	if (clean) {
+		while (app->screens) {
+			sdk_screen_destroy(app->screens);
+		}
+	} else {
+		// Force close. The app's shutdown did not return: unmapping its code or
+		// deleting its screens under a thread that is still in there is worse
+		// than leaving them allocated. Its package stays mounted for the same
+		// reason. Release the DAC so the next app can take it.
+		fprintf(stderr, "apps: %s did not stop within %d ms; force-closing it\n", app->id,
+				APPS_CLOSE_TIMEOUT_MS);
+		audio_external_end();
 	}
 
 	// Nothing may enter the shared object after this point. Posts already
 	// waiting in the GUI queue are detached; a callback that arrives after
-	// this sees no app and drops itself. The app is required to have stopped
-	// its own threads before quitting.
+	// this sees no app and drops itself.
 	sdk_detach_app(app);
 
-	if (app->dl_handle) {
-		dlclose(app->dl_handle);
+	if (clean) {
+		if (app->dl_handle) {
+			dlclose(app->dl_handle);
+			app->dl_handle = NULL;
+		}
+
+		// The entry binary and its assets came from the package mount; nothing
+		// may read them now that the shared object is closed.
+		apps_unmount(app->folder);
+	} else {
+		remember_zombie(app->dl_handle, app->folder);
 		app->dl_handle = NULL;
 	}
-
-	// The entry binary and its assets came from the package mount; nothing may
-	// read them now that the shared object is closed.
-	apps_unmount(app->folder);
 
 	// The Apps page is normally back on screen by now. Recompute anyway, so a
 	// teardown reached from somewhere else cannot leave the USB guard up.
@@ -131,8 +266,20 @@ static void apphost_teardown(morpthis_app_t *app) {
 		player_refresh_artwork();
 	}
 
-	fprintf(stderr, "apps: %s unloaded\n", app->id);
-	free(app);
+	fprintf(stderr, "apps: %s %s\n", app->id, clean ? "unloaded" : "detached (force close)");
+	if (clean) {
+		free(app);
+	}
+
+	// A confirmed app switch waits here: the next app starts only after this
+	// one has let go of the card and the DAC.
+	void (*done)(void *) = close_done_cb;
+	void *done_user = close_done_user;
+	close_done_cb = NULL;
+	close_done_user = NULL;
+	if (done) {
+		done(done_user);
+	}
 }
 
 static void teardown_cb(void *user) {
@@ -151,6 +298,64 @@ void apphost_request_quit(void) {
 		// quit request try again.
 		app->quitting = false;
 		fprintf(stderr, "apps: could not queue teardown for %s\n", app->id);
+	}
+}
+
+bool apphost_background(void) {
+	if (!sdk_app || !sdk_app->alive) {
+		return false;
+	}
+	// The app's screens are left built. Only the screen on top changes, so its
+	// threads and its raw PCM output keep running.
+	sdk_app->backgrounded = true;
+	sdk_app->background_requested = true;
+	// Return to the page that opened the app rather than pushing it: the app
+	// screen must not sit in the back-stack, or the next chevron press would
+	// pull it out again instead of leaving the Apps page.
+	switch_screen_return_to(appspage_screen);
+	sync_usb_guard();
+	return true;
+}
+
+bool apphost_resume_active(const char *id) {
+	morpthis_app_t *app = sdk_app;
+	if (!app || !app->alive) {
+		return false;
+	}
+	if (id && id[0] && strcmp(id, app->id) != 0) {
+		return false;
+	}
+	if (app->active) {
+		app->backgrounded = false;
+		app->background_requested = false;
+		switch_screen(app->active->root);
+		return true;
+	}
+	return false;
+}
+
+void apphost_close_active_then(void (*done)(void *user), void *user) {
+	if (!sdk_app) {
+		if (done) {
+			done(user);
+		}
+		return;
+	}
+	close_done_cb = done;
+	close_done_user = user;
+	// If a teardown is already queued, it will read the callback when it runs.
+	if (!sdk_app->quitting) {
+		apphost_request_quit();
+	}
+}
+
+bool apphost_audio_active(void) { return sdk_audio_app_active(); }
+
+bool apphost_audio_playing(void) { return sdk_audio_app_playing(); }
+
+void apphost_release_audio(void) {
+	if (sdk_audio_app_active()) {
+		morpthis_audio_close();
 	}
 }
 
@@ -277,6 +482,13 @@ bool apphost_game_input_active(void) {
 bool apphost_handle_key(gui_key_t key) {
 	morpthis_app_t *app = sdk_app;
 	if (!app || !app->alive || !app->button_cb) {
+		return false;
+	}
+
+	// A backgrounded app keeps its audio but not the transport keys, unless it
+	// is the one holding the DAC: then play/pause is still its. Otherwise the
+	// keys belong to whatever the user is looking at.
+	if (app->backgrounded && !apphost_audio_active()) {
 		return false;
 	}
 

@@ -96,14 +96,16 @@ does not have to build binutils, GCC and glibc to compile a calculator.
 Keep the first version small enough to ship:
 
 - `app`: name, version, package folder, data folder, API version, `post()`,
-  `quit()`.
+  `quit()`, `background()`.
 - `ui`: screen, label, button, list, image, slider, toast; rotation, opacity and
   `raise` for image overlays and moving parts; a canvas the app draws into
   (`create`, `buffer`, `invalidate`) and `refresh()` to put it on the panel now.
 - `input`: button events, touch events, back gesture.
 - `audio`: play/pause/next/prev, current track, volume; or "leave the player's
   audio alone" for apps that do not need it. Plus a raw PCM stream
-  (`open`/`write`/`close`) for an app that mixes its own effects.
+  (`open`/`open_ex`/`write`/`write_pcm`/`close`) for an app that mixes or
+  streams its own sound, at 16, 24 or 32 bits, and `set_playing()` for the
+  status-bar indicator.
 - `fs`: the package root, the writable data folder, read/write helpers, card
   root, and a resolve call for libraries that open files themselves.
 - `log`: one line to the player's log.
@@ -142,8 +144,8 @@ taking the card; confirming closes the app through its normal teardown, switches
 ADB off (one USB controller, one gadget) and exports the card. An app with
 threads, a network connection or the raw audio output should export
 `morpthis_app_shutdown()` so that close stops its work cleanly; the player
-calls it once on the GUI thread before destroying screens and unloading the
-shared object.
+calls it once on a worker thread, with a three-second bound, before destroying
+screens and unloading the shared object.
 
 ## CI
 
@@ -158,7 +160,13 @@ shared object.
 
 - SDK semver; `MORPTHIS_APP_API_VERSION` is the major.
 - `min_player` in the manifest is the minimum player build.
-- A plugin built for API 1 runs on every player that advertises API 1.
+- A plugin built for API 1 runs on every player that advertises API 1. API 2
+  adds the hi-res output, the playing flag and background operation; an API 2
+  plugin is refused by an API 1 player, so its manifest says `min_player: 2`.
+- One app is loaded at a time. A background app keeps its screens, threads and
+  audio; the player's back chevron leaves it running when the app asks for the
+  background from its BACK handler, and a player-drawn corner button in the
+  heading row does the same for any non-game screen.
 
 ## Testing
 

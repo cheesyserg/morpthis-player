@@ -113,13 +113,58 @@ bool morpthis_audio_set_volume(int volume) {
 // Open, write and close all come from the app's mixer thread, which is why
 // there is no lock here. audio_external_write() blocks at the rate the DAC
 // plays, and a lock held across it would only make close wait behind it.
-static bool external_open;
+//
+// The flags below are read by the GUI thread (the status-bar indicator and the
+// app host), hence volatile. The top bar itself must only be touched on the GUI
+// thread: the app can call set_playing() from its mixer, so every repaint goes
+// through a posted callback rather than straight into LVGL.
+static volatile bool external_open;
+static int external_bits = 16;
+static int external_rate;
+static int external_channels;
+static int external_buffer_ms;
+static volatile bool app_output_active;
+static volatile bool app_output_playing;
 
-bool morpthis_audio_open(int rate, int channels, int buffer_ms) {
-	if (external_open) {
-		return true;
+static void refresh_playback_cb(void *user) {
+	(void)user;
+	topbar_refresh_playback();
+}
+
+static void request_playback_refresh(void) { morpthis_app_post(refresh_playback_cb, NULL); }
+
+bool sdk_audio_app_active(void) { return app_output_active; }
+bool sdk_audio_app_playing(void) { return app_output_playing; }
+
+// Called by the host when the app is gone. A clean shutdown has already closed
+// the output; a force-closed app may still think it owns it, so release the DAC
+// and clear the flags the status bar reads. Runs on the GUI thread.
+void sdk_audio_app_reset(void) {
+	if (app_output_active) {
+		audio_external_end();
 	}
-	if (rate <= 0 || channels < 1 || channels > 2 || buffer_ms < 0) {
+	external_open = false;
+	external_bits = 16;
+	external_rate = 0;
+	external_channels = 0;
+	external_buffer_ms = 0;
+	app_output_active = false;
+	app_output_playing = false;
+	topbar_refresh_playback();
+}
+
+bool morpthis_audio_open_ex(int rate, int channels, int bits, int buffer_ms) {
+	if (external_open) {
+		if (external_rate == rate && external_channels == channels && external_bits == bits &&
+			external_buffer_ms == buffer_ms) {
+			return true;
+		}
+		// A music app changing tracks has to be able to change the terms; the
+		// device cannot re-clock an open PCM, so close and reopen it.
+		morpthis_audio_close();
+	}
+	if (rate <= 0 || channels < 1 || channels > 2 || buffer_ms < 0 ||
+		(bits != 16 && bits != 24 && bits != 32)) {
 		return false;
 	}
 
@@ -130,11 +175,24 @@ bool morpthis_audio_open(int rate, int channels, int buffer_ms) {
 		radio_stop();
 	}
 
-	external_open = audio_external_begin_latency(rate, channels, 16, buffer_ms);
+	external_bits = bits;
+	external_open = audio_external_begin_latency(rate, channels, bits, buffer_ms);
+	if (external_open) {
+		external_rate = rate;
+		external_channels = channels;
+		external_buffer_ms = buffer_ms;
+		app_output_active = true;
+		app_output_playing = true;
+		request_playback_refresh();
+	}
 	return external_open;
 }
 
-size_t morpthis_audio_write(const int16_t *pcm, size_t frames) {
+bool morpthis_audio_open(int rate, int channels, int buffer_ms) {
+	return morpthis_audio_open_ex(rate, channels, 16, buffer_ms);
+}
+
+size_t morpthis_audio_write_pcm(const void *pcm, size_t frames) {
 	if (!external_open || !pcm || frames == 0) {
 		return 0;
 	}
@@ -145,10 +203,32 @@ size_t morpthis_audio_write(const int16_t *pcm, size_t frames) {
 	return written > 0 ? (size_t)written : 0;
 }
 
+size_t morpthis_audio_write(const int16_t *pcm, size_t frames) {
+	if (external_bits != 16) {
+		return 0; // use morpthis_audio_write_pcm for 24/32-bit output
+	}
+	return morpthis_audio_write_pcm(pcm, frames);
+}
+
+void morpthis_audio_set_playing(bool playing) {
+	if (!external_open) {
+		return;
+	}
+	app_output_playing = playing;
+	request_playback_refresh();
+}
+
 void morpthis_audio_close(void) {
 	if (!external_open) {
 		return;
 	}
 	audio_external_end();
 	external_open = false;
+	external_bits = 16;
+	external_rate = 0;
+	external_channels = 0;
+	external_buffer_ms = 0;
+	app_output_active = false;
+	app_output_playing = false;
+	request_playback_refresh();
 }

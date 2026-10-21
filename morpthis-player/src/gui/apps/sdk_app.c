@@ -219,6 +219,10 @@ void morpthis_app_quit(void) {
 	apphost_request_quit();
 }
 
+bool morpthis_app_background(void) {
+	return apphost_background();
+}
+
 // ---------------------------------------------------------------------------
 // log.h
 // ---------------------------------------------------------------------------

@@ -121,9 +121,22 @@ version the app was built against, and calls `morpthis_app_main()` on the GUI
 thread. The app creates a screen; the player puts it up with its top bar,
 floating chevron and swipe-back, and destroys it when the app quits. The
 chevron and swipe both deliver `MORPTHIS_BUTTON_BACK` to an app that subscribed,
-then quit the app. A `game` screen is put up without the top bar, the chevron or
-the gesture, and the app quits itself. The mount is released after the app is
+then quit the app — unless the app answered by calling
+`morpthis_app_background()`, in which case it stays loaded and only its screens
+leave. A `game` screen is put up without the top bar, the chevron or the
+gesture, and the app quits itself. The mount is released after the app is
 unloaded, or immediately when the launch fails.
+
+One app runs at a time. Tapping a tile whose app is loaded in the background
+brings its screen back; tapping a different tile puts up a confirmation that
+closes the running app first. The outgoing app's `morpthis_app_shutdown()` runs
+on a worker with a three-second bound. If it returns, its screens and shared
+object are freed and its package unmounted as usual; if it does not, the app is
+force-closed: the player stops waiting, releases the DAC, and leaves the shared
+object, its screens and the package mount in place rather than unmapping code a
+stuck thread may still be inside. The log says `did not stop ... force-closing
+it`, and the zombie entry stays for the rest of the boot. The new app starts
+only after the old one has let go of the card and the DAC.
 
 If the entry is not a shared object, or has no SDK entry point, the player falls
 back to the separate-process model: fork, `execve` the entry from the mount

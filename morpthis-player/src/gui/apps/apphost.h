@@ -1,6 +1,7 @@
 #ifndef APPHOST_H
 #define APPHOST_H
 
+#include <stdbool.h>
 #include <stddef.h>
 
 #include "src/gui/shell/gui.h"
@@ -67,5 +68,30 @@ bool apphost_handle_key(gui_key_t key);
 // Queues the app's teardown. Idempotent; called by morpthis_app_quit() and by
 // the back chevron's guard.
 void apphost_request_quit(void);
+
+// Returns to the Apps page without unloading the app. Its screens stay built
+// and its threads and audio output keep running, which is what lets a music app
+// play in the background.
+bool apphost_background(void);
+
+// If `id` is the loaded app (or `id` is NULL for any loaded app), brings its
+// active screen back and returns true. Used when its tile is tapped again.
+bool apphost_resume_active(const char *id);
+
+// Closes the loaded app and then calls done(user) on the GUI thread, so the
+// caller can start the next app. done is called immediately when nothing is
+// loaded. Shutdown is bounded: an app that does not return in time is detached
+// from its screens and left mapped (force close), and the callback still runs.
+void apphost_close_active_then(void (*done)(void *user), void *user);
+
+// The loaded app's raw PCM output, for the status-bar play/pause indicator.
+bool apphost_audio_active(void);
+bool apphost_audio_playing(void);
+
+// Closes the loaded app's raw PCM output, if it has one. Called when the player
+// itself is about to start a local track: one writer on the DAC, and the track
+// the user just chose wins over a background app. The app sees a short write
+// and stops its own stream.
+void apphost_release_audio(void);
 
 #endif /* APPHOST_H */

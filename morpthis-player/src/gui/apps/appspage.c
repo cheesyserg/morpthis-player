@@ -8,6 +8,7 @@
 #include "lvgl/lvgl.h"
 
 #include "src/gui/nowplaying/cover.h"
+#include "src/gui/fonts/fonts.h"
 #include "src/gui/shell/confirm.h"
 #include "src/gui/shell/gridpage.h"
 #include "src/gui/shell/icons.h"
@@ -49,6 +50,14 @@ typedef struct {
 } launch_result_t;
 
 static void rebuild(void);
+
+static void launch_app(app_t *app);
+
+// The tile that asked for a switch. The confirmation is modal, so only one can
+// be pending; a second tap cannot reach the page through the veil. Storing the
+// entry by value means a rebuild cannot turn the tap into a different app.
+static app_t pending_switch;
+static bool pending_switch_valid;
 
 static void launch_done_cb(void *user) {
 	launch_result_t *done = user;
@@ -103,7 +112,7 @@ static void *launch_thread(void *arg) {
 	return NULL;
 }
 
-static void launch_app(app_t *app) {
+static void start_app(app_t *app) {
 	// The in-process path first. It runs on the GUI thread because the entry
 	// point builds screens; a plugin that cannot start is reported here rather
 	// than run as a tool, which would only produce ENOEXEC.
@@ -141,6 +150,57 @@ static void launch_app(app_t *app) {
 		apphost_set_tool_running(false);
 		free(job);
 	}
+}
+
+static void start_switched_app(void *user) {
+	app_t *app = user;
+	// A USB handover can win the race between the confirmation and the
+	// teardown: the host then leaves for the More page and is exporting the
+	// card, so the app that was going to start must not mount from it.
+	if (lv_screen_active() != appspage_screen) {
+		free(app);
+		return;
+	}
+	start_app(app);
+	free(app);
+}
+
+static void switch_confirmed(void *user) {
+	(void)user;
+	if (!pending_switch_valid) {
+		return;
+	}
+	pending_switch_valid = false;
+
+	// The outgoing app gets its shutdown hook and a bounded wait; only then is
+	// the new one started, so two packages are never mounted and two apps never
+	// hold the DAC.
+	app_t *next = malloc(sizeof(*next));
+	if (!next) {
+		return;
+	}
+	*next = pending_switch;
+	apphost_close_active_then(start_switched_app, next);
+}
+
+static void launch_app(app_t *app) {
+	// A tile whose app is still loaded (in the background, usually) brings its
+	// screen back instead of starting a second copy.
+	if (apphost_resume_active(app->id)) {
+		return;
+	}
+
+	// Starting another app overwrites the running one. Both are in this process
+	// and share the DAC and the card, so the user has to say yes; the host then
+	// closes the old app gracefully and force-closes it if its shutdown hangs.
+	if (apphost_active()) {
+		pending_switch = *app;
+		pending_switch_valid = true;
+		confirm_show("apps_switch_title", "apps_switch_note", "apps_switch_ok", switch_confirmed, NULL);
+		return;
+	}
+
+	start_app(app);
 }
 
 static void launch_tile_cb(void *user) { launch_app((app_t *)user); }

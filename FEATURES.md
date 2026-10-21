@@ -74,7 +74,7 @@
 
 ## Streaming
 
-- **Subsonic / Gonic** - an app now, installed as `Apps/pkgmerps/subsonic.pkgmerp`. It browses artists, albums, folders, playlists, genres, starred, random and newest, searches with an on-screen letter keyboard, stars the current track, and keeps its own queue. Quality is MP3 256/320 or lossless FLAC transcoded by the server; the app carries dr_mp3 and dr_flac, so the player's own streaming client and RAM bridge are gone. Server and TLS settings live in `merp_data/subsonic/settings.json`.
+- **Subsonic / Gonic** - an app now, installed as `Apps/pkgmerps/subsonic.pkgmerp`. It browses artists, albums, folders, playlists, genres, starred, random and newest, searches with an on-screen letter keyboard, stars the current track, and keeps its own queue. Quality is MP3 256/320 or lossless FLAC transcoded by the server; a 24-bit FLAC plays at 32-bit output, the same hi-res path as local music. It keeps playing in the background when the app is left, with the status-bar indicator showing play/pause. The app carries dr_mp3 and dr_flac, so the player's own streaming client and RAM bridge are gone. Server and TLS settings live in `merp_data/subsonic/settings.json`.
 - **Tidal** - sign in with the code on screen or with the QR-Code; Low, High, CD and Hi-res quality. Search, albums, artists, playlists, favourites and the featured lists. Favourites and playlists can be managed from the player.
 - **Qobuz** - sign in with the account; MP3 320, FLAC 16/44.1, 24/96 and 24/192. Search, albums, artists, playlists, favourites and the featured lists. Favourites and playlists can be managed from the player.
 - **Podcasts** - the Podcast Index catalogue: search, trending, follow up to 100

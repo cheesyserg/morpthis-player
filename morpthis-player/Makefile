@@ -110,7 +110,7 @@ TARGET_LDFLAGS = $(FREETYPE_PREFIX)/lib/libfreetype.a $(AUDIO_LIBS) -lpthread -l
 # Only the SDK is exported from the player. -rdynamic puts the API in the
 # dynamic symbol table; the version script keeps every other internal symbol
 # out of it. The version script is the same contract the app SDK publishes in
-# abi/morpthis-api-1.txt.
+# abi/morpthis-api-2.txt.
 HOST_LDFLAGS += -rdynamic -Wl,--version-script=$(MORPTHIS_APP_API_MAP)
 TARGET_LDFLAGS += -rdynamic -Wl,--version-script=$(MORPTHIS_APP_API_MAP)
 

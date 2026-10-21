@@ -650,6 +650,22 @@ static void refresh_play_icon(const device_state_t *state) {
 		return;
 	}
 
+	// An app's raw PCM output is not in device_state: the app owns the DAC and
+	// the player's own playback is stopped. Report the app's own playing flag so
+	// the bar still says whether sound is coming out while the app is in the
+	// background.
+	if (apphost_audio_active()) {
+		lv_image_set_src(play_icon, apphost_audio_playing() ? &icon_play_status : &icon_pause_status);
+		if (theme_is_monochrome()) {
+			refresh_status_icon_color(play_icon);
+		} else {
+			lv_obj_remove_local_style_prop(play_icon, LV_STYLE_IMAGE_RECOLOR, 0);
+			lv_obj_remove_local_style_prop(play_icon, LV_STYLE_IMAGE_RECOLOR_OPA, 0);
+		}
+		lv_obj_set_hidden(play_icon, false);
+		return;
+	}
+
 	if (state->status == AUDIO_STATUS_PLAYING) {
 		lv_image_set_src(play_icon, &icon_play_status);
 	} else if (state->current_file[0]) {

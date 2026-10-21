@@ -6,6 +6,7 @@
 
 #include "src/gui/apps/apphost.h"
 #include "src/gui/fonts/fonts.h"
+#include "src/gui/shell/icons.h"
 #include "src/gui/shell/settingsrow.h"
 #include "src/gui/shell/switcher.h"
 #include "src/gui/shell/theme.h"
@@ -143,13 +144,49 @@ static bool back_guard(void) {
 		return false;
 	}
 
-	// Let the app see the button first. Then quit regardless: in API 1 the
+	// The app may answer BACK by asking for the background (a music app that is
+	// playing does). The flag is consumed here: when it is set the app has
+	// already left its screen, and quitting it now would stop the sound it just
+	// asked to keep.
+	app->background_requested = false;
+
+	// Let the app see the button first. Then quit regardless: in API 2 the
 	// chevron is the way out of an app, and an app that wants an internal back
 	// step puts a control on its own screen.
 	sdk_dispatch_button(MORPTHIS_BUTTON_BACK, MORPTHIS_INPUT_PRESS);
 	sdk_dispatch_button(MORPTHIS_BUTTON_BACK, MORPTHIS_INPUT_RELEASE);
+	if (app->background_requested) {
+		app->background_requested = false;
+		return true;
+	}
 	morpthis_app_quit();
 	return true;
+}
+
+static void background_cb(lv_event_t *e) {
+	(void)e;
+	morpthis_app_background();
+}
+
+// The player's way out of a non-game app without closing it. The heading row is
+// the player's, so the button cannot collide with anything the app draws.
+static void add_background_button(morpthis_screen_t *screen) {
+	lv_obj_t *button = lv_btn_create(screen->root);
+	settingsrow_place_corner_button(button, sdk_cfg, 0);
+	lv_obj_set_style_bg_opa(button, LV_OPA_TRANSP, 0);
+	lv_obj_set_style_border_width(button, 0, 0);
+	lv_obj_set_style_shadow_width(button, 0, 0);
+	lv_obj_set_style_pad_all(button, 0, 0);
+
+	lv_obj_t *icon = lv_image_create(button);
+	lv_image_set_src(icon, &icon_chevron_up);
+	// A down chevron: put the app away rather than raise it.
+	lv_image_set_rotation(icon, 1800);
+	lv_obj_add_style(icon, &theme_style_icon, 0);
+	settingsrow_scale_corner_icon(icon, sdk_cfg);
+	lv_obj_center(icon);
+
+	lv_obj_add_event_cb(button, background_cb, LV_EVENT_CLICKED, NULL);
 }
 
 morpthis_screen_t *morpthis_screen_create(const char *title) {
@@ -177,6 +214,7 @@ morpthis_screen_t *morpthis_screen_create(const char *title) {
 	const bool game = app_is_game();
 	if (!game) {
 		screen->title_label = settingsrow_title(screen->root, sdk_cfg, title ? title : "");
+		add_background_button(screen);
 	}
 	screen->content_top = game ? 0 : sdk_content_top();
 

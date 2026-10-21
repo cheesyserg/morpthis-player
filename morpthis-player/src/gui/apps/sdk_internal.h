@@ -94,6 +94,13 @@ struct morpthis_app {
 	bool alive;
 	bool quitting;
 
+	// Set while the app's screens are off display but the app is still loaded
+	// (morpthis_app_background). background_requested is the transient flag the
+	// back guard consumes: an app that asks for the background from its BACK
+	// handler must not then be quit by the chevron that delivered the key.
+	bool backgrounded;
+	bool background_requested;
+
 	// Set by the app through morpthis_input_set_gameplay() and
 	// morpthis_input_set_game_menu(); read on the input thread. Active play and
 	// the game's own menu both own the volume keys.
@@ -122,6 +129,11 @@ int sdk_content_top(void);
 void sdk_set_app(morpthis_app_t *app);
 void sdk_detach_app(morpthis_app_t *app);
 void sdk_dispatch_button(morpthis_button_t button, morpthis_input_action_t action);
+
+// sdk_audio.c
+bool sdk_audio_app_active(void);
+bool sdk_audio_app_playing(void);
+void sdk_audio_app_reset(void);
 
 // sdk_ui.c
 void sdk_screen_destroy(morpthis_screen_t *screen);
