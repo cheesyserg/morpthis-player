@@ -78,6 +78,9 @@ static lv_obj_t *item_img[BOOTSCREEN_MAX];
 static lv_obj_t *applied_check;
 static lv_obj_t *apply_btn;
 static lv_obj_t *apply_label;
+static lv_obj_t *support_row;
+static lv_obj_t *support_icon;
+static lv_obj_t *support_label;
 static bool carousel_rebuilding;
 static bool apply_running;
 
@@ -95,6 +98,8 @@ static uint32_t preview_start_scale;
 static int item_w;
 static int item_h;
 static int carousel_w;
+static int support_h;
+static int support_gap;
 
 // Draws one of the interface's glyphs at `size`, whatever its source art is.
 // The check on the applied picture and on its carousel item are the two users.
@@ -890,7 +895,15 @@ void bootscreen_init(gui_config_t *cfg) {
 
 	int top = settingsrow_content_top(cfg);
 	int apply_h = compact ? 44 : 64;
-	int content_h = (int)cfg->screen_height - top - apply_h - 2 * cfg->padding;
+	support_h = compact ? 18 : 24;
+	support_gap = compact ? 4 : 6;
+
+	// The trace is written by the packer's block at boot. No trace means the
+	// running firmware's boot script has no block to draw a custom picture, so
+	// the warning is shown and the row gives up the space for it.
+	bool supported = bootlogo_trace() != NULL;
+	int content_h = (int)cfg->screen_height - top - apply_h - 2 * cfg->padding -
+					(supported ? 0 : support_h + support_gap);
 	if (content_h < 1) {
 		content_h = 1;
 	}
@@ -941,6 +954,38 @@ void bootscreen_init(gui_config_t *cfg) {
 	lv_obj_set_flex_align(carousel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 	lv_obj_add_event_cb(carousel, carousel_scroll_cb, LV_EVENT_SCROLL, NULL);
 	lv_obj_add_event_cb(carousel, carousel_scroll_end_cb, LV_EVENT_SCROLL_END, NULL);
+
+	// Whether this firmware's boot script actually carries the block that
+	// draws a custom picture. Hidden when it does, so the picture keeps the
+	// full height; shown in red when it does not, because Apply can then only
+	// ever produce Retrospace.
+	support_row = lv_obj_create(bootscreen_screen);
+	lv_obj_set_size(support_row, (int32_t)cfg->screen_width - 2 * cfg->padding, support_h);
+	lv_obj_align(support_row, LV_ALIGN_TOP_LEFT, cfg->padding, top + content_h + support_gap);
+	lv_obj_set_style_bg_opa(support_row, 0, 0);
+	lv_obj_set_style_border_width(support_row, 0, 0);
+	lv_obj_set_style_radius(support_row, 0, 0);
+	lv_obj_set_style_pad_all(support_row, 0, 0);
+	lv_obj_set_style_pad_gap(support_row, compact ? 4 : 6, 0);
+	lv_obj_set_scrollable(support_row, false);
+	lv_obj_set_flex_flow(support_row, LV_FLEX_FLOW_ROW);
+	lv_obj_set_flex_align(support_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+	lv_obj_set_hidden(support_row, supported);
+
+	support_icon = lv_image_create(support_row);
+	lv_image_set_src(support_icon, &icon_circle_alert);
+	lv_obj_add_style(support_icon, &theme_style_icon, 0);
+	lv_obj_set_style_image_recolor(support_icon, lv_color_make(210, 66, 58), 0);
+	lv_obj_set_style_image_recolor_opa(support_icon, LV_OPA_COVER, 0);
+	scale_icon(support_icon, &icon_circle_alert, compact ? 14 : 18);
+
+	support_label = lv_label_create(support_row);
+	lv_label_set_text(support_label, tr("bootscreen_support_missing"));
+	lv_label_set_long_mode(support_label, LV_LABEL_LONG_DOT);
+	lv_obj_set_flex_grow(support_label, 1);
+	lv_obj_add_style(support_label, &theme_style_text, 0);
+	lv_obj_set_style_text_color(support_label, lv_color_make(210, 66, 58), 0);
+	lv_obj_set_style_text_font(support_label, compact ? &font_ui_14 : &font_ui_18, 0);
 
 	// The one action, at the foot of the page and always in reach.
 	apply_btn = lv_btn_create(bootscreen_screen);
