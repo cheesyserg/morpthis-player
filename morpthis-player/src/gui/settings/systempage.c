@@ -430,7 +430,7 @@ static void build_sysinfo_page(gui_config_t *cfg) {
 
 	lv_obj_t *forked_by_value = NULL;
 	info_row(container, "system_forked_by", &forked_by_value);
-	lv_label_set_text(forked_by_value, "Imre Ferenczi (mr-f0xx)");
+	lv_label_set_text(forked_by_value, "cheesyserg");
 	if (compact) {
 		credit_value_fit(forked_by_value, value_width);
 	}
