@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "src/gui/library/browser.h"
+#include "src/gui/apps/apphost.h"
 #include "src/gui/apps/appspage.h"
 #include "src/gui/nowplaying/coverflow.h"
 #include "src/gui/settings/ccsettings.h"
@@ -501,6 +502,13 @@ static void key_async_cb(void *user_data) {
 		return;
 	}
 
+	// An app that asked for transport keys owns them while it is on screen.
+	// One that did not set a callback leaves them to the player, exactly as
+	// before the SDK existed.
+	if (apphost_handle_key(key)) {
+		return;
+	}
+
 	// Receiver mode is the exception, and the only one: the press still means
 	// what it says, it just has somewhere else to go. The music is on the phone
 	// at the other end, so the key is sent there over AVRCP -- which is exactly
@@ -582,6 +590,9 @@ void gui_init(gui_config_t *cfg) {
 
 	// Colours first: every screen below styles itself from the active palette.
 	theme_init();
+
+	// The SDK's app host keeps the config for screens an app creates later.
+	apphost_init(cfg);
 
 	// The player sheet is parked off the right edge of the top layer, which
 	// makes that layer scrollable unless told otherwise -- and then a sideways

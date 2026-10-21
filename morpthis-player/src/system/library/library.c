@@ -1397,6 +1397,16 @@ void library_close(void) {
 	pthread_mutex_unlock(&db_lock);
 }
 
+// The heavy app tier: give the page cache back, keep the handle. The lock is
+// the one every query holds, so this never runs while a statement is live.
+void library_release_memory(void) {
+	pthread_mutex_lock(&db_lock);
+	if (db) {
+		sqlite3_db_release_memory(db);
+	}
+	pthread_mutex_unlock(&db_lock);
+}
+
 bool library_reopen_if_replaced(void) {
 	if (!library_is_open() || !db_file[0] || !file_identity_changed(db_file, &db_identity)) {
 		return false;

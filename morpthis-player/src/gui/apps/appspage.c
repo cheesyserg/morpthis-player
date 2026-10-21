@@ -13,6 +13,7 @@
 #include "src/gui/shell/settingsrow.h"
 #include "src/gui/shell/theme.h"
 #include "src/gui/shell/toast.h"
+#include "src/gui/apps/apphost.h"
 #include "src/system/apps/apps.h"
 #include "src/system/core/lang.h"
 
@@ -23,10 +24,9 @@ static lv_obj_t *empty_label;
 static app_t apps[APPS_MAX];
 static int app_count;
 
-// A tool that runs and exits is the model this launcher supports today. A UI
-// app needs the player's display, touch and audio, which is the SDK's
-// in-process model (docs/apps.md); until that exists, a long-running app is
-// killed here rather than left holding a worker thread.
+// A UI app is a shared object the SDK host loads into this process. A headless
+// tool is still a separate process: the file is not a shared object (or has no
+// SDK entry), so the page falls back to fork/execve and waits for it.
 #define APPS_LAUNCH_TIMEOUT_MS 30000
 
 typedef struct {
@@ -84,9 +84,25 @@ static void launch_cb(lv_event_t *e) {
 		return;
 	}
 
-	// The app is copied out of the page's array: the page may be rebuilt while
-	// the worker is still starting it, and the row's index would then name a
-	// different app.
+	// The in-process path first. It runs on the GUI thread because the entry
+	// point builds screens; a plugin that cannot start is reported here rather
+	// than run as a tool, which would only produce ENOEXEC.
+	char error[128];
+	apphost_result_t result = apphost_launch(&apps[index], error, sizeof(error));
+	if (result == APPHOST_STARTED) {
+		return;
+	}
+	if (result == APPHOST_FAILED) {
+		char text[APPS_NAME_MAX + 160];
+		snprintf(text, sizeof(text), "%s: %s", apps[index].name, error);
+		toast_error(text);
+		return;
+	}
+
+	// APPHOST_NOT_PLUGIN: a headless tool. The existing worker keeps the GUI
+	// responsive while fork/execve runs and waits. The app is copied out of the
+	// page's array: the page may be rebuilt while the worker is still starting
+	// it, and the row's index would then name a different app.
 	launch_job_t *job = malloc(sizeof(*job));
 	if (!job) {
 		return;
@@ -125,7 +141,13 @@ static void rebuild(void) {
 			snprintf(caption, sizeof(caption), "%s", apps[i].description);
 		}
 		if (caption[0]) {
-			settingsrow_add_caption(row, caption);
+			if (apps[i].tier == APP_TIER_HEAVY) {
+				char tagged[sizeof(caption) + 8];
+				snprintf(tagged, sizeof(tagged), "Heavy · %s", caption);
+				settingsrow_add_caption(row, tagged);
+			} else {
+				settingsrow_add_caption(row, caption);
+			}
 		}
 	}
 }

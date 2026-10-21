@@ -86,6 +86,17 @@ static bool read_manifest(const char *folder, const char *dirname, app_t *app) {
 	json_obj_str(&doc, root, "icon", app->icon, sizeof(app->icon));
 	json_obj_str(&doc, root, "description", app->description, sizeof(app->description));
 	app->min_player = (int)json_obj_long(&doc, root, "min_player", 0);
+
+	char tier[APPS_TIER_MAX];
+	json_obj_str(&doc, root, "tier", tier, sizeof(tier));
+	if (!tier[0] || strcasecmp(tier, "light") == 0) {
+		app->tier = APP_TIER_LIGHT;
+	} else if (strcasecmp(tier, "heavy") == 0) {
+		app->tier = APP_TIER_HEAVY;
+	} else {
+		app->tier = APP_TIER_LIGHT;
+		fprintf(stderr, "apps: %s names unknown tier \"%s\", using light\n", path, tier);
+	}
 	json_free(&doc);
 
 	if (!app->id[0]) {

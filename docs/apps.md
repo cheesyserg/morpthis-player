@@ -5,6 +5,11 @@ microSD card. The player itself stays a music player: an app is a folder the
 user copies onto the card, and the Apps page is the only part of the interface
 that knows about it. The page is reached from **More → Apps**.
 
+A UI app runs inside the player through the SDK, on its own page with the
+player's top bar, chevron and swipe-back. A headless tool still runs as a child
+process. Each app declares a **tier**: a light app keeps the player's playback
+and caches, a heavy app asks the player to release them first.
+
 This document is the on-card contract. The SDK and the apps repository are
 described in [app-sdk.md](app-sdk.md) and [apps-repo.md](apps-repo.md).
 
@@ -46,6 +51,7 @@ described in [app-sdk.md](app-sdk.md) and [apps-repo.md](apps-repo.md).
 | `entry` | string | **yes** | — | Relative to the app folder |
 | `icon` | string | no | empty | Relative to the app folder |
 | `description` | string | no | empty | One line under the name |
+| `tier` | string | no | `light` | `light` or `heavy`; heavy reclaims player memory first |
 | `min_player` | number | no | 0 | Minimum player build; 0 = no requirement |
 
 Example:
@@ -58,6 +64,7 @@ Example:
   "entry": "calculator",
   "icon": "icon.png",
   "description": "A four-function calculator.",
+  "tier": "light",
   "min_player": 1
 }
 ```
@@ -66,27 +73,61 @@ Example:
 backslash. A manifest is data from a removable card; it must not be able to
 name a file outside the folder the player is about to run.
 
+## App tiers
+
+| Tier | What the player does | Use it for |
+| --- | --- | --- |
+| `light` (default) | Nothing is unloaded. Playback carries on, the library and thumbnail caches stay warm, and the app fits in the free memory. | Everything that can. Calculator, notes, a timer. |
+| `heavy` | Stops playback, waits for the decoder and PCM to close, releases the SQLite page caches and trims the heap before loading. The queue is kept. | The rare app that needs the room: a game, an emulator, a large image viewer. |
+
+Heavy is a request, not a promise: static pages of the player cannot be freed,
+and the reclaim only covers what the player knows how to release. The player
+logs `MemAvailable` before and after, so the effect is visible. A heavy app that
+needs the player's audio should be light instead, because heavy stops the
+transport (the app can start it again through the SDK).
+
 ## Launch model
 
-Today the player forks, `execve`s the entry binary from the card, and waits for
-it. The child gets the app's folder as its working directory and the player's
-environment; its signal handlers are reset to the defaults. The Apps page
-reports the exit status as a toast and logs the same lines under `apps:`.
+The player tries the in-process path first. It `dlopen`s the entry as a shared
+object, checks the API version the app was built against, and calls
+`morpthis_app_main()` on the GUI thread. The app creates a screen; the player
+puts it up with its top bar, floating chevron and swipe-back, and destroys it
+when the app quits. The chevron and swipe both deliver `MORPTHIS_BUTTON_BACK`
+to an app that subscribed, then quit the app.
 
-This is enough for tools that run and exit. It is **not** enough for a UI app:
-the player owns the framebuffer, the touch panel, the ALSA device and the DAC,
-and a second process cannot share them. The SDK's in-process model is the
-answer for UI apps (see [app-sdk.md](app-sdk.md)); until it exists, the Apps
-page kills an app that outlives 30 seconds rather than leaving a worker thread
-and a child behind.
+If the entry is not a shared object, or has no SDK entry point, the player falls
+back to the separate-process model: fork, `execve` the entry from the card, and
+wait for it. The child gets the app's folder as its working directory and the
+player's environment; its signal handlers are reset to the defaults. A tool
+that outlives 30 seconds is killed rather than left behind.
+
+A file that looks like a plugin but cannot start (a missing SDK symbol, a newer
+API version, an entry that returns non-zero) is reported as such; it is not
+quietly retried as a tool.
 
 ## Memory
 
 The device has 64 MB, and with the player running `MemAvailable` is around
-18 MB. That is the budget an app has to fit in. The player's own caches are
+18 MB. That is the budget a light app has to fit in. The player's own caches are
 the first thing to reclaim before a large app: the streaming pages' static
-arrays alone are several megabytes. See the memory notes in
-[app-sdk.md](app-sdk.md#memory).
+arrays alone are several megabytes.
+
+A **light** app leaves everything alone. A **heavy** app triggers the reclaim
+before it loads:
+
+- `audio_release_all()` stops playback and waits for the decoder, its open
+  `FILE*` and the PCM to be gone; the queue survives, so play starts the current
+  track again.
+- `library_release_memory()`, `audiobookdb_release_memory()` and
+  `cover_cache_release_memory()` give SQLite's page caches back without closing
+  the databases.
+- `player_release_artwork()` and `coverloader_release_all()` drop the decoded
+  cover, its blurred backdrop and the list thumbnails; the player asks for the
+  current track's picture again when the app exits.
+- `malloc_trim(0)` returns the freed arenas to the kernel.
+
+The app is still in-process, so a fault in it takes the player down. See the
+memory notes in [app-sdk.md](app-sdk.md#memory).
 
 ## Failure handling
 
@@ -97,9 +138,14 @@ arrays alone are several megabytes. See the memory notes in
 | `app.json` missing or invalid | The folder is skipped; the log says why |
 | `entry` missing or not executable | The row is listed; launching reports the error |
 | `execve` refused | The row reports the `errno` (`EACCES`, `ENOEXEC`, ...) |
-| App exits | `name: exit N` |
-| App killed by a signal | `name: signal N` |
-| App outlives 30 s | `name: timed out` |
+| `dlopen`/entry missing | Falls back to the tool path |
+| App needs a newer API | `name: needs a newer player` |
+| `morpthis_app_main` returns non-zero | `name: entry returned N` |
+| App returns without a screen | `name: did not load a screen` |
+| App calls quit | Back to the Apps page |
+| Tool exits | `name: exit N` |
+| Tool killed by a signal | `name: signal N` |
+| Tool outlives 30 s | `name: timed out` |
 
 ## Security
 
@@ -113,8 +159,8 @@ until then, install apps you trust.
 ## Current limitations
 
 - Per-app icons are not drawn yet; the list uses a generic glyph.
-- The launch model is a separate process, so UI apps cannot take over the
-  screen, touch or audio yet.
+- A UI app is not sandboxed: a fault in it takes the player down.
+- Heavy reclaim is best-effort; static pages of the player stay mapped.
 - No install/uninstall UI: copy or delete the folder.
 - No hot reload: the page rescans when it is opened.
 - No permissions, signing or sandbox.
@@ -123,7 +169,7 @@ until then, install apps you trust.
 ## Roadmap
 
 1. Per-app icons decoded from the card.
-2. The SDK's in-process app API (display, touch, audio, timers).
-3. An app-mode memory reclaim before a large app starts.
-4. `.mapp` package install from the file manager or Wi-Fi transfer.
-5. Signing and a permission manifest.
+2. An app-mode reclaim of the UI caches themselves, so heavy apps get more than
+   the audio path and SQLite pages.
+3. `.mapp` package install from the file manager or Wi-Fi transfer.
+4. Signing and a permission manifest.

@@ -32,6 +32,10 @@
 bool audiobookdb_open(const char *db_path);
 void audiobookdb_close(void);
 
+// Frees the SQLite page cache without closing the database. The heavy app tier
+// uses it for the same reason library_release_memory() exists.
+void audiobookdb_release_memory(void);
+
 // Closes and reopens the index when its file was deleted or replaced under the
 // open handle, as library_reopen_if_replaced() does for the music. True when it
 // reopened.

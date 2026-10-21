@@ -1680,6 +1680,16 @@ void cover_cache_reopen_if_replaced(void) {
 	pthread_mutex_unlock(&thumb_db_lock);
 }
 
+// The heavy app tier: the page cache goes back to the kernel, the connection
+// and the card side of the cache stay as they are.
+void cover_cache_release_memory(void) {
+	pthread_mutex_lock(&thumb_db_lock);
+	if (thumb_db) {
+		sqlite3_db_release_memory(thumb_db);
+	}
+	pthread_mutex_unlock(&thumb_db_lock);
+}
+
 void cover_set_cache_dir(const char *sd_root) {
 	pthread_mutex_lock(&thumb_db_lock);
 

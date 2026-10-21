@@ -4309,6 +4309,39 @@ bool audio_suspend_freeze(int timeout_ms) {
 	return true;
 }
 
+// The heavy app tier's release. It is suspend_freeze() without the restart:
+// stop, wait for play_file() and the PCM to be genuinely gone, and leave the
+// player stopped. The queue is not touched.
+bool audio_release_all(int timeout_ms) {
+	pthread_mutex_lock(&audio_mutex);
+	audio_command = AUDIO_CMD_STOP;
+	playback_status = AUDIO_STATUS_STOPPED;
+	seek_request = false;
+	seek_target_secs = -1.0;
+	track_completed = false;
+	hold_flush_request = true;
+	pthread_cond_broadcast(&audio_cond);
+	pthread_mutex_unlock(&audio_mutex);
+
+	subsonicstream_cancel();
+
+	bool clean = false;
+	for (int waited = 0; waited <= timeout_ms && !clean; waited += 20) {
+		clean = !playback_context_active && !pcm_device_open && !gapless_holding();
+		if (!clean) {
+			usleep(20 * 1000);
+		}
+	}
+
+	if (!clean) {
+		fprintf(stderr, "audio: release for an app failed (context=%d pcm=%d gapless=%d)\n",
+				(int)playback_context_active, (int)pcm_device_open, (int)gapless_holding());
+	} else {
+		fprintf(stderr, "audio: released decoder and PCM for an app\n");
+	}
+	return clean;
+}
+
 // A real power-off or reboot has the same last transition as suspend, except
 // that nothing is coming back to unmute the route. Fade the DAC to silence
 // first, close every PCM (local, gapless, and external), then park the HBC3000

@@ -3,8 +3,8 @@
 The SDK is the contract between the player and apps built outside this
 repository. It is a separate repository because apps have their own release
 cadence, their own authors and, for some of them, their own licences. The
-player only needs the manifest and the launch path; everything an app is built
-with belongs in the SDK.
+player owns the launch path and the implementation of the API; everything an
+app is built with belongs in the SDK.
 
 ## What the SDK has to solve
 
@@ -23,6 +23,12 @@ Two models are possible:
 **Recommendation: in-process plugin for UI apps.** It is the model the removed
 Gearboy integration used, and the only one that fits the memory budget. Keep
 the separate-process path for headless tools.
+
+The player now implements this: `dlopen` the entry, check
+`morpthis_app_api_required()`, call `morpthis_app_main()` on the GUI thread, and
+fall back to `execve` only when the file is not a plugin. The handoff details,
+the exported-symbol list and the teardown rules are in the SDK's
+`docs/player-integration.md`.
 
 ## Repository layout
 
@@ -77,10 +83,13 @@ does not have to build binutils, GCC and glibc to compile a calculator.
   `lv_obj_t` pins every app to LVGL 9.6 and to `lv_conf.h`; a wrapper can
   change the implementation without breaking apps.
 - **No exceptions across the boundary.** C++ apps catch their own.
-- **One entry point.** `int morpthis_app_main(const morpthis_app_t *app)` or
-  similar; the player calls it on the GUI thread.
+- **One entry point.** `int morpthis_app_main(const morpthis_app_t *app)`; the
+  player calls it on the GUI thread.
 - **No blocking the GUI thread.** Long work goes on an app-owned thread and
   comes back through the SDK's `post()` (the player's `gui_post`).
+- **A tier in the manifest.** A `light` app leaves playback and caches alone; a
+  `heavy` app asks the player to stop playback and release its caches before
+  loading. See [apps.md](apps.md#app-tiers).
 
 ## API surface, first cut
 
@@ -140,10 +149,14 @@ The SDK should:
 - Provide a `morpthis_mem_available()` call so an app can refuse to start.
 - Encourage loading assets on demand, not all at once.
 - Never allocate in the draw path.
+- Declare `tier` honestly. `heavy` is the escape hatch for a game or emulator:
+  the player stops playback, releases the audio path and SQLite page caches,
+  and drops the decoded artwork and list thumbnails first. It does not make
+  static player pages disappear, so it is not a licence to use whatever is
+  left.
 
-The player's app-mode reclaim (freeing the streaming pages' static arrays,
-stopping playback, dropping thumbnails) is the other half of this; see
-[apps.md](apps.md).
+The player's reclaim is `apps_reclaim_for_heavy()` in
+`src/system/apps/apps_reclaim.c`; see [apps.md](apps.md#app-tiers).
 
 ## What the SDK should not do
 

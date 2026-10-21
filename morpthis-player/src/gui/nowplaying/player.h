@@ -148,8 +148,14 @@ const lv_image_dsc_t *player_backdrop_image(void);
 // icon or cover for a live stream. NULL whenever player_cover_image() is NULL.
 // For whoever wants the same picture at another size -- the Framed screensaver
 // asks the cover loader for it at the frame's -- without guessing which of the
-// several places a picture can come from the player used.
+// several places a picture can come from.
 const char *player_cover_path(void);
+
+// Drops the loaded artwork and its blurred copy, freeing their buffers. The
+// heavy app tier uses it before loading; the player asks for the current
+// track's picture again with player_refresh_artwork().
+void player_release_artwork(void);
+void player_refresh_artwork(void);
 
 // Registers a callback run immediately before that artwork is freed, so
 // whoever borrowed it can drop its references first. One at a time; NULL

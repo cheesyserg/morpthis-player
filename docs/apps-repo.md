@@ -37,6 +37,9 @@ morpthis-apps/
 - `icon` is `icon.png` (square, 64×64 or 128×128).
 - `description` is one sentence, no trailing period.
 - `min_player` is the oldest player build the app was tested on.
+- `tier` is `light` unless the app cannot fit otherwise; `heavy` stops playback
+  and releases the player's caches before loading. Use it for an emulator or a
+  game, not for a utility.
 
 Validate every manifest in CI. A manifest that names a path outside its folder
 is a build failure, not a runtime surprise.
@@ -83,13 +86,13 @@ is a build failure, not a runtime surprise.
 
 Start with the ones that prove the API without needing the display handoff:
 
-1. **Calculator** — pure UI, no audio, no files.
-2. **Notes** — text input and the card.
-3. **Stopwatch / timer** — timers and background work.
-4. **Unit converter** — lists and a keyboard.
+1. **Calculator** — pure UI, no audio, no files. (light)
+2. **Notes** — text input and the card. (light)
+3. **Stopwatch / timer** — timers and background work. (light)
+4. **Unit converter** — lists and a keyboard. (light)
 5. **File checksum** — a headless tool, proves the separate-process path.
 6. **Gearboy** — the first large app; it needs audio, input and a frame loop,
-   and it is the reference for the in-process model.
+   and it is the reference for the in-process model. (heavy)
 
 ## What not to put in this repository
 

@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Keep the linker script LF so GNU ld does not see a CR as part of a symbol
+# name.
+*.ld text eol=lf

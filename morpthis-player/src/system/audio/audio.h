@@ -56,6 +56,12 @@ bool audio_suspend_quiesce(int timeout_ms);
 // player+0xBB8 set before mem, consumed by the play afterwards).
 bool audio_suspend_freeze(int timeout_ms);
 
+// The heavy app tier's release: a real STOP, and a wait until the decoder, its
+// FILE* and the PCM are gone, without arming the restart that suspend needs.
+// Playback is left stopped; the queue is untouched, so play starts the current
+// track again. Returns false if the context did not quiesce in time.
+bool audio_release_all(int timeout_ms);
+
 // Before a real power-off/reboot: temporarily mute the DAC, close local and
 // external PCM streams, wait for playback teardown, then park the HBC3000 on
 // its unused socket. The playback position must be saved by the caller first.

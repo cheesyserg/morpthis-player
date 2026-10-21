@@ -47,6 +47,13 @@ void coverloader_request(int slot, const char *path, int size);
 // for it is freed.
 void coverloader_release(int slot);
 
+// Drops every decoded list thumbnail and the player's artwork job. The heavy
+// app tier uses it before loading; the pages ask again when they are drawn.
+void coverloader_release_all(void);
+
+// Drops only the player's cover job (the big cover and its blurred backdrop).
+void coverloader_release_player(void);
+
 // Collects a finished image. Returns false while the worker is still busy, or
 // if there was no artwork. `found` says which of the two it was, so a caller
 // can stop asking.

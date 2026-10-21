@@ -184,7 +184,7 @@ See [setup, design, limitations and the V1 validation checklist](docs/subsonic.m
 - `docs/subsonic.md` — Subsonic/Gonic setup, RAM transport and hardware validation.
 - `docs/sgm31324-led-control.md` — driving the RGB status LED directly over I²C.
 - `docs/apps.md` — the on-card app contract: layout, manifest, launch model and limits.
-- `docs/app-sdk.md` — the SDK repository: toolchain, ABI, API surface and packaging.
+- `docs/app-sdk.md` — the SDK repository: toolchain, ABI, API surface and packaging. The player build needs its public headers: clone `morpthis-sdk` beside this repository or set `MORPTHIS_SDK`.
 - `docs/apps-repo.md` — the apps repository: structure, CI, releases and contribution rules.
 - `morpthis-player/tools/morpthis-bugreport.sh` — one-file diagnostic bundle, run on the device over ADB.
 - `FEATURES.md` — detailed feature notes.

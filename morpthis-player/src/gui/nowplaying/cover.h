@@ -25,6 +25,11 @@ void cover_set_cache_dir(const char *sd_root);
 // recycled.
 void cover_cache_reopen_if_replaced(void);
 
+// Frees the thumbnail database's page cache without closing it. The heavy app
+// tier uses it before loading: the cache refills on the next list pass, and the
+// index and the card stay untouched.
+void cover_cache_release_memory(void);
+
 // How a picture is mapped onto its box.
 typedef enum {
 	COVER_FIT_CONTAIN, // whole picture visible, letterboxed, never upscaled

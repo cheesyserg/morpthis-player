@@ -64,6 +64,8 @@ static dual_job_t player_job;
 static dual_job_t saver_job;
 static dual_job_t frame_job; // one picture, the second slot stays empty
 
+static void dual_discard(dual_job_t *job);
+
 // The framed screensaver's loader, in the dual job's shape. The second image
 // is never asked for; it is zeroed so the shared bookkeeping can free it like
 // any other without looking.
@@ -315,6 +317,27 @@ void coverloader_release(int slot_index) {
 	pthread_mutex_lock(&lock);
 	discard(&slots[slot_index]);
 	pthread_mutex_unlock(&lock);
+}
+
+void coverloader_release_player(void) {
+	pthread_mutex_lock(&lock);
+	dual_discard(&player_job);
+	// The "what is it" job holds only a number, but a stale answer must not
+	// land after its caller has gone.
+	player_id_job.generation++;
+	player_id_job.pending = false;
+	player_id_job.done = false;
+	player_id_job.id = 0;
+	pthread_mutex_unlock(&lock);
+}
+
+void coverloader_release_all(void) {
+	for (int i = 0; i < COVERLOADER_SLOTS; i++) {
+		coverloader_release(i);
+	}
+	coverloader_release_player();
+	coverloader_release_screensaver();
+	coverloader_release_frame();
 }
 
 bool coverloader_take(int slot_index, cover_image_t *out, bool *finished) {

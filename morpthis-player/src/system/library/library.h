@@ -25,6 +25,11 @@
 bool library_open(const char *db_path);
 void library_close(void);
 
+// Frees SQLite's page cache without closing the index: for the heavy app tier,
+// where every kilobyte matters and the next query can read pages back from the
+// card. The database handle stays open, so nothing above this has to reopen it.
+void library_release_memory(void);
+
 // Closes and reopens the index when its file is no longer the one that was
 // opened: deleted (from the file manager, the Wi-Fi transfer page) or replaced
 // by another under the same name. A deleted database stays readable through the

@@ -65,6 +65,9 @@ concurrency:
 
 env:
   STOCK_FIRMWARE_URL: ${{ inputs.stock_firmware_url || 'https://drive.google.com/drive/folders/1jbT9lhRvJ8sbJuepnaBpss861mpsYwnv?usp=sharing' }}
+  # The app API headers. The player implements the SDK; the checkout below puts
+  # the sibling repository inside the workspace and this is its absolute path.
+  MORPTHIS_SDK: ${{ github.workspace }}/morpthis-sdk
 
 jobs:
   firmware:
@@ -88,6 +91,12 @@ jobs:
           # with build_ref set to a tag builds the tag, not the branch. Left
           # empty, this is the run's own ref, as it always was.
           ref: ${{ inputs.build_ref || github.sha }}
+
+      - name: Check out the app SDK
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ github.repository_owner }}/morpthis-sdk
+          path: morpthis-sdk
 
       # The one line every later step and every report reads. GITHUB_SHA is
       # the ref the run was STARTED on, which is not the ref that was built
@@ -195,6 +204,11 @@ jobs:
           watcher=$!
           trap 'kill "$watcher" 2>/dev/null || true' EXIT
           make target -j"$(nproc)"
+
+      - name: Check the exported SDK surface
+        env:
+          CROSS_NM: ${{ github.workspace }}/morpthis-player/rockbox-toolchain/bin/mipsel-rockbox-linux-gnu-nm
+        run: sh morpthis-sdk/tools/check-exports.sh morpthis-player/morpthis_player
 
       - name: Build v1.upt
         run: |

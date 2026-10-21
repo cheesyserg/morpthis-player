@@ -17,6 +17,13 @@ TARGET_DEBUG_BIN = morpthis_player_debug
 LVGL_DIR = $(CURDIR)/lvgl
 ROCKBOX_TOOLCHAIN_DIR = $(CURDIR)/rockbox-toolchain
 
+# The app SDK's public headers. The player implements that API, so it needs the
+# declarations even though the apps are built in another repository. Clone
+# morpthis-sdk beside this checkout (the default) or set MORPTHIS_SDK.
+MORPTHIS_SDK ?= ../../morpthis-sdk
+MORPTHIS_SDK_INCLUDE := $(MORPTHIS_SDK)/include
+MORPTHIS_APP_API_MAP := $(CURDIR)/src/system/apps/morpthis.ld
+
 CC = gcc
 CROSS_CC ?= $(ROCKBOX_TOOLCHAIN_DIR)/bin/mipsel-rockbox-linux-gnu-gcc
 
@@ -58,7 +65,7 @@ endif
 #                               readdir()/stat() fail with EOVERFLOW on an inode
 #                               or offset wider than 32 bits, which an exFAT
 #                               card produces routinely.
-CFLAGS = -O3 -g -Wall -MMD -MP -D_FILE_OFFSET_BITS=64 -I. -I$(LVGL_DIR) -DLV_CONF_INCLUDE_SIMPLE=1
+CFLAGS = -O3 -g -Wall -MMD -MP -D_FILE_OFFSET_BITS=64 -I. -I$(LVGL_DIR) -I$(MORPTHIS_SDK_INCLUDE) -DLV_CONF_INCLUDE_SIMPLE=1
 # On the host the audio libraries are the system ones (libopusfile-dev,
 # libwavpack-dev); on the target they are the ones this Makefile builds below.
 # opusfile.h includes <opus_multistream.h> unprefixed, so the opus/ directory
@@ -97,8 +104,15 @@ TARGET_CFLAGS = $(CFLAGS) -DBOARD_DEFAULT_TEMPOTEC_V1=1 -march=mips32r2 -mno-mad
 
 # Link flags
 HOST_LDFLAGS = $(shell sdl2-config --libs) -lpthread -lm -ldl -lasound $(shell pkg-config --libs freetype2) \
-			   $(shell pkg-config --libs opusfile wavpack)
+					   $(shell pkg-config --libs opusfile wavpack)
 TARGET_LDFLAGS = $(FREETYPE_PREFIX)/lib/libfreetype.a $(AUDIO_LIBS) -lpthread -lm -ldl -lasound
+
+# Only the SDK is exported from the player. -rdynamic puts the API in the
+# dynamic symbol table; the version script keeps every other internal symbol
+# out of it. The version script is the same contract the app SDK publishes in
+# abi/morpthis-api-1.txt.
+HOST_LDFLAGS += -rdynamic -Wl,--version-script=$(MORPTHIS_APP_API_MAP)
+TARGET_LDFLAGS += -rdynamic -Wl,--version-script=$(MORPTHIS_APP_API_MAP)
 
 # FreeType for the target, built static: the rootfs has no libfreetype.so. The
 # host uses the system one. The device's fonts are plain OTF/TTF, so zlib,
@@ -167,11 +181,23 @@ HOST_OBJS = $(APP_SRCS:src/%.c=build_host/%.o) \
 TARGET_OBJS = $(APP_SRCS:src/%.c=build_target/%.o) \
 			  $(LVGL_SRCS:$(LVGL_DIR)/%.c=build_target/lvgl/%.o)
 
-.PHONY: all host target clean compile_commands.json
+.PHONY: all host target clean compile_commands.json sdk-check
 
 all: host compile_commands.json
 
 host: $(HOST_BIN) compile_commands.json
+
+# The app SDK's headers are a build input, not a runtime dependency. Checked
+# once per build rather than when this file is parsed, so 'make clean' still
+# works in a checkout that has not fetched the sibling repository yet.
+sdk-check:
+	@if [ ! -f "$(MORPTHIS_SDK_INCLUDE)/morpthis/app.h" ]; then \
+		echo "morpthis-sdk headers not found at $(MORPTHIS_SDK_INCLUDE)" >&2; \
+		echo "Clone morpthis-sdk beside this checkout or set MORPTHIS_SDK." >&2; \
+		exit 1; \
+	fi
+
+$(HOST_OBJS) $(TARGET_OBJS): | sdk-check
 
 $(HOST_BIN): $(HOST_OBJS)
 	$(HOST_LD) -o $@ $(HOST_OBJS) $(HOST_LDFLAGS)

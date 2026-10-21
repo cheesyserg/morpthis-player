@@ -28,10 +28,14 @@
 // and `icon` are refused if they are absolute or contain "..", so a manifest
 // cannot point the player outside its own folder.
 //
-// The launch model is a separate process for now: the player forks, execs the
-// entry binary from the card, and waits for it. That is enough for tools and
-// for proving the path; a UI app needs the player's display, touch and audio,
-// which is what the SDK's in-process model will provide. See docs/apps.md.
+// `tier` is "light" (the default) or "heavy". A light app keeps playback and
+// the player's caches as they are. A heavy app asks the player to release its
+// playback path and cache memory before the app loads; the queue is kept, so
+// pressing play afterwards restarts the current track.
+//
+// The launch model is a separate process for headless tools and the SDK's
+// in-process model for UI apps. The player tries the plugin first and falls
+// back to fork/execve for a tool. See docs/apps.md and docs/app-sdk.md.
 
 #define APPS_DIR "Apps"
 #define APPS_MAX 64
@@ -42,6 +46,12 @@
 #define APPS_ICON_MAX 256
 #define APPS_DESC_MAX 160
 #define APPS_FOLDER_MAX 512
+#define APPS_TIER_MAX 16
+
+typedef enum {
+	APP_TIER_LIGHT = 0,
+	APP_TIER_HEAVY,
+} app_tier_t;
 
 typedef struct {
 	char id[APPS_ID_MAX];
@@ -52,6 +62,7 @@ typedef struct {
 	char description[APPS_DESC_MAX];
 	char dir[APPS_ID_MAX];		 // the folder name under Apps/
 	char folder[APPS_FOLDER_MAX]; // the absolute path to that folder
+	app_tier_t tier;
 	int min_player;				 // 0 when the manifest does not say
 } app_t;
 

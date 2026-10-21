@@ -236,6 +236,14 @@ void audiobookdb_close(void) {
 	pthread_mutex_unlock(&db_lock);
 }
 
+void audiobookdb_release_memory(void) {
+	pthread_mutex_lock(&db_lock);
+	if (db) {
+		sqlite3_db_release_memory(db);
+	}
+	pthread_mutex_unlock(&db_lock);
+}
+
 bool audiobookdb_needs_rescan(void) { return db && outdated && !scan_running; }
 
 int audiobookdb_count(void) {

@@ -3441,10 +3441,9 @@ static void wave_refresh(const char *path, double position) {
 	wave_paint(px);
 }
 
-// Throws away what is on screen and asks for the artwork of `filepath`. The
-// half of refresh_cover() that runs once it is known that the picture really is
-// changing.
-static void reload_cover(const char *filepath) {
+// Throws away the loaded artwork and everything on screen that points at it.
+// The caller asks for the next picture itself.
+static void drop_cover(bool forget_tone) {
 	if (cover_release_cb) {
 		cover_release_cb();
 	}
@@ -3486,13 +3485,20 @@ static void reload_cover(const char *filepath) {
 	// one on screen. A track with nothing coming loses it at once, here or --
 	// where that is only known once the worker answers -- in
 	// apply_cover_result().
-	if (!filepath || !filepath[0]) {
+	if (forget_tone) {
 		album_tone = 0;
 	}
 	paint_alt_tint();
 
 	lv_obj_invalidate(cover_panel);
 	lv_obj_invalidate(player_menu);
+}
+
+// Throws away what is on screen and asks for the artwork of `filepath`. The
+// half of refresh_cover() that runs once it is known that the picture really is
+// changing.
+static void reload_cover(const char *filepath) {
+	drop_cover(!filepath || !filepath[0]);
 
 	if (filepath && filepath[0]) {
 		backdrop_is_studio = layout_studio_now;
@@ -3561,6 +3567,26 @@ static void refresh_cover(const char *filepath) {
 	cover_id_state = COVER_ID_IDLE;
 	cover_incoming_id = 0;
 	reload_cover(filepath);
+}
+
+void player_release_artwork(void) {
+	if (!cover_img) {
+		return;
+	}
+
+	drop_cover(true);
+	coverloader_release_player();
+	cover_shown_path[0] = '\0';
+	cover_shown_id = 0;
+	cover_incoming_id = 0;
+	cover_id_state = COVER_ID_IDLE;
+	cover_request_outstanding = false;
+}
+
+void player_refresh_artwork(void) {
+	device_state_t state;
+	device_state_get(&state);
+	refresh_cover(state.live ? state.live_cover : state.current_file);
 }
 
 // The answer to whichever question was asked, picked up on the progress poll.
