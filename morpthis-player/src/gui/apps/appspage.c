@@ -16,12 +16,14 @@
 #include "src/gui/shell/toast.h"
 #include "src/gui/apps/apphost.h"
 #include "src/system/apps/apps.h"
+#include "src/system/core/lang.h"
 
 lv_obj_t *appspage_screen;
 
 static gui_config_t *page_cfg;
 static lv_obj_t *grid;
 static lv_obj_t *empty_panel;
+static lv_obj_t *loading_label;
 
 static app_t apps[APPS_MAX];
 static int app_count;
@@ -154,13 +156,16 @@ static void free_icons(void) {
 // one card per app, the app's own icon when it has one, the name underneath.
 static void rebuild(void) {
 	// Hide the old tiles before their icons are freed; nothing gets a chance to
-	// draw a descriptor that is about to go away.
-	gridpage_show_empty(grid, empty_panel, true);
+	// draw a descriptor that is about to go away. The empty panel stays hidden
+	// too: while the scan runs the loading line is the only thing on the page.
+	lv_obj_set_hidden(grid, true);
+	lv_obj_set_hidden(empty_panel, true);
 	free_icons();
 
 	app_count = apps_scan(apps, APPS_MAX);
 	if (app_count <= 0) {
 		gridpage_empty_set_text(empty_panel, app_count < 0 ? "system_no_card" : "apps_empty_note");
+		gridpage_show_empty(grid, empty_panel, true);
 		return;
 	}
 
@@ -195,7 +200,21 @@ static void screen_loaded_cb(lv_event_t *e) {
 	// The card must be back before the scan mounts a package from it. This is
 	// also what turns a card already exported to a PC into the player's again.
 	apphost_set_page_visible(true);
+
+	// The scan mounts every package and decodes every icon, which blocks the
+	// interface for a moment. Paint the loading line first, or the user sees
+	// the previous page frozen while it happens.
+	if (loading_label) {
+		lv_obj_set_hidden(loading_label, false);
+		lv_obj_move_foreground(loading_label);
+		lv_obj_set_hidden(grid, true);
+		lv_obj_set_hidden(empty_panel, true);
+		lv_refr_now(NULL);
+	}
 	rebuild();
+	if (loading_label) {
+		lv_obj_set_hidden(loading_label, true);
+	}
 }
 
 static void screen_unloaded_cb(lv_event_t *e) {
@@ -207,7 +226,16 @@ static void screen_unloaded_cb(lv_event_t *e) {
 
 static void scan_cb(lv_event_t *e) {
 	(void)e;
+	if (loading_label) {
+		lv_obj_set_hidden(loading_label, false);
+		lv_obj_move_foreground(loading_label);
+		lv_obj_set_hidden(empty_panel, true);
+		lv_refr_now(NULL);
+	}
 	rebuild();
+	if (loading_label) {
+		lv_obj_set_hidden(loading_label, true);
+	}
 }
 
 static void info_cb(lv_event_t *e) {
@@ -247,6 +275,15 @@ void appspage_init(gui_config_t *cfg) {
 	// so no tile sits under the info button.
 	grid = gridpage_build(appspage_screen, cfg, entries, 0, 2, 3, true);
 	empty_panel = gridpage_empty_panel(appspage_screen, cfg, &icon_menu_more, "apps_empty_note", scan_cb);
+
+	// Said before the first scan, over the empty grid. The page is rebuilt on
+	// every open, so this is the line the user sees while it mounts packages.
+	loading_label = lv_label_create(appspage_screen);
+	lv_label_set_text(loading_label, tr("loading"));
+	lv_obj_add_style(loading_label, &theme_style_text_dim, 0);
+	lv_obj_set_style_text_font(loading_label, &font_ui_22, 0);
+	lv_obj_center(loading_label);
+	lv_obj_set_hidden(loading_label, true);
 
 	lv_obj_add_event_cb(appspage_screen, screen_loaded_cb, LV_EVENT_SCREEN_LOADED, NULL);
 	lv_obj_add_event_cb(appspage_screen, screen_unloaded_cb, LV_EVENT_SCREEN_UNLOADED, NULL);

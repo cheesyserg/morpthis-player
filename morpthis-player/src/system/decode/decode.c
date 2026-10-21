@@ -3,7 +3,6 @@
 #include "src/system/library/cue.h"
 
 #include "src/system/decode/growfile.h"
-#include "src/system/streaming/subsonicstream.h"
 
 #include "src/system/core/utils.h"
 
@@ -452,7 +451,6 @@ struct decoder {
 	// Non-NULL when the file was still being written at open. Closed after the
 	// decoder, which reads through it right up to the end.
 	growfile_t *growing;
-	streambridge_t *buffered; // leased RAM source, released after the codec
 
 	// One track of a CUE sheet: a window onto a file that holds a whole disc.
 	// The window is applied at this boundary rather than in each format's
@@ -1626,145 +1624,8 @@ static decoder_t *decoder_open_cue(const char *sheet_path, int track, decode_for
 	return dec;
 }
 
-static size_t bridge_read(void *source, void *out, size_t bytes) {
-	return streambridge_read(source, out, bytes);
-}
-
-static drmp3_bool32 bridge_seek_mp3(void *source, int offset, drmp3_seek_origin origin) {
-	if (origin == DRMP3_SEEK_END) {
-		return DRMP3_FALSE;
-	}
-	return streambridge_seek(source, offset, origin == DRMP3_SEEK_CUR) ? DRMP3_TRUE : DRMP3_FALSE;
-}
-
-static drflac_bool32 bridge_seek_flac(void *source, int offset, drflac_seek_origin origin) {
-	if (origin == DRFLAC_SEEK_END) {
-		return DRFLAC_FALSE;
-	}
-	return streambridge_seek(source, offset, origin == DRFLAC_SEEK_CUR) ? DRFLAC_TRUE : DRFLAC_FALSE;
-}
-
-static drflac_bool32 bridge_tell_flac(void *source, drflac_int64 *cursor) {
-	*cursor = (drflac_int64)streambridge_tell(source);
-	return DRFLAC_TRUE;
-}
-
-static int bridge_read_opus(void *source, unsigned char *out, int bytes) {
-	return bytes > 0 ? (int)streambridge_read(source, out, (size_t)bytes) : 0;
-}
-
-static decoder_t *decoder_open_buffered(const char *path, decode_format_t format) {
-	int duration = 0;
-	streambridge_t *source = subsonicstream_acquire(path, &duration, NULL);
-	if (!source) {
-		return NULL;
-	}
-	if (!streambridge_prime(source)) {
-		subsonicstream_release(source);
-		return NULL;
-	}
-	// Fail fast if a server ignored the requested codec, returned an API error
-	// under an unhelpful MIME type, or raw names a different original format.
-	// In particular, never scan megabytes of FLAC looking for an MP3 sync word.
-	unsigned char head[64];
-	size_t bytes = streambridge_peek(source, head, sizeof(head));
-	bool signature = false;
-	if (format == DECODE_FORMAT_FLAC) {
-		signature = bytes >= 4 && memcmp(head, "fLaC", 4) == 0;
-	} else if (format == DECODE_FORMAT_MP3) {
-		signature = bytes >= 3 && (memcmp(head, "ID3", 3) == 0 ||
-			(head[0] == 0xff && (head[1] & 0xe0) == 0xe0 && (head[1] & 6) != 0 &&
-			 (head[1] & 0x18) != 8 && (head[2] >> 4) != 0 && (head[2] >> 4) != 15 && (head[2] & 12) != 12));
-	} else if (format == DECODE_FORMAT_OPUS && bytes >= 36 && memcmp(head, "OggS", 4) == 0) {
-		for (size_t i = 27; i + 8 <= bytes; i++) {
-			if (memcmp(head + i, "OpusHead", 8) == 0) {
-				signature = true;
-				break;
-			}
-		}
-	}
-	if (!signature) {
-		streambridge_fail(source, "subsonic_codec_mismatch");
-		subsonicstream_release(source);
-		return NULL;
-	}
-	decoder_t *dec = calloc(1, sizeof(*dec));
-	if (!dec) {
-		streambridge_fail(source, "subsonic_out_of_memory");
-		subsonicstream_release(source);
-		return NULL;
-	}
-	dec->buffered = source;
-	dec->format = format;
-	snprintf(dec->path, sizeof(dec->path), "%s", path);
-	// No `file`: a waveform/tag/index worker must not try to open a URI.
-	switch (format) {
-	case DECODE_FORMAT_MP3:
-		// Only header seeks: dr_mp3 discards the first ten bytes on a NULL
-		// seek callback when no ID3 tag is present, losing the first frame.
-		// The bridge can rewind those retained bytes and skip an ID3 header,
-		// but must never be scanned to EOF merely to count its frames.
-		if (!drmp3_init(&dec->impl.mp3, bridge_read, bridge_seek_mp3, NULL, NULL, source, NULL)) {
-			free(dec);
-			streambridge_fail(source, "subsonic_codec_mismatch");
-			subsonicstream_release(source);
-			return NULL;
-		}
-		dec->channels = (int)dec->impl.mp3.channels;
-		dec->sample_rate = (int)dec->impl.mp3.sampleRate;
-		dec->total_pcm_frames = dec->impl.mp3.totalPCMFrameCount != DRMP3_UINT64_MAX
-			? drmp3_get_pcm_frame_count(&dec->impl.mp3) : 0;
-		// Known Xing/LAME counts honour encoder delay/padding without a scan.
-		break;
-	case DECODE_FORMAT_FLAC:
-		dec->impl.flac = drflac_open(bridge_read, bridge_seek_flac, bridge_tell_flac, source, NULL);
-		if (!dec->impl.flac) {
-			free(dec);
-			streambridge_fail(source, "subsonic_codec_mismatch");
-			subsonicstream_release(source);
-			return NULL;
-		}
-		dec->channels = (int)dec->impl.flac->channels;
-		dec->sample_rate = (int)dec->impl.flac->sampleRate;
-		dec->total_pcm_frames = dec->impl.flac->totalPCMFrameCount;
-		break;
-	case DECODE_FORMAT_OPUS:
-		dec->impl.opus = opusdec_open_stream(source, bridge_read_opus);
-		if (!dec->impl.opus) {
-			free(dec);
-			streambridge_fail(source, "subsonic_codec_mismatch");
-			subsonicstream_release(source);
-			return NULL;
-		}
-		dec->channels = opusdec_channels(dec->impl.opus);
-		dec->sample_rate = opusdec_sample_rate(dec->impl.opus);
-		dec->total_pcm_frames = opusdec_total_frames(dec->impl.opus);
-		break;
-	default:
-		free(dec);
-		subsonicstream_release(source);
-		return NULL;
-	}
-	if (!dec->total_pcm_frames && duration > 0 && dec->sample_rate > 0) {
-		dec->total_pcm_frames = (uint64_t)duration * (uint64_t)dec->sample_rate;
-	}
-	return dec;
-}
-
-bool decoder_is_buffered(const decoder_t *dec) { return dec && dec->buffered; }
-
-bool decoder_wait_buffered(decoder_t *dec, bool (*abort)(void)) {
-	return !dec || !dec->buffered || streambridge_wait_decode(dec->buffered, abort);
-}
-
-bool decoder_buffered_failed(const decoder_t *dec) {
-	return dec && dec->buffered && streambridge_failed(dec->buffered);
-}
 
 decoder_t *decoder_open(const char *filepath, decode_format_t format) {
-	if (subsonicstream_owns(filepath)) {
-		return decoder_open_buffered(filepath, format);
-	}
 	char sheet[512];
 	int track = cue_split_path(filepath, sheet, sizeof(sheet));
 	if (track > 0) {
@@ -2199,7 +2060,7 @@ int decoder_dsd_multiple(const decoder_t *dec) {
 int decoder_sample_rate(const decoder_t *dec) { return dec->sample_rate; }
 
 bool decoder_source_span(const decoder_t *dec, char *file, size_t size, double *begin, double *end) {
-	if (!dec || dec->growing || dec->buffered || !dec->file[0] || !file || size == 0) {
+	if (!dec || dec->growing || !dec->file[0] || !file || size == 0) {
 		return false;
 	}
 	snprintf(file, size, "%s", dec->file);
@@ -2412,9 +2273,6 @@ static uint64_t decoder_read_s32_inner(decoder_t *dec, uint64_t frame_count, int
 }
 
 uint64_t decoder_seekable_limit(decoder_t *dec) {
-	if (dec && dec->buffered) {
-		return 0;
-	}
 	if (!dec || dec->total_pcm_frames == 0) {
 		return 0;
 	}
@@ -2459,9 +2317,6 @@ bool decoder_take_starved(decoder_t *dec) {
 }
 
 int decoder_seek_to_frame(decoder_t *dec, uint64_t frame_index) {
-	if (dec && dec->buffered) {
-		return 0; // no network restart/whole-track decode for a RAM stream seek
-	}
 	if (!dec)
 		return 0;
 
@@ -2688,8 +2543,5 @@ void decoder_close(decoder_t *dec) {
 	}
 
 	growfile_close(growing);
-	if (dec->buffered) {
-		subsonicstream_release(dec->buffered);
-	}
 	free(dec);
 }

@@ -24,8 +24,7 @@
 #include "src/system/playback/device_state.h"
 #include "src/system/remote/dlna.h"
 #include "src/system/remote/sonixlink.h"
-#include "src/system/streaming/qobuzcache.h"
-#include "src/system/streaming/subsonicstream.h"
+#include "src/system/streaming/podcastcache.h"
 #include "src/system/streaming/podcastcache.h"
 #include "src/system/streaming/podcastdl.h"
 #include "src/system/streaming/tidalcache.h"
@@ -723,7 +722,7 @@ static bool streaming_playback_active(void) {
 	if (!path[0]) {
 		return false;
 	}
-	return subsonicstream_owns(path) || qobuzcache_owns(path) || tidalcache_owns(path) || podcastcache_owns(path);
+	return qobuzcache_owns(path) || tidalcache_owns(path) || podcastcache_owns(path);
 }
 
 // Whether the network is the point rather than an idle drain: an AirPlay
@@ -739,7 +738,7 @@ static bool wifi_in_use(void) {
 	// A scan or a connect in flight counts as use: parking the radio out from
 	// under wpa_supplicant mid-association leaves the driver to sort out a
 	// teardown it did not expect.
-	return subsonic_api_busy() || subsonicstream_network_wanted() || wifi_busy() || wifi_scan_running() || streaming_playback_active() || airplay_get_enabled() ||
+	return wifi_busy() || wifi_scan_running() || streaming_playback_active() || airplay_get_enabled() ||
 		   dlna_get_enabled() || sonixlink_get_enabled() ||
 		   wifitransfer_get_enabled() || qobuzcache_downloading_id() > 0 ||
 		   qobuzcache_network_wanted() || tidalcache_downloading_id() > 0 || tidalcache_network_wanted() ||

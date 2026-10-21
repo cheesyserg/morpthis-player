@@ -63,7 +63,6 @@ Interface previews of the stock UI of Morpthis, rendered at the V1's native 240 
 - [Build a firmware image](#build-a-firmware-image)
 - [Install or restore firmware](#install-or-restore-firmware)
 - [Streaming credentials](#streaming-credentials)
-- [Subsonic / Gonic](#subsonic--gonic)
 - [Build from source](#build-from-source)
 - [Project files and documentation](#project-files-and-documentation)
 - [Credits](#credits)
@@ -153,7 +152,7 @@ If `[network] ca_bundle` is set in `/usr/data/device_config.ini`, that configure
 
 ### Your own server with a self-signed certificate
 
-A home server with a self-signed certificate — the usual setup for Subsonic/Gonic, and something no CA bundle can ever validate — is refused by default. **Accept self-signed certificates** under **Streaming → Subsonic → Server settings** lets it through, without `adb` and without a restart. The same thing can be set in `/usr/data/device_config.ini`:
+A home server with a self-signed certificate — the usual setup for Subsonic/Gonic, and something no CA bundle can ever validate — is refused by default. **Relaxed** under the Subsonic app's **More → Settings** lets it through, without `adb` and without a restart. The same thing can be set in `/usr/data/device_config.ini`:
 
 ```ini
 [network]
@@ -168,20 +167,17 @@ For a private development build, `sonix-player/tools/seal_streamkeys.py` can pla
 
 ## Subsonic / Gonic
 
-**Streaming → Subsonic → Server settings** connects to your own Subsonic-compatible server, including Gonic. Enter its base URL and your account, then select **Connect / save**. Browse Music folders or Artists and select a track to play the current page.
+Subsonic is an app now: copy `subsonic.pkgmerp` to `Apps/pkgmerps/` on the card and launch it from **Apps**. The player no longer carries a built-in Subsonic page, its client or its RAM streaming bridge; the app owns the HTTP/TLS client, the MP3 and FLAC decoders, and the queue.
 
-MP3 at **256 kbps** is the default; **320 kbps**, **Opus**, and **Raw** (original FLAC/MP3/Opus) are available. Transcoding must be enabled on the server. Network workers feed two fixed **1 MiB RAM rings**, refill at about 50%, and pre-cache the next track's first **512 KiB** near 90% progress. There is no disk audio cache, localhost proxy, or socket read in the decoder.
+The app browses artists, albums, folders, playlists, genres, starred, random and newest, has a letter keyboard for server search, and can star the current track. Quality is MP3 256/320 or lossless FLAC (server transcoding). Server, account and TLS settings live in `merp_data/subsonic/settings.json`; see the app's README for the file format and the device notes.
 
-No application API key is needed. Prefer HTTPS; credentials stay in memory unless explicitly remembered, and remembered passwords are stored **unencrypted** in a private device-local file. A server with a self-signed certificate needs **Accept self-signed certificates** on its settings page — see [your own server with a self-signed certificate](#your-own-server-with-a-self-signed-certificate). Seeking and reboot restoration are not available for these ephemeral streams. Compatible-format gapless handoff uses the existing ALSA path; network, codec timing and physical-device limits still apply.
-
-See [setup, design, limitations and the V1 validation checklist](docs/subsonic.md), and [host integration tests](sonix-player/tests/README.md).
+The Subsonic app uses the player's raw PCM output (`morpthis_audio_open/write`), so playback, pause, next/previous and the player's volume all go through the same DAC path as local music. Its queue is not saved across reboots.
 
 ## Project files and documentation
 
 - `morpthis-player/` — player sources, LVGL configuration, launcher and build system.
 - `morpthis-packer/` — stock-image preparation, firmware packaging and validation scripts.
 - `docs/collecting-logs.md` — which logs to send with a bug report, and how to take them.
-- `docs/subsonic.md` — Subsonic/Gonic setup, RAM transport and hardware validation.
 - `docs/sgm31324-led-control.md` — driving the RGB status LED directly over I²C.
 - `docs/apps.md` — the on-card app contract: layout, manifest, launch model and limits.
 - `docs/app-sdk.md` — the SDK repository: toolchain, ABI, API surface and packaging. The player build needs its public headers: clone `morpthis-sdk` beside this repository or set `MORPTHIS_SDK`.

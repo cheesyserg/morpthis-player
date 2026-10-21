@@ -11,7 +11,6 @@
 #include "src/system/streaming/podcast.h"
 #include "src/system/streaming/podcastcache.h"
 #include "src/system/streaming/qobuzcache.h"
-#include "src/system/streaming/subsonicstream.h"
 #include "src/system/streaming/tidalcache.h"
 #include "src/system/streaming/radio.h"
 #include "src/system/audio/replaygain.h"
@@ -139,7 +138,7 @@ static bool remember_enabled(void) { return config_get_int("player", "remember_t
 // position, and a streaming cache file will not exist at the next boot.
 static bool remember_worth_saving(const device_state_t *state) {
 	return !state->live && state->current_file[0] && !qobuzcache_owns(state->current_file) &&
-		   !tidalcache_owns(state->current_file) && !subsonicstream_owns(state->current_file);
+		   !tidalcache_owns(state->current_file);
 }
 
 // True when the current track was restored paused at boot and has not yet
@@ -148,8 +147,7 @@ static bool restored_uncounted;
 
 static void record_current_track_play(void) {
 	if (!current_metadata_file[0] || audiobook_is_playing() || podcastcache_is_episode(current_metadata_file) ||
-		qobuzcache_owns(current_metadata_file) || tidalcache_owns(current_metadata_file) ||
-		subsonicstream_owns(current_metadata_file)) {
+		qobuzcache_owns(current_metadata_file) || tidalcache_owns(current_metadata_file)) {
 		return;
 	}
 	library_record_play(current_metadata_file, current_metadata.title, current_metadata.artist);
@@ -408,7 +406,7 @@ static void queue_persist(void) {
 		// empty themselves) and the next boot would restore a queue of paths
 		// that no longer exist, mixed in with the user's own tracks. The RAM
 		// bridge's source IDs are transient for the same reason.
-		if (qobuzcache_owns(path) || tidalcache_owns(path) || subsonicstream_owns(path)) {
+		if (qobuzcache_owns(path) || tidalcache_owns(path)) {
 			from_stream = true;
 			break;
 		}
@@ -1342,9 +1340,6 @@ bool device_state_scrub_active(double *position_out) {
 }
 
 void device_state_scrub_by(double delta) {
-	if (subsonicstream_owns(current_metadata_file)) {
-		return;
-	}
 	double current = 0;
 	double total = 0;
 	audio_get_progress(&current, &total);
@@ -1391,9 +1386,6 @@ void device_state_scrub_commit(void) {
 }
 
 void device_state_seek(double seconds) {
-	if (subsonicstream_owns(current_metadata_file)) {
-		return; // forward-only RAM source: seeking would require a new request
-	}
 	// A seek from anywhere else -- the slider, the queue -- ends a scrub that
 	// was still open, or the interface would go on drawing a thumb that no
 	// longer means anything.

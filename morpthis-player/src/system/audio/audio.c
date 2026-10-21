@@ -3,8 +3,8 @@
 #include "src/system/bluetooth/bluetooth.h"
 #include "src/system/decode/decode.h"
 #include "src/system/decode/growfile.h"
-#include "src/system/streaming/subsonicstream.h"
 #include "src/system/decode/sndfile.h"
+#include "src/system/streaming/streambridge.h"
 #include "src/system/audio/replaygain.h"
 #include "src/system/audio/speed.h"
 #include "src/system/audio/swvolume.h"
@@ -3136,7 +3136,7 @@ static bool playback_reader_should_abort(void);
 
 static void play_decoded_file(const char *filepath, decode_format_t format) {
 	decoder_t *dec = decoder_open(filepath, format);
-	if (!dec && !subsonicstream_owns(filepath)) {
+	if (!dec) {
 		// A busy card (a cover decoding, the library scanning) can make the
 		// first open fail transiently; one more try costs nothing and saves
 		// the track.
@@ -3622,14 +3622,6 @@ static void play_decoded_file(const char *filepath, decode_format_t format) {
 			rebuffer_if_starved(dec, sample_rate, bytes_played / (uint64_t)frame_bytes);
 		}
 
-		// A RAM stream is replenished only by its producer. Rebuffer before
-		// entering a codec, so pause/stop can interrupt without faking codec EOF.
-		// Failed/canceled sources still reach the zero-read branch below: never
-		// spin at RT priority on a source which has no more bytes coming.
-		if (!decoder_wait_buffered(dec, playback_reader_should_abort) && playback_reader_should_abort()) {
-			continue;
-		}
-
 		// How many frames came out (what goes to the card) and how many went
 		// in (what the position in the track advances by). The two are the
 		// same at normal speed, and deliberately not at any other.
@@ -3768,8 +3760,8 @@ static void play_decoded_file(const char *filepath, decode_format_t format) {
 			// not downloaded yet -- is truncated in turn.
 			uint64_t declared = decoder_total_pcm_frames(dec);
 			uint64_t reached = (uint64_t)(bytes_played / frame_bytes);
-			bool cut_short = decoder_buffered_failed(dec) ||
-				(declared > 0 && sample_rate > 0 && reached + (uint64_t)sample_rate < declared);
+			bool cut_short = (declared > 0 && sample_rate > 0 &&
+							  reached + (uint64_t)sample_rate < declared);
 
 			pthread_mutex_lock(&audio_mutex);
 			bool natural_end = audio_command != AUDIO_CMD_STOP && !play_request && !cut_short;
@@ -4149,9 +4141,6 @@ int audio_init(void) {
 }
 
 int audio_play(const char *filepath) {
-	if (!subsonicstream_owns(filepath)) {
-		subsonicstream_cancel();
-	}
 	fprintf(stderr, "audio[%ld]: play requested '%s'\n", log_ms(), filepath);
 
 	// NO route write here: this runs on the UI thread while the previous
@@ -4387,8 +4376,6 @@ bool audio_release_all(int timeout_ms) {
 	pthread_cond_broadcast(&audio_cond);
 	pthread_mutex_unlock(&audio_mutex);
 
-	subsonicstream_cancel();
-
 	bool clean = false;
 	for (int waited = 0; waited <= timeout_ms && !clean; waited += 20) {
 		clean = !playback_context_active && !pcm_device_open && !gapless_holding();
@@ -4480,7 +4467,6 @@ void audio_stop(void) {
 	seek_target_secs = -1.0;
 	track_completed = false; // deliberate stop is not a natural completion
 	pthread_mutex_unlock(&audio_mutex);
-	subsonicstream_cancel();
 }
 
 audio_status_t audio_get_status(void) {

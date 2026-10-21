@@ -139,13 +139,6 @@ int decoder_seek_to_frame(decoder_t *dec, uint64_t frame_index);
 // show and the position the music resumes at are the same.
 uint64_t decoder_seekable_limit(decoder_t *dec);
 
-// A fixed-RAM stream, rather than a local/growing file. Its decoder callbacks
-// never touch the network. Wait only at a decode-block boundary; `abort` may
-// include pause here without leaving a codec halfway through an input read.
-bool decoder_is_buffered(const decoder_t *dec);
-bool decoder_wait_buffered(decoder_t *dec, bool (*abort)(void));
-bool decoder_buffered_failed(const decoder_t *dec);
-
 // True if this file is still growing while being read.
 //
 // Playback needs to know. Ahead of the read head sits a reserve of bytes

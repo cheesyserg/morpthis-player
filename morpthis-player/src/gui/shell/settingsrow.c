@@ -261,15 +261,11 @@ static void fit_row_label(lv_obj_t *label, int32_t width) {
 
 // Space left between the row name and whatever sits to its right.
 #define ROW_LABEL_GAP 12
-// The most leading icons alive at once. Twenty-five of them are built to
-// stay: eight on the Settings page (Developer options is the last of them),
-// seven on Subsonic's home and server pages, and five apiece on the Tokyo
-// Night Streaming and More lists, which the V1 builds alongside the grids.
-// On top of those, a Subsonic browse page lists up to two hundred rows and
-// puts an icon on every one, so anything short of 225 leaves part of that
-// page plain -- at 24 it was the Developer options row, the twenty-fifth
-// built, that came up without its terminal. A slot is a dozen bytes on the
-// device, so the headroom costs little.
+// The most leading icons alive at once. The Settings page has eight, the Tokyo
+// Night Streaming and More lists have five apiece, and the streaming pages add
+// their own. The table keeps headroom for a long browse page that puts an icon
+// on every row: a slot is a dozen bytes on the device, so the headroom costs
+// little.
 #define SETTINGSROW_MAX_LEADING_ICONS 256
 
 typedef struct {

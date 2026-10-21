@@ -1,4 +1,3 @@
-#include "src/system/streaming/subsonicstream.h"
 #include "metadata.h"
 
 #include "src/system/library/cue.h"
@@ -1843,9 +1842,6 @@ static bool read_cue_metadata(const char *filepath, song_metadata_t *out) {
 }
 
 void metadata_read(const char *filepath, song_metadata_t *out) {
-	if (subsonicstream_metadata(filepath, out)) {
-		return;
-	}
 	memset(out, 0, sizeof(*out));
 
 	if (read_cue_metadata(filepath, out)) {
