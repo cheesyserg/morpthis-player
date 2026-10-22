@@ -44,6 +44,7 @@
 #include "src/system/device/led.h"
 #include "src/system/device/sysinfo.h"
 #include "src/system/device/axpcharge.h"
+#include "src/gui/apps/apphost.h"
 #include "src/gui/shell/gui.h"
 #include "src/gui/shell/topbar.h"
 
@@ -1167,7 +1168,13 @@ static void suspend_to_ram(void) {
 	printf("power: mem: starting the sequence (screen off for %u s)\n",
 		   (unsigned)((lv_tick_get() - g_screen_off_at) / 1000));
 
-	// 1. The freeze: a real stop, waited on until the track context is gone --
+	// 1. An app's raw output is not part of the player's own context, and a
+	//    paused app holding it open would make the freeze below wait forever.
+	//    It is safe here: suspend is only attempted with nothing playing, and
+	//    the SDK reopens the same terms on the next play.
+	apphost_suspend_prepare();
+
+	// 1-bis. The freeze: a real stop, waited on until the track context is gone --
 	//    play_file() returned, decoder and FILE* closed, gapless empty, PCM
 	//    closed. Quiescing the ALSA objects is not enough: a paused track keeps
 	//    the context alive, the card loses power in the suspend, and the first
@@ -1179,12 +1186,12 @@ static void suspend_to_ram(void) {
 		return;
 	}
 
-	// 1-bis. The socket in use muted by the driver, so the amplifier losing
+	// 1-ter. The socket in use muted by the driver, so the amplifier losing
 	//        its power is not heard in the headphones.
 	audio_park_output_before_suspend();
 
-	// 1-ter. The cable remote's module off, so its bias on the microphone ring
-	//        is gone before mem cuts the power under it.
+	// 1-quater. The cable remote's module off, so its bias on the microphone
+	//           ring is gone before mem cuts the power under it.
 	headset_suspend_prepare();
 
 	// 2. The time written where it survives: the RTC domain stays powered in

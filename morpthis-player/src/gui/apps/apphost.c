@@ -406,6 +406,8 @@ void apphost_release_audio(void) {
 	}
 }
 
+void apphost_suspend_prepare(void) { sdk_audio_suspend_prepare(); }
+
 // ---------------------------------------------------------------------------
 // The USB guard
 //

@@ -197,6 +197,7 @@ int sdk_audio_app_rate(void);
 int sdk_audio_app_bits(void);
 bool sdk_audio_app_track(morpthis_track_t *out);
 void sdk_audio_app_reset(void);
+void sdk_audio_suspend_prepare(void);
 
 // sdk_playback.c
 void sdk_playback_app_reset(void);

@@ -33,6 +33,10 @@ void topbar_refresh_playback(void);
 // the light while music was coming out.
 void topbar_refresh_led(bool playing, int sample_rate, bool lossy, int bits, bool podcast, bool dsd);
 
+// The same from the player's own state, still merging an app's raw output.
+// Call after an app starts, pauses or changes format, and on the periodic poll.
+void topbar_refresh_led_current(void);
+
 // Repaints the two radio glyphs, left of the battery: bluetooth first, then
 // wifi, then the charge percentage. Each appears only while its radio is on,
 // and is drawn dimmed while that radio is up but connected to nothing -- the

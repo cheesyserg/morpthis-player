@@ -49,6 +49,11 @@ bool apphost_mass_storage_closing(void);
 // are delivered to its button callback if it set one.
 bool apphost_active(void);
 
+// Before entering suspend: a paused app's raw PCM has no reason to keep the
+// device awake, and an open PCM makes audio_suspend_freeze() fail forever. The
+// SDK hands the output back and reopens the same terms on the next play.
+void apphost_suspend_prepare(void);
+
 // True when the loaded app asked for the game category: no title row, no status
 // bar, no chevron or edge swipe, and the top-edge pull-down is the game's.
 bool apphost_game_active(void);

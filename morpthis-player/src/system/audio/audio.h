@@ -247,8 +247,9 @@ void audio_external_end(void);
 // app keeps the device awake while the screen is dark, and a pause lets the
 // standby timer run again. False also drops the queued PCM and mutes the DAC
 // for as long as the pause lasts, so the pause is heard at once rather than
-// after the deep buffer has played out; true lifts that mute. Cleared by
-// audio_external_end().
+// after the deep buffer has played out; true lifts that mute. An app that holds
+// the output open but stops writing reads as not playing after five seconds.
+// Cleared by audio_external_end().
 void audio_external_set_playing(bool playing);
 bool audio_external_is_playing(void);
 

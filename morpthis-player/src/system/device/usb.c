@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "src/system/library/audiobookdb.h"
@@ -58,12 +59,21 @@ static const char *const VBUS_CANDIDATES[] = {
 // How often the cable is looked at. Attaching feels immediate at one second;
 // the check is two sysfs reads.
 #define POLL_SECONDS 1
-#define POLL_SECONDS_STANDBY 4
+// The gadget is unbound while the panel is dark and no cable is in. That is
+// exactly when a cable may arrive, and the host must not wait seconds for a
+// device to appear: one sysfs read a second is cheap next to a plug-in that
+// does nothing.
+#define POLL_SECONDS_STANDBY 1
 
 static char sd_device[128];
 static char sd_mount[256];
 
 static volatile bool storage_active;
+
+// After a failed export, leave the card with the player for a moment instead
+// of unmounting/remounting it once a second while the same holder is still
+// there.
+static time_t export_retry_at;
 
 // True once usb_start() has found a card device and a VBUS node. Until then
 // there is no gadget to build and no watcher to export anything; the Apps
@@ -75,6 +85,12 @@ static bool usb_started;
 // landing in the middle of an export would remount the card under a host that
 // is about to be handed it.
 static pthread_mutex_t storage_lock = PTHREAD_MUTEX_INITIALIZER;
+
+// Configfs gadget construction and binding are not atomic, and more than one
+// thread reaches them (the watcher, app teardown, ADB, resume). Two shells
+// writing descriptors and UDC at once is how a gadget ends up half-built and
+// invisible to the host.
+static pthread_mutex_t gadget_lock = PTHREAD_MUTEX_INITIALIZER;
 
 // Counts the times the controller has changed hands (DAC mode, ADB). The
 // watcher forgets what it knew about the cable when it moves: an eject done by
@@ -211,8 +227,11 @@ static volatile bool apps_own_usb;
 // cannot see. The popups are silenced for the duration of the transition.
 static volatile bool suppress_popups;
 static void ensure_storage_gadget(void);
+static void ensure_storage_gadget_locked(void);
 static void gadget_unbind(void);
 static bool gadget_rebind(void);
+static bool first_udc(char *out, size_t out_size);
+static void storage_restore(void);
 static void take_card_back(const char *why);
 
 void usb_set_dac_mode(bool on) {
@@ -359,6 +378,53 @@ static void typec_force_sink(void) {
 	}
 }
 
+// Writes the controller name (or an empty line) into the gadget's UDC
+// attribute. A successful write() is not proof that the driver accepted it:
+// the refusal surfaces at close, which is why the callers below read the
+// attribute back instead of trusting a single syscall.
+static bool gadget_write_udc_locked(const char *text) {
+	FILE *f = fopen(STORAGE_GADGET "/UDC", "w");
+	if (!f) {
+		return false;
+	}
+	bool ok = fprintf(f, "%s\n", text) >= 0;
+	if (fclose(f) != 0) {
+		ok = false;
+	}
+	return ok;
+}
+
+// Under gadget_lock. Takes the reader off the controller and verifies that the
+// UDC attribute really went empty; a bind that follows while the driver still
+// holds the old gadget fails with EBUSY/ENODEV.
+static bool gadget_unbind_locked(void) {
+	for (int attempt = 0; attempt < 4; attempt++) {
+		if (!storage_gadget_bound()) {
+			return true;
+		}
+		gadget_write_udc_locked("");
+		usleep(100 * 1000);
+	}
+	return !storage_gadget_bound();
+}
+
+// Under gadget_lock. Binds the reader and waits until configfs reports it,
+// rather than assuming a write that returned success has reached the driver.
+static bool gadget_rebind_locked(void) {
+	char udc[NAME_MAX + 1];
+	if (access(STORAGE_GADGET "/UDC", W_OK) != 0 || !first_udc(udc, sizeof(udc))) {
+		return false;
+	}
+	for (int attempt = 0; attempt < 5; attempt++) {
+		if (storage_gadget_bound()) {
+			return true;
+		}
+		gadget_write_udc_locked(udc);
+		usleep(120 * 1000);
+	}
+	return storage_gadget_bound();
+}
+
 // Builds the storage gadget -- descriptors with this device's real name, a
 // mass-storage function with no medium in it -- and binds it to the USB
 // controller. Idempotent: every step checks before it acts, so this both
@@ -372,7 +438,7 @@ static void typec_force_sink(void) {
 // makes the same distinction the same way, with its UAC gadget. Exporting is
 // then just writing the block device into lun.0/file (the medium clicks in);
 // un-exporting writes it empty again. The gadget itself never unbinds.
-static void ensure_storage_gadget(void) {
+static void ensure_storage_gadget_locked(void) {
 	// apps_own_usb is deliberately not checked here. The guard keeps the
 	// *medium* out of the host (storage_export() enforces that); it must not
 	// keep the empty card reader off the bus. A bound reader is how the watcher
@@ -434,53 +500,29 @@ static void ensure_storage_gadget(void) {
 			 "[ -e functions/mass_storage.0/lun.0/inquiry_string ] && "
 			 "echo '%s' > functions/mass_storage.0/lun.0/inquiry_string; "
 			 "fi; "
-			 "[ -e configs/c.1/mass_storage.0 ] || ln -s functions/mass_storage.0 configs/c.1; "
-			 "grep -q '[a-zA-Z0-9]' UDC || echo $(ls /sys/class/udc/ | head -n1) > UDC",
+			 "[ -e configs/c.1/mass_storage.0 ] || ln -s functions/mass_storage.0 configs/c.1",
 			 STORAGE_GADGET, STORAGE_GADGET, STORAGE_GADGET, USB_ID_VENDOR, USB_ID_PRODUCT, USB_MANUFACTURER,
 			 product, USB_MANUFACTURER, product, inquiry);
 	int rc = system(cmd);
-	(void)rc;
-}
-
-// Makes the host enumerate the gadget again, without rebuilding it: the same
-// soft-disconnect toggle DAC mode uses (usbdac.c). Silently does nothing on a
-// controller with no such node, where the medium simply appears the way it
-// always has.
-static void storage_reenumerate(void) {
-	static const char *const PATHS[] = {
-		"/sys/class/usb_gadget/android0/soft_disconnect",
-		STORAGE_GADGET "/soft_disconnect",
-		NULL,
-	};
-
-	for (int i = 0; PATHS[i]; i++) {
-		if (access(PATHS[i], W_OK) != 0) {
-			continue;
-		}
-		char cmd[256];
-		snprintf(cmd, sizeof(cmd), "echo 1 > %s", PATHS[i]);
-		int rc = system(cmd);
-		(void)rc;
-		usleep(300 * 1000);
-		snprintf(cmd, sizeof(cmd), "echo 0 > %s", PATHS[i]);
-		rc = system(cmd);
-		(void)rc;
-		fprintf(stderr, "usb: re-enumerated with the medium in, via %s\n", PATHS[i]);
+	if (rc != 0) {
+		fprintf(stderr, "usb: storage gadget setup exited %d\n", rc);
+	}
+	// The shell is slow; the audio side can claim the controller while it
+	// runs. Do not bind the reader over the gadget it just built.
+	if (dac_owns_usb || usbaudio_active()) {
 		return;
 	}
-
-	// No soft-disconnect attribute on this kernel. Take the gadget off the
-	// controller and put it back instead: a real disconnect and reconnect is
-	// what forces the host to read the LUN again. Without it a PC that cached
-	// "card reader, no medium" from the last session can keep showing nothing
-	// after the second plug-in, even though the medium is inserted.
-	gadget_unbind();
-	usleep(300 * 1000);
-	if (!gadget_rebind()) {
-		ensure_storage_gadget();
+	if (!gadget_rebind_locked()) {
+		fprintf(stderr, "usb: storage gadget did not bind to the controller\n");
 	}
-	fprintf(stderr, "usb: re-enumerated with the medium in, by rebinding the gadget\n");
 }
+
+static void ensure_storage_gadget(void) {
+	pthread_mutex_lock(&gadget_lock);
+	ensure_storage_gadget_locked();
+	pthread_mutex_unlock(&gadget_lock);
+}
+
 
 // True when a HOST has actually enumerated the bound gadget -- the check that
 // tells a PC apart from a wall charger. VBUS alone cannot: a charger raises
@@ -538,36 +580,25 @@ static bool udc_configured(void) {
 
 // Takes the storage gadget off the USB controller. Used both to hand the
 // controller to ADB and to stop paying for the PHY while the device sits in
-// standby with no cable.
-// Binds the gadget to the controller, or lets go of it. Two writes to one file:
-// the controller's name to take it, an empty line to give it back.
-//
-// Written straight, not through a shell, and for the same reason as first_udc()
-// above: this pair runs on the standby and wake path, which is exactly when
-// music is playing with the screen dark. A fork here is heard.
-static bool gadget_write_udc(const char *text) {
-	FILE *f = fopen(STORAGE_GADGET "/UDC", "w");
-	if (!f) {
-		return false;
+// standby with no cable. The write and its verification are the same ones
+// ensure_storage_gadget_locked() uses.
+static void gadget_unbind(void) {
+	pthread_mutex_lock(&gadget_lock);
+	bool ok = gadget_unbind_locked();
+	pthread_mutex_unlock(&gadget_lock);
+	if (!ok) {
+		fprintf(stderr, "usb: could not take the storage gadget off the controller\n");
 	}
-	bool ok = fprintf(f, "%s\n", text) >= 0;
-	if (fclose(f) != 0) {
-		ok = false; // the driver refusing the bind surfaces here, at close
-	}
-	return ok;
 }
-
-static void gadget_unbind(void) { gadget_write_udc(""); }
 
 // Puts the gadget back on the controller. False when there is no gadget to put
 // back -- it has never been built, or something removed it -- and the caller
 // falls back to building one.
 static bool gadget_rebind(void) {
-	char udc[NAME_MAX + 1];
-	if (access(STORAGE_GADGET "/UDC", W_OK) != 0 || !first_udc(udc, sizeof(udc))) {
-		return false;
-	}
-	return gadget_write_udc(udc);
+	pthread_mutex_lock(&gadget_lock);
+	bool ok = gadget_rebind_locked();
+	pthread_mutex_unlock(&gadget_lock);
+	return ok;
 }
 
 // Called right before ADB's init script starts: two gadgets cannot bind at
@@ -674,9 +705,12 @@ void usb_suspend_prepare(void) {
 		return; // USB mode was never started (host build, or no card)
 	}
 	// Every gadget, not just ours: with ADB on it is adbd's gadget that holds
-	// the controller.
+	// the controller. Hold the same lock the builder uses, or the watcher can
+	// rebind the reader from under the suspend.
+	pthread_mutex_lock(&gadget_lock);
 	int rc = system("for u in /sys/kernel/config/usb_gadget/*/UDC; do echo '' > $u 2>/dev/null; done");
 	(void)rc;
+	pthread_mutex_unlock(&gadget_lock);
 	fprintf(stderr, "usb: gadgets unbound for suspend\n");
 }
 
@@ -782,6 +816,120 @@ static bool host_ejected(void) {
 	return ejected;
 }
 
+// The medium as configfs reports it. Writing the path and getting no error is
+// not enough: the function accepts the write even when the host or the LUN is
+// in a state that leaves the file empty, and the watcher would then believe it
+// had exported a card the PC can never see.
+static bool storage_medium_present(const char *lun_file) {
+	char *content = read_file_content(lun_file);
+	if (!content) {
+		return false;
+	}
+	content[strcspn(content, "\r\n")] = '\0';
+	bool present = strcmp(content, sd_device) == 0;
+	free(content);
+	return present;
+}
+
+static bool storage_set_medium(const char *lun_file) {
+	FILE *f = fopen(lun_file, "w");
+	if (!f) {
+		return false;
+	}
+	bool ok = fprintf(f, "%s\n", sd_device) >= 0;
+	if (fclose(f) != 0) {
+		ok = false;
+	}
+	return ok && storage_medium_present(lun_file);
+}
+
+// Puts the medium in while the reader is off the controller, then binds it.
+// This is the sequence that makes a host read the LUN again: writing the file
+// into an already-enumerated reader leaves a PC or phone showing the empty
+// card it cached at attach, and a vendor soft-disconnect is a no-op on some
+// kernels even when the attribute exists.
+//
+// Under no lock on entry. Every step is verified, and a failure leaves the
+// gadget either bound without a medium (the harmless empty reader) or off the
+// controller for the next attempt.
+static bool storage_present_medium(const char *lun_file) {
+	for (int attempt = 0; attempt < 3; attempt++) {
+		if (dac_owns_usb || usbaudio_active()) {
+			return false;
+		}
+		// The role can have been re-arbitrated while the card was unmounted.
+		typec_force_sink();
+
+		pthread_mutex_lock(&gadget_lock);
+		bool unbound = gadget_unbind_locked();
+		usleep(200 * 1000);
+		bool inserted = unbound && storage_set_medium(lun_file);
+		bool bound = inserted && gadget_rebind_locked();
+		if (!bound) {
+			// The function may be missing or the controller was handed back a
+			// moment ago. Rebuild, then take it off the controller again so the
+			// medium goes in before the final bind, not after it.
+			ensure_storage_gadget_locked();
+			if (!dac_owns_usb && !usbaudio_active() && gadget_unbind_locked()) {
+				inserted = storage_set_medium(lun_file);
+				bound = inserted && gadget_rebind_locked();
+			}
+		}
+		bool present = bound && storage_medium_present(lun_file);
+		pthread_mutex_unlock(&gadget_lock);
+
+		if (present) {
+			fprintf(stderr, "usb: medium inserted (%s) and the reader re-enumerated\n", sd_device);
+			return true;
+		}
+		fprintf(stderr, "usb: could not present %s (attempt %d of 3)\n", sd_device, attempt + 1);
+		usleep(250 * 1000);
+	}
+	return false;
+}
+
+// The services that live on the card, reopened after either a finished export
+// or an aborted one. Separated from storage_restore() because an export that
+// never got as far as unmounting must not unmount and remount a perfectly good
+// filesystem just to reopen them.
+static void storage_reopen_services(void) {
+	char db_path[512];
+	snprintf(db_path, sizeof(db_path), "%s/.local/library.db", sd_mount);
+	library_open(db_path);
+	snprintf(db_path, sizeof(db_path), "%s/.local/audiobooks.db", sd_mount);
+	audiobookdb_open(db_path);
+	logging_resume_after_usb();
+	btlog_card_attach(sd_mount);
+
+	cover_set_cache_dir(sd_mount);
+	radio_store_open(sd_mount);
+
+	storage_active = false;
+	library_card_returned(sd_mount);
+}
+
+// Undo the half of an export that already ran: the card was taken away from
+// the player and the services on it were closed, but the host never got a
+// usable medium. If it was never unmounted, only the services have to come
+// back; otherwise storage_restore() does the remount as well. The "available
+// again" popup is not wanted for an attempt that never worked.
+static void storage_abort_export(void) {
+	bool suppressed = suppress_popups;
+	suppress_popups = true;
+	if (mount_still_up()) {
+		fprintf(stderr, "usb: export aborted; the card stayed mounted\n");
+		export_mode = EXPORT_NONE;
+		storage_reopen_services();
+	} else {
+		if (export_mode == EXPORT_NONE) {
+			export_mode = EXPORT_OWN_GADGET;
+		}
+		storage_restore();
+	}
+	suppress_popups = suppressed;
+	export_retry_at = time(NULL) + 10;
+}
+
 // Hands the card to the host. Ordering is what the stock player does: stop
 // touching the filesystem, unmount, then export the raw device.
 static void storage_export(void) {
@@ -832,11 +980,8 @@ static void storage_export(void) {
 	// export fail to unmount it: the thumbnail cache (cover.c) and the radio
 	// database (radio.c) are SQLite handles the player keeps open for the whole
 	// session. A file left open by this process is enough to make the umount
-	// fail with EBUSY, and the export then falls back to a lazy one and hands a
-	// still-mounted card to the PC -- which a FAT card survives but an NTFS one
-	// does not (see the unmount loop below: ntfs-3g is a FUSE daemon, and it
-	// keeps the block device claimed). Shutdown closes exactly these two for the
-	// same reason. They go back on the card in storage_restore().
+	// fail with EBUSY. Shutdown closes exactly these two for the same reason.
+	// They go back on the card in storage_restore().
 	cover_set_cache_dir(NULL); // the thumbnail cache moves to /tmp
 	radio_store_close();
 
@@ -865,13 +1010,19 @@ static void storage_export(void) {
 		(void)urc;
 		sleep(1);
 	}
-	if (dac_owns_usb) {
-		fprintf(stderr, "usb: DAC mode took the controller; export abandoned\n");
-		storage_active = false; // the supervisor is wanted again
+	if (dac_owns_usb || usbaudio_active()) {
+		fprintf(stderr, "usb: the audio side took the controller; export abandoned\n");
+		storage_abort_export(); // the card and the databases have to come back
 		return;
 	}
 	if (mount_still_up()) {
-		fprintf(stderr, "usb: could not unmount %s; exporting anyway (read-mostly card)\n", sd_mount);
+		// Exporting a card the process still has mounted hands the host a
+		// filesystem whose metadata is already cached here. One of the two
+		// writers will lose; usually it is the user's data. Leave the card
+		// with the player and retry after the holder has gone.
+		fprintf(stderr, "usb: could not unmount %s; leaving the card with the player\n", sd_mount);
+		storage_abort_export();
+		return;
 	}
 
 	// ADB is off (checked above), but its stopped gadget can still hold the
@@ -894,26 +1045,31 @@ static void storage_export(void) {
 	// stays invisible until ADB is toggled again.
 	ensure_storage_gadget();
 
+	if (dac_owns_usb || usbaudio_active()) {
+		fprintf(stderr, "usb: the audio side took the controller before the medium went in\n");
+		storage_abort_export();
+		return;
+	}
+
 	if (adb_switched_on() && adb_gadget_bound()) {
 		// Kept for a controller whose ADB gadget is deliberately shared, but
 		// the watcher never reaches here with ADB on: storage and ADB are
 		// exclusive now.
 		composite_export();
 		export_mode = EXPORT_ADB_COMPOSITE;
+		if (!storage_medium_present(ADB_GADGET "/functions/mass_storage.0/lun.0/file")) {
+			fprintf(stderr, "usb: the composite medium did not appear; aborting the export\n");
+			storage_abort_export();
+			return;
+		}
 	} else {
-		char cmd[512];
-		snprintf(cmd, sizeof(cmd), "echo %s > " STORAGE_GADGET "/functions/mass_storage.0/lun.0/file", sd_device);
-		int rc = system(cmd);
-		fprintf(stderr, "usb: medium inserted (%s), exit code %d\n", sd_device, rc);
+		const char *lun = STORAGE_GADGET "/functions/mass_storage.0/lun.0/file";
 		export_mode = EXPORT_OWN_GADGET;
-
-		// And then the host is asked to look again. It enumerated a card reader
-		// with no card in it -- that emptiness is what tells a PC apart from a
-		// wall charger -- and a PC will poll until the medium turns up, but a
-		// phone reads the LUN once, at attach, and never comes back to it. A
-		// short soft-disconnect is a re-plug as far as the host is concerned,
-		// and this time there is a card in the slot.
-		storage_reenumerate();
+		if (!storage_present_medium(lun)) {
+			fprintf(stderr, "usb: could not present the card after re-enumeration\n");
+			storage_abort_export();
+			return;
+		}
 	}
 
 	// What the controller thinks now, for the log: "CONFIGURED" means the PC
@@ -921,6 +1077,7 @@ static void storage_export(void) {
 	int lrc = system("for u in /sys/class/udc/*/state; do echo \"usb: udc $u: $(cat $u)\" >&2; done");
 	(void)lrc;
 
+	export_retry_at = 0;
 	if (!suppress_popups) {
 		gui_post(popup_connected_cb, NULL);
 	}
@@ -996,25 +1153,11 @@ static void storage_restore(void) {
 	}
 	fprintf(stderr, "usb: card remounted on %s: %s\n", sd_mount, mount_still_up() ? "yes" : "NO");
 
-	// The databases and the log live on the card that just came back.
-	char db_path[512];
-	snprintf(db_path, sizeof(db_path), "%s/.local/library.db", sd_mount);
-	library_open(db_path);
-	snprintf(db_path, sizeof(db_path), "%s/.local/audiobooks.db", sd_mount);
-	audiobookdb_open(db_path);
-	logging_resume_after_usb();
-	btlog_card_attach(sd_mount);
-
-	// The two the export released, put back where they belong. Both fall back
-	// to /tmp on their own if the remount did not take, so a failed remount
-	// leaves the player usable rather than stuck on a handle to nowhere.
-	cover_set_cache_dir(sd_mount);
-	radio_store_open(sd_mount);
-
-	storage_active = false;
-
-	// What the computer changed is looked for now, in the background.
-	library_card_returned(sd_mount);
+	// The databases and the log live on the card that just came back. Both
+	// cache directories fall back to /tmp on their own if the remount did not
+	// take, so a failed remount leaves the player usable rather than stuck on
+	// a handle to nowhere. The callback also starts the post-USB scan.
+	storage_reopen_services();
 	if (!suppress_popups) {
 		gui_post(popup_disconnected_cb, NULL);
 	}
@@ -1090,11 +1233,17 @@ static void *usb_thread(void *arg) {
 			continue;
 		}
 
-		// Slower while the panel is dark. A cable being plugged in is
-		// something the user just did, so a second's resolution is worth
-		// having with the screen on; in standby it is one more thread waking
-		// the CPU every second for the whole night.
+		// Slower while the panel is dark. Keep this short even then: the
+		// gadget is unbound while the screen is off with no cable, so this is
+		// how long a newly attached host sees nothing at all.
 		sleep(power_screen_is_on() ? POLL_SECONDS : POLL_SECONDS_STANDBY);
+
+		// DAC mode or a USB audio device can take the controller during the
+		// sleep above. Recheck before touching any gadget: this window is how a
+		// storage rebind used to land on top of the audio gadget.
+		if (dac_owns_usb || usbaudio_active()) {
+			continue;
+		}
 
 		// The controller changed hands since the last look: whatever was
 		// known about the cable belongs to the gadget before. And a card
@@ -1108,6 +1257,11 @@ static void *usb_thread(void *arg) {
 			await_unplug = false;
 			said_adb = false;
 			said_apps = false;
+			// A transition may have bound the reader for us. Only believe the
+			// local parked flag while the UDC really is empty.
+			if (parked && storage_gadget_bound()) {
+				parked = false;
+			}
 		}
 		if (exported && !storage_active) {
 			exported = false;
@@ -1126,10 +1280,12 @@ static void *usb_thread(void *arg) {
 			// The enumerated host just went away. Some charger nodes stay high
 			// after an unplug, which used to leave said_apps latched: the next
 			// plug-in was then answered with silence instead of the "close the
-			// app?" prompt. A new enumeration is a new session.
+			// app?" prompt. A new enumeration is a new session, and a fresh
+			// plug-in gets an immediate export attempt.
 			await_unplug = false;
 			said_apps = false;
 			said_adb = false;
+			export_retry_at = 0;
 		}
 		was_configured = configured;
 		bool vbus = vbus_present() || configured;
@@ -1141,6 +1297,7 @@ static void *usb_thread(void *arg) {
 			}
 			await_unplug = false;
 			said_apps = false;
+			export_retry_at = 0;
 
 			// No cable, panel dark: take the gadget off the controller. A
 			// bound gadget keeps the USB PHY and the OTG block clocked --
@@ -1181,6 +1338,33 @@ static void *usb_thread(void *arg) {
 			continue;
 		}
 
+		// A bound empty reader is what the host enumerates while we decide
+		// whether the card can be exported. If a transition or a failed rebind
+		// left the gadget off the controller, put it back now rather than
+		// waiting for a state change that will never come.
+		if (!parked && !storage_gadget_bound() && !adb_owns_controller()) {
+			typec_force_sink();
+			if (exported) {
+				// The card is still supposed to be exported. Put it back with the
+				// medium in, not as an empty reader that the host would treat as
+				// an eject. If that keeps failing, give the card back to the
+				// player rather than leaving it unmounted with nobody serving it.
+				bool ok = storage_present_medium(STORAGE_GADGET "/functions/mass_storage.0/lun.0/file");
+				fprintf(stderr, "usb: exported reader fell off the controller; %s\n",
+						ok ? "rebound with the medium" : "could not be restored");
+				if (!ok) {
+					locked_restore();
+					exported = false;
+					export_retry_at = time(NULL) + 10;
+				}
+			} else {
+				ensure_storage_gadget();
+				fprintf(stderr, "usb: storage gadget was unbound with a cable present; rebuilt%s\n",
+						storage_gadget_bound() ? "" : " (FAILED)");
+			}
+			continue; // give the controller a poll to enumerate
+		}
+
 		// A cable turned up while the gadget was parked: put it back before
 		// anything else, or the host will never see this device.
 		if (parked) {
@@ -1191,15 +1375,17 @@ static void *usb_thread(void *arg) {
 			// failure: unplug with the screen dark (the gadget parks), open or
 			// keep an app, plug in again -- and nothing happened.
 			//
-			// Here there is a host waiting, so this happens whatever playback
-			// is doing -- but by the cheap route first: the gadget was only
-			// unbound, not taken apart, so putting it back is one write.
+			if (dac_owns_usb || usbaudio_active()) {
+				continue;
+			}
+			// The recovery above may already have bound it. Do not unbind and
+			// rebind a working reader just because the local flag said parked.
 			typec_force_sink();
-			if (!adb_owns_controller() && !gadget_rebind()) {
+			if (!storage_gadget_bound() && !adb_owns_controller() && !gadget_rebind()) {
 				ensure_storage_gadget();
 			}
 			parked = false;
-			fprintf(stderr, "usb: cable in; gadget rebound%s\n",
+			fprintf(stderr, "usb: cable in; gadget %s%s\n", storage_gadget_bound() ? "ready" : "FAILED to bind",
 					apps_own_usb ? " (apps guard up; the host will be asked)" : "");
 			continue; // give the controller a poll to enumerate
 		}
@@ -1268,6 +1454,14 @@ static void *usb_thread(void *arg) {
 			continue;
 		}
 		said_adb = false;
+
+		// A previous export failed while the holder of the card was still
+		// there. Do not unmount/remount it once a second; give it a moment.
+		// Asked after the prompt checks so a USB plug-in is never silently
+		// ignored just because the last export failed.
+		if (export_retry_at && time(NULL) < export_retry_at) {
+			continue;
+		}
 
 		locked_export();
 		exported = storage_active;

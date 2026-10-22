@@ -4668,6 +4668,14 @@ static long external_checked_ms;			// when the two above were last compared
 // volatile; a missed tick is harmless and the next one sees it.
 static volatile bool external_playing;
 
+// ...and when this source last actually handed audio to the output. An app can
+// hold the raw output open after its playback has stalled or ended without
+// clearing set_playing(); trusting the flag alone then keeps standby and Wi-Fi
+// parked off for the rest of the session. A live mixer writes every few tens of
+// milliseconds, so five seconds of silence is a dead source, not a deep buffer.
+static volatile long external_last_write_ms;
+#define EXTERNAL_PLAYING_STALE_MS 5000
+
 // Underruns since the open, and when the last one was reported. A receiver
 // that stutters says so in the log, and how often -- which is the difference
 // between a thread that is not scheduled in time and a sender that stalls now
@@ -4738,6 +4746,7 @@ bool audio_external_begin_latency(int sample_rate, int channels, int bits, int b
 	external_bits = bits;
 	external_buffer_ms = buffer_ms;
 	external_checked_ms = log_ms();
+	external_last_write_ms = log_ms();
 	external_underruns = 0;
 	external_underrun_logged_ms = 0;
 
@@ -4887,11 +4896,15 @@ int audio_external_write(const void *frames, int count) {
 	}
 
 	pthread_mutex_unlock(&external_lock);
+	if (written > 0) {
+		external_last_write_ms = log_ms();
+	}
 	return written;
 }
 
 void audio_external_end(void) {
 	external_playing = false;
+	external_last_write_ms = 0;
 	pthread_mutex_lock(&external_lock);
 
 	bool had_output = external_pcm != NULL;
@@ -4916,7 +4929,11 @@ void audio_external_end(void) {
 
 void audio_external_set_playing(bool playing) {
 	external_playing = playing;
-	if (!playing) {
+	if (playing) {
+		// Give a newly opened source the first buffer's worth of time before
+		// the write-activity test below can call it idle.
+		external_last_write_ms = log_ms();
+	} else {
 		pthread_mutex_lock(&external_lock);
 		// Local playback drops the queued stream on pause; the external path used
 		// to leave it feeding the DAC for the whole deep buffer (about 750 ms),
@@ -4948,4 +4965,10 @@ void audio_external_set_playing(bool playing) {
 	}
 }
 
-bool audio_external_is_playing(void) { return external_playing; }
+bool audio_external_is_playing(void) {
+	if (!external_playing) {
+		return false;
+	}
+	long last = external_last_write_ms;
+	return last != 0 && log_ms() - last < EXTERNAL_PLAYING_STALE_MS;
+}

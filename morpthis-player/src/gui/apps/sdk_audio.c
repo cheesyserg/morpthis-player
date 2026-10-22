@@ -145,6 +145,11 @@ static int external_channels;
 static int external_buffer_ms;
 static volatile bool app_output_active;
 static volatile bool app_output_playing;
+// The output was handed back for suspend while the app was not playing. The
+// terms stay in the fields below, and the next set_playing(true) or write
+// reopens the same stream. Without this the open PCM keeps
+// audio_suspend_freeze() from ever letting the SoC sleep.
+static volatile bool external_suspended;
 
 // The track the app publishes for the player's control centre. Kept under its
 // own lock because an app may publish it from its mixer thread while the GUI
@@ -163,8 +168,56 @@ static void refresh_playback_cb(void *user) {
 
 static void request_playback_refresh(void) { morpthis_app_post(refresh_playback_cb, NULL); }
 
+// Reopens the terms a suspend released. The caller is the app's mixer or the
+// GUI thread; audio_external_begin_latency() is already safe against both
+// reaching it with the same terms.
+static bool reopen_suspended(void) {
+	if (!external_suspended || !app_output_active || external_rate <= 0) {
+		return false;
+	}
+	int rate = external_rate;
+	int channels = external_channels;
+	int bits = external_bits;
+	int buffer_ms = external_buffer_ms;
+	// The suspend may have let local playback or the radio start in the
+	// meantime. An app taking the output still means one writer only.
+	audio_stop();
+	if (radio_is_playing()) {
+		radio_stop();
+	}
+	external_open = audio_external_begin_latency(rate, channels, bits, buffer_ms);
+	if (!external_open) {
+		return false;
+	}
+	external_suspended = false;
+	app_output_playing = true;
+	audio_external_set_playing(true);
+	request_playback_refresh();
+	return true;
+}
+
+// The power manager is ready to enter suspend and has already established
+// that no source is playing. An app that merely holds the raw output open (a
+// paused Subsonic, a menu with the DAC claimed) would otherwise fail
+// audio_suspend_freeze() forever. Release it only when it is not producing
+// sound; a live source never reaches this call.
+void sdk_audio_suspend_prepare(void) {
+	if (!external_open || !app_output_active) {
+		return;
+	}
+	if (audio_external_is_playing()) {
+		return;
+	}
+	audio_external_end();
+	external_open = false;
+	external_suspended = true;
+	app_output_playing = false;
+	request_playback_refresh();
+	morpthis_logi("apps", "released the paused app output for suspend");
+}
+
 bool sdk_audio_app_active(void) { return app_output_active; }
-bool sdk_audio_app_playing(void) { return app_output_playing; }
+bool sdk_audio_app_playing(void) { return app_output_playing && audio_external_is_playing(); }
 int sdk_audio_app_rate(void) { return external_rate; }
 int sdk_audio_app_bits(void) { return external_bits; }
 
@@ -191,6 +244,7 @@ void sdk_audio_app_reset(void) {
 		audio_external_end();
 	}
 	external_open = false;
+	external_suspended = false;
 	external_bits = 16;
 	external_rate = 0;
 	external_channels = 0;
@@ -228,12 +282,13 @@ bool morpthis_audio_open_ex(int rate, int channels, int bits, int buffer_ms) {
 		radio_stop();
 	}
 
-	external_bits = bits;
 	external_open = audio_external_begin_latency(rate, channels, bits, buffer_ms);
 	if (external_open) {
+		external_bits = bits;
 		external_rate = rate;
 		external_channels = channels;
 		external_buffer_ms = buffer_ms;
+		external_suspended = false;
 		app_output_active = true;
 		app_output_playing = true;
 		audio_external_set_playing(true);
@@ -247,7 +302,10 @@ bool morpthis_audio_open(int rate, int channels, int buffer_ms) {
 }
 
 size_t morpthis_audio_write_pcm(const void *pcm, size_t frames) {
-	if (!external_open || !pcm || frames == 0) {
+	if (!pcm || frames == 0) {
+		return 0;
+	}
+	if (!external_open && !reopen_suspended()) {
 		return 0;
 	}
 	if (frames > (size_t)INT_MAX) {
@@ -265,7 +323,14 @@ size_t morpthis_audio_write(const int16_t *pcm, size_t frames) {
 }
 
 void morpthis_audio_set_playing(bool playing) {
+	if (playing && !external_open && !reopen_suspended()) {
+		return;
+	}
 	if (!external_open) {
+		// A pause while the suspend handoff owns the output still has to clear
+		// the flag the status bar and the power manager read.
+		app_output_playing = false;
+		request_playback_refresh();
 		return;
 	}
 	app_output_playing = playing;
@@ -284,19 +349,28 @@ void morpthis_audio_set_track(const morpthis_track_t *track, bool playing) {
 	}
 	pthread_mutex_unlock(&track_lock);
 
+	if (playing && !external_open) {
+		reopen_suspended();
+	}
 	if (external_open) {
 		app_output_playing = playing;
 		audio_external_set_playing(playing);
+		request_playback_refresh();
+	} else if (!playing) {
+		app_output_playing = false;
 		request_playback_refresh();
 	}
 }
 
 void morpthis_audio_close(void) {
-	if (!external_open) {
+	if (!external_open && !external_suspended) {
 		return;
 	}
-	audio_external_end();
+	if (external_open) {
+		audio_external_end();
+	}
 	external_open = false;
+	external_suspended = false;
 	external_bits = 16;
 	external_rate = 0;
 	external_channels = 0;
