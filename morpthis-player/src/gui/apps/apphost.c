@@ -207,6 +207,8 @@ static void apphost_teardown(morpthis_app_t *app) {
 	// itself, but a force-closed app may still think it owns the DAC. This also
 	// drops the status-bar indicator back to the player's own playback.
 	sdk_audio_app_reset();
+	sdk_playback_app_reset();
+	sdk_system_app_reset();
 
 	// Leave the app's screen before deleting it: LVGL must never be sitting on
 	// an object that is about to go away. When a PC is taking the card, go to
@@ -239,9 +241,10 @@ static void apphost_teardown(morpthis_app_t *app) {
 		audio_external_end();
 	}
 
-	// A menu left open would keep an item callback into the shared object alive
-	// after it is unmapped. The app's screen is already behind the Apps page.
-	morpthis_menu_close();
+	// A menu, dialog or prompt left open would keep an item callback into the
+	// shared object alive after it is unmapped. The app's screen is already
+	// behind the Apps page.
+	sdk_ui_app_reset(true);
 
 	// Nothing may enter the shared object after this point. Posts already
 	// waiting in the GUI queue are detached; a callback that arrives after

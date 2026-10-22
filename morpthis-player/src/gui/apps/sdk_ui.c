@@ -6,9 +6,13 @@
 
 #include "src/gui/apps/apphost.h"
 #include "src/gui/fonts/fonts.h"
+#include "src/gui/shell/confirm.h"
 #include "src/gui/shell/icons.h"
+#include "src/gui/shell/keyboard.h"
 #include "src/gui/shell/popover.h"
+#include "src/gui/shell/scrolltext.h"
 #include "src/gui/shell/settingsrow.h"
+#include "src/gui/shell/spinner.h"
 #include "src/gui/shell/switcher.h"
 #include "src/gui/shell/theme.h"
 #include "src/gui/shell/toast.h"
@@ -17,6 +21,13 @@
 static const lv_image_dsc_t *icon_for(morpthis_icon_t icon);
 static void button_click_cb(lv_event_t *e);
 static morpthis_widget_t *widget_new(morpthis_screen_t *screen, sdk_widget_kind_t kind);
+
+// The text-input field whose modal is open, if any. A field destroyed while its
+// prompt is up closes the prompt without entering the app.
+static morpthis_widget_t *prompt_owner;
+static void prompt_abandon(void);
+static bool prompt_show(const char *title, const char *initial, bool password, morpthis_text_cb cb,
+						void *user, morpthis_widget_t *owner);
 
 // ---------------------------------------------------------------------------
 // Screens
@@ -461,6 +472,80 @@ static const lv_image_dsc_t *icon_for(morpthis_icon_t icon) {
 		return &icon_search;
 	case MORPTHIS_ICON_CLOSE:
 		return &icon_close;
+	case MORPTHIS_ICON_CHEVRON_LEFT:
+		return &icon_chevron_left;
+	case MORPTHIS_ICON_CHEVRON_RIGHT:
+		return &icon_chevron_right;
+	case MORPTHIS_ICON_CHEVRON_UP:
+		return &icon_chevron_up;
+	case MORPTHIS_ICON_ALBUM:
+		return &icon_album;
+	case MORPTHIS_ICON_ARTIST:
+		return &icon_artist;
+	case MORPTHIS_ICON_FOLDER:
+		return &icon_folder;
+	case MORPTHIS_ICON_FILE:
+		return &icon_file;
+	case MORPTHIS_ICON_MUSIC:
+		return &icon_music_note;
+	case MORPTHIS_ICON_PLAYLIST:
+		return &icon_menu_playlist;
+	case MORPTHIS_ICON_HEART:
+		return &icon_heart;
+	case MORPTHIS_ICON_HEART_FILLED:
+		return &icon_heart_filled;
+	case MORPTHIS_ICON_STAR:
+		return &icon_star;
+	case MORPTHIS_ICON_STAR_FILLED:
+		return &icon_star_filled;
+	case MORPTHIS_ICON_SHUFFLE:
+		return &icon_shuffle;
+	case MORPTHIS_ICON_REPEAT_ALL:
+		return &icon_repeat_all;
+	case MORPTHIS_ICON_REPEAT_ONE:
+		return &icon_repeat_one;
+	case MORPTHIS_ICON_SORT:
+		return &icon_sort_az;
+	case MORPTHIS_ICON_CHECK:
+		return &icon_check;
+	case MORPTHIS_ICON_PLUS:
+		return &icon_plus;
+	case MORPTHIS_ICON_DELETE:
+		return &icon_trash;
+	case MORPTHIS_ICON_REFRESH:
+		return &icon_refresh;
+	case MORPTHIS_ICON_INFO:
+		return &icon_info;
+	case MORPTHIS_ICON_ALERT:
+		return &icon_circle_alert;
+	case MORPTHIS_ICON_WIFI:
+		return &icon_wifi;
+	case MORPTHIS_ICON_BLUETOOTH:
+		return &icon_bluetooth;
+	case MORPTHIS_ICON_BATTERY:
+		return &icon_battery;
+	case MORPTHIS_ICON_CHARGING:
+		return &icon_battery_charging_bolt;
+	case MORPTHIS_ICON_EQUALIZER:
+		return &icon_equalizer;
+	case MORPTHIS_ICON_SETTINGS:
+		return &icon_menu_settings;
+	case MORPTHIS_ICON_SLEEP:
+		return &icon_sleep_music_quick;
+	case MORPTHIS_ICON_SUN:
+		return &icon_sun;
+	case MORPTHIS_ICON_VOLUME_HIGH:
+		return &icon_volume_high;
+	case MORPTHIS_ICON_VOLUME_LOW:
+		return &icon_volume_low;
+	case MORPTHIS_ICON_VOLUME_MUTE:
+		return &icon_volume_mute;
+	case MORPTHIS_ICON_HEADPHONES:
+		return &icon_headphones;
+	case MORPTHIS_ICON_POWER:
+		return &icon_power_off;
+	case MORPTHIS_ICON_REBOOT:
+		return &icon_reboot;
 	default:
 		return &icon_music2;
 	}
@@ -523,6 +608,12 @@ static lv_obj_t *text_target(morpthis_widget_t *widget) {
 	if (widget->kind == SDK_WIDGET_BUTTON) {
 		return widget->label;
 	}
+	if (widget->kind == SDK_WIDGET_SETTINGS_ROW) {
+		return widget->label;
+	}
+	if (widget->kind == SDK_WIDGET_TEXT_INPUT) {
+		return widget->obj;
+	}
 	return NULL;
 }
 
@@ -571,8 +662,30 @@ void morpthis_widget_set_text_align(morpthis_widget_t *widget, morpthis_text_ali
 	}
 	lv_text_align_t value = align == MORPTHIS_TEXT_CENTER   ? LV_TEXT_ALIGN_CENTER
 							: align == MORPTHIS_TEXT_RIGHT ? LV_TEXT_ALIGN_RIGHT
-														 : LV_TEXT_ALIGN_LEFT;
+												 : LV_TEXT_ALIGN_LEFT;
 	lv_obj_set_style_text_align(target, value, 0);
+}
+
+void morpthis_widget_set_text_wrap(morpthis_widget_t *widget, bool wrap) {
+	lv_obj_t *target = text_target(widget);
+	if (!target) {
+		return;
+	}
+	lv_label_set_long_mode(target, wrap ? LV_LABEL_LONG_WRAP : LV_LABEL_LONG_CLIP);
+}
+
+void morpthis_widget_set_text_scroll(morpthis_widget_t *widget, bool scroll) {
+	lv_obj_t *target = text_target(widget);
+	if (!target || (widget->kind != SDK_WIDGET_LABEL && widget->kind != SDK_WIDGET_BUTTON)) {
+		return;
+	}
+	widget->text_scroll = scroll;
+	if (scroll) {
+		scrolltext_apply(target);
+		scrolltext_set(target, widget->text ? widget->text : "");
+	} else {
+		lv_label_set_long_mode(target, LV_LABEL_LONG_CLIP);
+	}
 }
 
 morpthis_widget_t *morpthis_label_create(morpthis_screen_t *screen, const char *text) {
@@ -632,6 +745,505 @@ morpthis_widget_t *morpthis_button_create(morpthis_screen_t *screen, const char 
 	// A swipe-back may start on a key as well as in the gap between keys.
 	lv_obj_set_event_bubble(button, true);
 	return widget;
+}
+
+static void switch_changed_cb(lv_event_t *e) {
+	morpthis_widget_t *widget = lv_event_get_user_data(e);
+	if (!widget || !widget->obj || !widget->visible || !widget->enabled) {
+		return;
+	}
+	widget->value = lv_obj_has_state(widget->obj, LV_STATE_CHECKED) ? 1 : 0;
+	if (widget->value_cb) {
+		widget->value_cb(widget, widget->value, widget->value_user);
+	}
+}
+
+morpthis_widget_t *morpthis_switch_create(morpthis_screen_t *screen, bool on,
+										  morpthis_value_cb cb, void *user) {
+	morpthis_widget_t *widget = widget_new(screen, SDK_WIDGET_SWITCH);
+	if (!widget) {
+		return NULL;
+	}
+	widget->obj = lv_switch_create(screen->content);
+	if (!widget->obj) {
+		morpthis_widget_destroy(widget);
+		return NULL;
+	}
+	theme_apply_switch(widget->obj);
+	lv_obj_set_size(widget->obj, 44, 24);
+	if (on) {
+		lv_obj_add_state(widget->obj, LV_STATE_CHECKED);
+	}
+	widget->value = on ? 1 : 0;
+	widget->value_cb = cb;
+	widget->value_user = user;
+	lv_obj_add_event_cb(widget->obj, switch_changed_cb, LV_EVENT_VALUE_CHANGED, widget);
+	return widget;
+}
+
+bool morpthis_switch_is_on(const morpthis_widget_t *widget) {
+	return widget && widget->kind == SDK_WIDGET_SWITCH && widget->value != 0;
+}
+
+void morpthis_switch_set_on(morpthis_widget_t *widget, bool on) {
+	if (!widget || widget->kind != SDK_WIDGET_SWITCH || !widget->obj) {
+		return;
+	}
+	widget->value = on ? 1 : 0;
+	if (on) {
+		lv_obj_add_state(widget->obj, LV_STATE_CHECKED);
+	} else {
+		lv_obj_remove_state(widget->obj, LV_STATE_CHECKED);
+	}
+}
+
+morpthis_widget_t *morpthis_progress_create(morpthis_screen_t *screen, int min, int max, int value) {
+	morpthis_widget_t *widget = widget_new(screen, SDK_WIDGET_PROGRESS);
+	if (!widget) {
+		return NULL;
+	}
+	widget->obj = lv_bar_create(screen->content);
+	if (!widget->obj) {
+		morpthis_widget_destroy(widget);
+		return NULL;
+	}
+	lv_obj_set_width(widget->obj, lv_pct(100));
+	lv_obj_set_height(widget->obj, 8);
+	lv_obj_set_style_radius(widget->obj, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+	lv_obj_set_style_radius(widget->obj, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
+	lv_obj_add_style(widget->obj, &theme_style_slider_track, LV_PART_MAIN);
+	lv_obj_add_style(widget->obj, &theme_style_accent_bg, LV_PART_INDICATOR);
+	morpthis_progress_set_range(widget, min, max);
+	morpthis_progress_set_value(widget, value);
+	return widget;
+}
+
+void morpthis_progress_set_value(morpthis_widget_t *widget, int value) {
+	if (!widget || widget->kind != SDK_WIDGET_PROGRESS || !widget->obj) {
+		return;
+	}
+	if (value < widget->min) {
+		value = widget->min;
+	}
+	if (value > widget->max) {
+		value = widget->max;
+	}
+	widget->value = value;
+	lv_bar_set_value(widget->obj, value, LV_ANIM_OFF);
+}
+
+int morpthis_progress_value(const morpthis_widget_t *widget) {
+	return widget && widget->kind == SDK_WIDGET_PROGRESS ? widget->value : 0;
+}
+
+void morpthis_progress_set_range(morpthis_widget_t *widget, int min, int max) {
+	if (!widget || widget->kind != SDK_WIDGET_PROGRESS || !widget->obj) {
+		return;
+	}
+	if (max < min) {
+		int swap = min;
+		min = max;
+		max = swap;
+	}
+	widget->min = min;
+	widget->max = max;
+	lv_bar_set_range(widget->obj, min, max);
+	morpthis_progress_set_value(widget, widget->value);
+}
+
+morpthis_widget_t *morpthis_spinner_create(morpthis_screen_t *screen) {
+	morpthis_widget_t *widget = widget_new(screen, SDK_WIDGET_SPINNER);
+	if (!widget) {
+		return NULL;
+	}
+	widget->obj = spinner_create(screen->content, &icon_loader_small);
+	if (!widget->obj) {
+		morpthis_widget_destroy(widget);
+		return NULL;
+	}
+	return widget;
+}
+
+static void arc_changed_cb(lv_event_t *e) {
+	morpthis_widget_t *widget = lv_event_get_user_data(e);
+	if (!widget || widget->kind != SDK_WIDGET_ARC || !widget->obj || widget->setting_value) {
+		return;
+	}
+	widget->value = lv_arc_get_value(widget->obj);
+	if (widget->value_cb) {
+		widget->value_cb(widget, widget->value, widget->value_user);
+	}
+}
+
+morpthis_widget_t *morpthis_arc_create(morpthis_screen_t *screen, int min, int max, int value,
+									   morpthis_value_cb cb, void *user) {
+	morpthis_widget_t *widget = widget_new(screen, SDK_WIDGET_ARC);
+	if (!widget) {
+		return NULL;
+	}
+	widget->obj = lv_arc_create(screen->content);
+	if (!widget->obj) {
+		morpthis_widget_destroy(widget);
+		return NULL;
+	}
+	lv_obj_set_size(widget->obj, sdk_ui_compact() ? 64 : 96, sdk_ui_compact() ? 64 : 96);
+	lv_obj_set_style_bg_opa(widget->obj, LV_OPA_TRANSP, 0);
+	lv_obj_set_style_border_width(widget->obj, 0, 0);
+	lv_obj_set_style_arc_width(widget->obj, sdk_ui_compact() ? 6 : 8, LV_PART_MAIN);
+	lv_obj_set_style_arc_width(widget->obj, sdk_ui_compact() ? 6 : 8, LV_PART_INDICATOR);
+	lv_obj_set_style_arc_color(widget->obj, theme()->text_secondary, LV_PART_MAIN);
+	lv_obj_set_style_arc_opa(widget->obj, LV_OPA_40, LV_PART_MAIN);
+	lv_obj_set_style_arc_color(widget->obj, theme()->accent, LV_PART_INDICATOR);
+	lv_obj_set_style_bg_opa(widget->obj, LV_OPA_TRANSP, LV_PART_KNOB);
+	lv_obj_set_style_border_width(widget->obj, 2, LV_PART_KNOB);
+	lv_obj_set_style_border_color(widget->obj, theme()->accent, LV_PART_KNOB);
+	lv_arc_set_bg_angles(widget->obj, 0, 360);
+	widget->value_cb = cb;
+	widget->value_user = user;
+	morpthis_arc_set_range(widget, min, max);
+	morpthis_arc_set_value(widget, value);
+	lv_obj_add_event_cb(widget->obj, arc_changed_cb, LV_EVENT_VALUE_CHANGED, widget);
+	return widget;
+}
+
+void morpthis_arc_set_value(morpthis_widget_t *widget, int value) {
+	if (!widget || widget->kind != SDK_WIDGET_ARC || !widget->obj) {
+		return;
+	}
+	if (value < widget->min) {
+		value = widget->min;
+	}
+	if (value > widget->max) {
+		value = widget->max;
+	}
+	widget->setting_value = true;
+	lv_arc_set_value(widget->obj, value);
+	widget->setting_value = false;
+	widget->value = value;
+}
+
+int morpthis_arc_value(const morpthis_widget_t *widget) {
+	return widget && widget->kind == SDK_WIDGET_ARC ? widget->value : 0;
+}
+
+void morpthis_arc_set_range(morpthis_widget_t *widget, int min, int max) {
+	if (!widget || widget->kind != SDK_WIDGET_ARC || !widget->obj) {
+		return;
+	}
+	if (max < min) {
+		int swap = min;
+		min = max;
+		max = swap;
+	}
+	widget->min = min;
+	widget->max = max;
+	lv_arc_set_range(widget->obj, min, max);
+	int value = widget->value;
+	if (value < min) {
+		value = min;
+	}
+	if (value > max) {
+		value = max;
+	}
+	widget->setting_value = true;
+	lv_arc_set_value(widget->obj, value);
+	widget->setting_value = false;
+	widget->value = value;
+}
+
+morpthis_widget_t *morpthis_container_create(morpthis_screen_t *screen) {
+	morpthis_widget_t *widget = widget_new(screen, SDK_WIDGET_CONTAINER);
+	if (!widget) {
+		return NULL;
+	}
+	widget->obj = lv_obj_create(screen->content);
+	if (!widget->obj) {
+		morpthis_widget_destroy(widget);
+		return NULL;
+	}
+	lv_obj_remove_style_all(widget->obj);
+	lv_obj_set_style_bg_opa(widget->obj, LV_OPA_TRANSP, 0);
+	lv_obj_set_style_border_width(widget->obj, 0, 0);
+	lv_obj_set_style_pad_all(widget->obj, 0, 0);
+	lv_obj_set_scrollable(widget->obj, false);
+	lv_obj_set_width(widget->obj, lv_pct(100));
+	lv_obj_set_height(widget->obj, LV_SIZE_CONTENT);
+	return widget;
+}
+
+static lv_flex_align_t flex_align(morpthis_align_t align) {
+	switch (align) {
+	case MORPTHIS_ALIGN_CENTER:
+		return LV_FLEX_ALIGN_CENTER;
+	case MORPTHIS_ALIGN_END:
+		return LV_FLEX_ALIGN_END;
+	case MORPTHIS_ALIGN_SPACE_BETWEEN:
+		return LV_FLEX_ALIGN_SPACE_BETWEEN;
+	case MORPTHIS_ALIGN_START:
+	default:
+		return LV_FLEX_ALIGN_START;
+	}
+}
+
+void morpthis_container_set_layout(morpthis_widget_t *container, morpthis_layout_t layout,
+								   morpthis_align_t main_align, morpthis_align_t cross_align, int gap) {
+	if (!container || container->kind != SDK_WIDGET_CONTAINER || !container->obj) {
+		return;
+	}
+	if (layout == MORPTHIS_LAYOUT_ROW || layout == MORPTHIS_LAYOUT_COLUMN) {
+		lv_obj_set_flex_flow(container->obj, layout == MORPTHIS_LAYOUT_ROW ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
+		lv_obj_set_flex_align(container->obj, flex_align(main_align), flex_align(cross_align), LV_FLEX_ALIGN_START);
+		lv_obj_set_style_pad_gap(container->obj, gap > 0 ? gap : 0, 0);
+	} else {
+		lv_obj_set_layout(container->obj, LV_LAYOUT_NONE);
+		lv_obj_set_style_pad_gap(container->obj, 0, 0);
+	}
+}
+
+void morpthis_container_set_scrollable(morpthis_widget_t *container, bool vertical) {
+	if (!container || container->kind != SDK_WIDGET_CONTAINER || !container->obj) {
+		return;
+	}
+	lv_obj_set_scrollable(container->obj, vertical);
+	lv_obj_set_scroll_dir(container->obj, vertical ? LV_DIR_VER : LV_DIR_NONE);
+	lv_obj_set_scrollbar_mode(container->obj, vertical ? LV_SCROLLBAR_MODE_AUTO : LV_SCROLLBAR_MODE_OFF);
+}
+
+static void segment_paint(morpthis_widget_t *widget) {
+	if (!widget || widget->kind != SDK_WIDGET_SEGMENTED || !widget->obj) {
+		return;
+	}
+	for (int i = 0; i < widget->item_count; i++) {
+		lv_obj_t *pill = lv_obj_get_child(widget->obj, i);
+		if (!pill) {
+			continue;
+		}
+		bool selected = i == widget->value;
+		lv_obj_set_style_bg_color(pill, selected ? theme()->accent : theme()->surface, 0);
+		lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
+		lv_obj_t *label = lv_obj_get_child(pill, 0);
+		if (label) {
+			lv_obj_set_style_text_color(label, selected ? theme_on_accent() : theme()->text_primary, 0);
+		}
+	}
+}
+
+static void segment_clicked_cb(lv_event_t *e) {
+	morpthis_widget_t *widget = lv_event_get_user_data(e);
+	if (!widget || !widget->visible || !widget->enabled) {
+		return;
+	}
+	lv_obj_t *pill = lv_event_get_target(e);
+	int index = (int)lv_obj_get_index(pill);
+	if (index < 0 || index >= widget->item_count) {
+		return;
+	}
+	widget->value = index;
+	segment_paint(widget);
+	if (widget->value_cb) {
+		widget->value_cb(widget, index, widget->value_user);
+	}
+}
+
+morpthis_widget_t *morpthis_segmented_create(morpthis_screen_t *screen, const char *const *labels,
+										 int count, int selected, morpthis_value_cb cb, void *user) {
+	if (!labels || count <= 0) {
+		return NULL;
+	}
+	morpthis_widget_t *widget = widget_new(screen, SDK_WIDGET_SEGMENTED);
+	if (!widget) {
+		return NULL;
+	}
+	widget->obj = lv_obj_create(screen->content);
+	if (!widget->obj) {
+		morpthis_widget_destroy(widget);
+		return NULL;
+	}
+	lv_obj_remove_style_all(widget->obj);
+	lv_obj_set_style_bg_opa(widget->obj, LV_OPA_TRANSP, 0);
+	lv_obj_set_style_border_width(widget->obj, 0, 0);
+	lv_obj_set_style_pad_all(widget->obj, 0, 0);
+	lv_obj_set_style_pad_gap(widget->obj, 6, 0);
+	lv_obj_set_scrollable(widget->obj, false);
+	lv_obj_set_flex_flow(widget->obj, LV_FLEX_FLOW_ROW);
+	lv_obj_set_flex_align(widget->obj, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+	lv_obj_set_width(widget->obj, lv_pct(100));
+	lv_obj_set_height(widget->obj, LV_SIZE_CONTENT);
+
+	widget->value_cb = cb;
+	widget->value_user = user;
+	widget->value = selected >= 0 && selected < count ? selected : -1;
+	widget->item_count = 0;
+	for (int i = 0; i < count; i++) {
+		lv_obj_t *pill = lv_btn_create(widget->obj);
+		if (!pill) {
+			break;
+		}
+		lv_obj_set_height(pill, sdk_ui_compact() ? 32 : 44);
+		lv_obj_set_style_pad_hor(pill, sdk_ui_compact() ? 10 : 18, 0);
+		lv_obj_set_style_radius(pill, LV_RADIUS_CIRCLE, 0);
+		lv_obj_set_style_border_width(pill, 0, 0);
+		lv_obj_set_style_shadow_width(pill, 0, 0);
+		lv_obj_t *label = lv_label_create(pill);
+		lv_label_set_text(label, labels[i] ? labels[i] : "");
+		lv_obj_set_style_text_font(label, sdk_ui_compact() ? &font_ui_16 : &font_ui_20, 0);
+		lv_obj_center(label);
+		lv_obj_add_event_cb(pill, segment_clicked_cb, LV_EVENT_CLICKED, widget);
+		widget->item_count++;
+	}
+	segment_paint(widget);
+	return widget;
+}
+
+void morpthis_segmented_set_selected(morpthis_widget_t *widget, int index) {
+	if (!widget || widget->kind != SDK_WIDGET_SEGMENTED) {
+		return;
+	}
+	widget->value = index >= 0 && index < widget->item_count ? index : -1;
+	segment_paint(widget);
+}
+
+int morpthis_segmented_selected(const morpthis_widget_t *widget) {
+	return widget && widget->kind == SDK_WIDGET_SEGMENTED ? widget->value : -1;
+}
+
+static void settings_row_click_cb(lv_event_t *e) {
+	morpthis_widget_t *widget = lv_event_get_user_data(e);
+	if (!widget || !widget->visible || !widget->enabled) {
+		return;
+	}
+	if (widget->click_cb) {
+		widget->click_cb(widget, widget->click_user);
+	}
+}
+
+morpthis_widget_t *morpthis_settings_row_create(morpthis_screen_t *screen, const char *title,
+										  const char *detail, const char *value,
+										  morpthis_click_cb cb, void *user) {
+	morpthis_widget_t *widget = widget_new(screen, SDK_WIDGET_SETTINGS_ROW);
+	if (!widget) {
+		return NULL;
+	}
+	widget->obj = settingsrow_add(screen->content, title ? title : "", &widget->value_label,
+								  cb ? settings_row_click_cb : NULL, widget);
+	if (!widget->obj) {
+		morpthis_widget_destroy(widget);
+		return NULL;
+	}
+	widget->label = settingsrow_name_label(widget->obj);
+	widget->text = sdk_strdup(title);
+	widget->click_cb = cb;
+	widget->click_user = user;
+	if (detail && detail[0]) {
+		settingsrow_add_caption(widget->obj, detail);
+	}
+
+	// The value label and the chevron share the right edge: a row that has a
+	// value shows it, one that opens a page shows the chevron.
+	widget->icon = lv_image_create(widget->obj);
+	if (widget->icon) {
+		lv_image_set_src(widget->icon, &icon_chevron_right);
+		lv_obj_add_style(widget->icon, &theme_style_icon, 0);
+		lv_obj_set_style_image_opa(widget->icon, LV_OPA_60, 0);
+		lv_obj_align(widget->icon, LV_ALIGN_RIGHT_MID, 0, 0);
+	}
+	morpthis_settings_row_set_value(widget, value);
+	return widget;
+}
+
+void morpthis_settings_row_set_value(morpthis_widget_t *widget, const char *value) {
+	if (!widget || widget->kind != SDK_WIDGET_SETTINGS_ROW) {
+		return;
+	}
+	bool has_value = value && value[0];
+	if (widget->value_label) {
+		lv_label_set_text(widget->value_label, has_value ? value : "");
+		lv_obj_set_hidden(widget->value_label, !has_value);
+	}
+	if (widget->icon) {
+		lv_obj_set_hidden(widget->icon, has_value);
+	}
+}
+
+static void text_input_result_cb(bool accepted, const char *text, void *user);
+
+static void text_input_clicked_cb(lv_event_t *e) {
+	morpthis_widget_t *widget = lv_event_get_user_data(e);
+	if (!widget || !widget->obj || !widget->visible || !widget->enabled) {
+		return;
+	}
+	const char *current = lv_textarea_get_text(widget->obj);
+	if (!prompt_show(widget->text ? widget->text : "Edit", current, widget->password,
+					 text_input_result_cb, widget, widget)) {
+		prompt_owner = NULL;
+	}
+}
+
+static void text_input_result_cb(bool accepted, const char *text, void *user) {
+	morpthis_widget_t *widget = user;
+	if (!widget || widget->kind != SDK_WIDGET_TEXT_INPUT) {
+		return;
+	}
+	if (!accepted) {
+		// The prompt reports an empty string when the user backs out; the field
+		// still holds what it held before.
+		if (widget->text_cb) {
+			widget->text_cb(false, lv_textarea_get_text(widget->obj), widget->text_user);
+		}
+		return;
+	}
+	if (widget->obj && text) {
+		lv_textarea_set_text(widget->obj, text);
+	}
+	if (widget->text_cb) {
+		widget->text_cb(true, text ? text : "", widget->text_user);
+	}
+}
+
+morpthis_widget_t *morpthis_text_input_create(morpthis_screen_t *screen, const char *title,
+										  const char *initial, bool password,
+										  morpthis_text_cb cb, void *user) {
+	morpthis_widget_t *widget = widget_new(screen, SDK_WIDGET_TEXT_INPUT);
+	if (!widget) {
+		return NULL;
+	}
+	widget->obj = lv_textarea_create(screen->content);
+	if (!widget->obj) {
+		morpthis_widget_destroy(widget);
+		return NULL;
+	}
+	lv_obj_set_width(widget->obj, lv_pct(100));
+	lv_obj_set_height(widget->obj, sdk_ui_compact() ? 36 : 48);
+	lv_textarea_set_one_line(widget->obj, true);
+	lv_textarea_set_text(widget->obj, initial ? initial : "");
+	lv_obj_set_style_bg_color(widget->obj, theme()->surface, 0);
+	lv_obj_set_style_bg_opa(widget->obj, LV_OPA_COVER, 0);
+	lv_obj_set_style_text_color(widget->obj, theme()->text_primary, 0);
+	lv_obj_set_style_text_font(widget->obj, sdk_ui_compact() ? &font_ui_16 : &font_ui_20, 0);
+	lv_obj_set_style_border_width(widget->obj, 0, 0);
+	lv_obj_set_style_radius(widget->obj, 8, 0);
+	lv_obj_set_style_pad_all(widget->obj, 6, 0);
+	if (password) {
+		lv_textarea_set_password_mode(widget->obj, true);
+		keyboard_style_password(widget->obj, 0);
+	}
+	widget->text = sdk_strdup(title);
+	widget->text_cb = cb;
+	widget->text_user = user;
+	widget->password = password;
+	lv_obj_add_event_cb(widget->obj, text_input_clicked_cb, LV_EVENT_CLICKED, widget);
+	return widget;
+}
+
+void morpthis_text_input_set_text(morpthis_widget_t *widget, const char *text) {
+	if (!widget || widget->kind != SDK_WIDGET_TEXT_INPUT || !widget->obj) {
+		return;
+	}
+	lv_textarea_set_text(widget->obj, text ? text : "");
+}
+
+const char *morpthis_text_input_get_text(const morpthis_widget_t *widget) {
+	return widget && widget->kind == SDK_WIDGET_TEXT_INPUT && widget->obj ? lv_textarea_get_text(widget->obj) : "";
 }
 
 morpthis_widget_t *morpthis_list_create(morpthis_screen_t *screen) {
@@ -844,6 +1456,18 @@ void morpthis_list_set_select_cb(morpthis_widget_t *list, morpthis_index_cb cb, 
 	list->select_user = user;
 }
 
+bool morpthis_list_scroll_to(morpthis_widget_t *list, int index) {
+	if (!list || list->kind != SDK_WIDGET_LIST || !list->rows || index < 0 || index >= list->item_count) {
+		return false;
+	}
+	sdk_list_row_t *row = list->rows[index];
+	if (!row || !row->row) {
+		return false;
+	}
+	lv_obj_scroll_to_view(row->row, LV_ANIM_OFF);
+	return true;
+}
+
 // ---------------------------------------------------------------------------
 // Menus
 // ---------------------------------------------------------------------------
@@ -971,6 +1595,117 @@ void morpthis_image_set_source(morpthis_widget_t *image, const char *relative_pa
 	image_reload(image);
 }
 
+morpthis_widget_t *morpthis_qrcode_create(morpthis_screen_t *screen, int size) {
+	if (size <= 0) {
+		errno = EINVAL;
+		return NULL;
+	}
+	morpthis_widget_t *widget = widget_new(screen, SDK_WIDGET_QRCODE);
+	if (!widget) {
+		return NULL;
+	}
+	widget->obj = lv_qrcode_create(screen->content);
+	if (!widget->obj) {
+		morpthis_widget_destroy(widget);
+		return NULL;
+	}
+	lv_qrcode_set_size(widget->obj, size);
+	lv_qrcode_set_dark_color(widget->obj, theme()->text_primary);
+	lv_qrcode_set_light_color(widget->obj, theme()->surface);
+	lv_obj_set_size(widget->obj, size, size);
+	return widget;
+}
+
+void morpthis_qrcode_set_text(morpthis_widget_t *qrcode, const char *text) {
+	if (!qrcode || qrcode->kind != SDK_WIDGET_QRCODE || !qrcode->obj) {
+		return;
+	}
+	char *copy = sdk_strdup(text);
+	if (!copy) {
+		return;
+	}
+	free(qrcode->text);
+	qrcode->text = copy;
+	lv_qrcode_set_data(qrcode->obj, qrcode->text);
+}
+
+static void roller_changed_cb(lv_event_t *e) {
+	morpthis_widget_t *widget = lv_event_get_user_data(e);
+	if (!widget || widget->kind != SDK_WIDGET_ROLLER || !widget->obj) {
+		return;
+	}
+	widget->value = lv_roller_get_selected(widget->obj);
+	if (widget->value_cb) {
+		widget->value_cb(widget, widget->value, widget->value_user);
+	}
+}
+
+morpthis_widget_t *morpthis_roller_create(morpthis_screen_t *screen, const char *const *options,
+										  int count, int selected, int visible_rows,
+										  morpthis_value_cb cb, void *user) {
+	if (!options || count <= 0) {
+		return NULL;
+	}
+	morpthis_widget_t *widget = widget_new(screen, SDK_WIDGET_ROLLER);
+	if (!widget) {
+		return NULL;
+	}
+	widget->obj = lv_roller_create(screen->content);
+	if (!widget->obj) {
+		morpthis_widget_destroy(widget);
+		return NULL;
+	}
+
+	size_t length = 0;
+	for (int i = 0; i < count; i++) {
+		length += strlen(options[i] ? options[i] : "") + 1;
+	}
+	char *joined = malloc(length + 1);
+	if (!joined) {
+		morpthis_widget_destroy(widget);
+		return NULL;
+	}
+	joined[0] = '\0';
+	for (int i = 0; i < count; i++) {
+		if (i) {
+			strcat(joined, "\n");
+		}
+		strcat(joined, options[i] ? options[i] : "");
+	}
+	lv_roller_set_options(widget->obj, joined, LV_ROLLER_MODE_NORMAL);
+	free(joined);
+
+	lv_obj_set_width(widget->obj, lv_pct(100));
+	lv_roller_set_visible_row_count(widget->obj, visible_rows > 0 ? visible_rows : 3);
+	lv_obj_set_style_text_font(widget->obj, sdk_ui_compact() ? &font_ui_18 : &font_ui_22, 0);
+	lv_obj_set_style_bg_color(widget->obj, theme()->surface, 0);
+	lv_obj_set_style_bg_opa(widget->obj, LV_OPA_COVER, 0);
+	lv_obj_set_style_text_color(widget->obj, theme()->text_primary, 0);
+	lv_obj_set_style_border_width(widget->obj, 0, 0);
+
+	widget->value_cb = cb;
+	widget->value_user = user;
+	widget->value = selected >= 0 && selected < count ? selected : 0;
+	lv_roller_set_selected(widget->obj, widget->value, LV_ANIM_OFF);
+	lv_obj_add_event_cb(widget->obj, roller_changed_cb, LV_EVENT_VALUE_CHANGED, widget);
+	return widget;
+}
+
+void morpthis_roller_set_selected(morpthis_widget_t *roller, int index) {
+	if (!roller || roller->kind != SDK_WIDGET_ROLLER || !roller->obj) {
+		return;
+	}
+	if (index < 0) {
+		index = 0;
+	}
+	lv_roller_set_selected(roller->obj, index, LV_ANIM_OFF);
+	roller->value = lv_roller_get_selected(roller->obj);
+}
+
+int morpthis_roller_selected(const morpthis_widget_t *roller) {
+	return roller && roller->kind == SDK_WIDGET_ROLLER ? roller->value : 0;
+}
+
 static void slider_event_cb(lv_event_t *e) {
 	morpthis_widget_t *widget = lv_event_get_user_data(e);
 	if (!widget || widget->kind != SDK_WIDGET_SLIDER) {
@@ -1069,6 +1804,33 @@ void morpthis_slider_set_release_cb(morpthis_widget_t *slider, morpthis_value_cb
 	slider->release_user = user;
 }
 
+void morpthis_slider_set_range(morpthis_widget_t *slider, int min, int max) {
+	if (!slider || slider->kind != SDK_WIDGET_SLIDER || !slider->obj) {
+		return;
+	}
+	if (max < min) {
+		int swap = min;
+		min = max;
+		max = swap;
+	}
+	slider->min = min;
+	slider->max = max;
+	lv_slider_set_range(slider->obj, min, max);
+	int value = slider->value;
+	if (value < min) {
+		value = min;
+	}
+	if (value > max) {
+		value = max;
+	}
+	// A range change is not a user edit: clamp the value without firing the
+	// value callback.
+	slider->setting_value = true;
+	lv_slider_set_value(slider->obj, value, LV_ANIM_OFF);
+	slider->setting_value = false;
+	slider->value = value;
+}
+
 morpthis_widget_t *morpthis_canvas_create(morpthis_screen_t *screen, int width, int height) {
 	if (width <= 0 || height <= 0) {
 		errno = EINVAL;
@@ -1144,9 +1906,103 @@ void morpthis_ui_refresh(void) {
 	lv_refr_now(NULL);
 }
 
+// ---------------------------------------------------------------------------
+// Timers
+// ---------------------------------------------------------------------------
+
+struct morpthis_timer {
+	lv_timer_t *timer;
+	morpthis_timer_cb cb;
+	void *user;
+	struct morpthis_timer *next;
+};
+
+static morpthis_timer_t *sdk_timers;
+
+static void sdk_timer_tick(lv_timer_t *timer) {
+	morpthis_timer_t *handle = lv_timer_get_user_data(timer);
+	if (handle && handle->cb) {
+		handle->cb(handle, handle->user);
+	}
+}
+
+morpthis_timer_t *morpthis_timer_create(uint32_t period_ms, morpthis_timer_cb cb, void *user) {
+	if (!cb || !sdk_app || !sdk_app->alive) {
+		return NULL;
+	}
+	if (period_ms == 0) {
+		period_ms = 1;
+	}
+	morpthis_timer_t *handle = calloc(1, sizeof(*handle));
+	if (!handle) {
+		return NULL;
+	}
+	handle->cb = cb;
+	handle->user = user;
+	handle->timer = lv_timer_create(sdk_timer_tick, period_ms, handle);
+	if (!handle->timer) {
+		free(handle);
+		return NULL;
+	}
+	handle->next = sdk_timers;
+	sdk_timers = handle;
+	return handle;
+}
+
+void morpthis_timer_set_period(morpthis_timer_t *timer, uint32_t period_ms) {
+	if (!timer || !timer->timer) {
+		return;
+	}
+	lv_timer_set_period(timer->timer, period_ms ? period_ms : 1);
+}
+
+void morpthis_timer_reset(morpthis_timer_t *timer) {
+	if (timer && timer->timer) {
+		lv_timer_reset(timer->timer);
+	}
+}
+
+void morpthis_timer_delete(morpthis_timer_t *timer) {
+	if (!timer) {
+		return;
+	}
+	morpthis_timer_t **link = &sdk_timers;
+	while (*link && *link != timer) {
+		link = &(*link)->next;
+	}
+	if (*link == timer) {
+		*link = timer->next;
+	}
+	if (timer->timer) {
+		lv_timer_delete(timer->timer);
+	}
+	free(timer);
+}
+
 void morpthis_widget_destroy(morpthis_widget_t *widget) {
 	if (!widget) {
 		return;
+	}
+
+	// A prompt is a modal owned by the SDK; if the field that opened it is going
+	// away, close the prompt first so its callback cannot touch freed memory.
+	if (prompt_owner == widget) {
+		prompt_abandon();
+	}
+
+	// Children first: each unlinks itself from this widget's child list.
+	while (widget->children) {
+		morpthis_widget_destroy(widget->children);
+	}
+
+	if (widget->parent) {
+		morpthis_widget_t **link = &widget->parent->children;
+		while (*link && *link != widget) {
+			link = &(*link)->next_sibling;
+		}
+		if (*link == widget) {
+			*link = widget->next_sibling;
+		}
 	}
 
 	morpthis_screen_t *screen = widget->screen;
@@ -1177,7 +2033,15 @@ void morpthis_widget_destroy(morpthis_widget_t *widget) {
 }
 
 void morpthis_widget_set_text(morpthis_widget_t *widget, const char *text) {
-	if (!widget || (widget->kind != SDK_WIDGET_LABEL && widget->kind != SDK_WIDGET_BUTTON)) {
+	if (!widget) {
+		return;
+	}
+	if (widget->kind == SDK_WIDGET_TEXT_INPUT) {
+		morpthis_text_input_set_text(widget, text);
+		return;
+	}
+	if (widget->kind != SDK_WIDGET_LABEL && widget->kind != SDK_WIDGET_BUTTON &&
+		widget->kind != SDK_WIDGET_SETTINGS_ROW) {
 		return;
 	}
 	char *copy = sdk_strdup(text);
@@ -1187,12 +2051,22 @@ void morpthis_widget_set_text(morpthis_widget_t *widget, const char *text) {
 	free(widget->text);
 	widget->text = copy;
 	if (widget->label) {
-		lv_label_set_text(widget->label, widget->text);
+		if (widget->text_scroll) {
+			scrolltext_set(widget->label, widget->text);
+		} else {
+			lv_label_set_text(widget->label, widget->text);
+		}
 	}
 }
 
 const char *morpthis_widget_text(const morpthis_widget_t *widget) {
-	return widget && widget->text ? widget->text : "";
+	if (!widget) {
+		return "";
+	}
+	if (widget->kind == SDK_WIDGET_TEXT_INPUT && widget->obj) {
+		return lv_textarea_get_text(widget->obj);
+	}
+	return widget->text ? widget->text : "";
 }
 
 void morpthis_widget_set_pos(morpthis_widget_t *widget, int x, int y) {
@@ -1205,9 +2079,10 @@ void morpthis_widget_set_size(morpthis_widget_t *widget, int width, int height) 
 	if (!widget || !widget->obj || widget->kind == SDK_WIDGET_CANVAS) {
 		return;
 	}
-	widget->width = width < 0 ? 0 : width;
-	widget->height = height < 0 ? 0 : height;
-	lv_obj_set_size(widget->obj, widget->width, widget->height);
+	widget->width = width == MORPTHIS_SIZE_CONTENT || width < 0 ? 0 : width;
+	widget->height = height == MORPTHIS_SIZE_CONTENT || height < 0 ? 0 : height;
+	lv_obj_set_size(widget->obj, width == MORPTHIS_SIZE_CONTENT ? LV_SIZE_CONTENT : width,
+					height == MORPTHIS_SIZE_CONTENT ? LV_SIZE_CONTENT : height);
 	if (widget->kind == SDK_WIDGET_IMAGE && widget->image) {
 		image_reload(widget);
 	}
@@ -1255,6 +2130,80 @@ void morpthis_widget_raise(morpthis_widget_t *widget) {
 	lv_obj_move_foreground(widget->obj);
 }
 
+void morpthis_widget_set_parent(morpthis_widget_t *widget, morpthis_widget_t *parent) {
+	if (!widget || !widget->obj || widget == parent) {
+		return;
+	}
+	if (parent && parent->kind != SDK_WIDGET_CONTAINER) {
+		return;
+	}
+	if (widget->parent) {
+		morpthis_widget_t **link = &widget->parent->children;
+		while (*link && *link != widget) {
+			link = &(*link)->next_sibling;
+		}
+		if (*link == widget) {
+			*link = widget->next_sibling;
+		}
+	}
+	widget->parent = parent;
+	widget->next_sibling = NULL;
+	if (parent) {
+		widget->next_sibling = parent->children;
+		parent->children = widget;
+		lv_obj_set_parent(widget->obj, parent->obj);
+	} else if (widget->screen) {
+		lv_obj_set_parent(widget->obj, widget->screen->content);
+	}
+}
+
+static lv_color_t rgb_color(uint32_t rgb) {
+	return lv_color_make((uint8_t)(rgb >> 16), (uint8_t)(rgb >> 8), (uint8_t)rgb);
+}
+
+void morpthis_widget_set_bg_color(morpthis_widget_t *widget, uint32_t rgb, int opacity) {
+	if (!widget || !widget->obj) {
+		return;
+	}
+	lv_obj_set_style_bg_color(widget->obj, rgb_color(rgb), 0);
+	if (opacity >= 0) {
+		if (opacity > 100) {
+			opacity = 100;
+		}
+		lv_obj_set_style_bg_opa(widget->obj, (lv_opa_t)((opacity * 255 + 50) / 100), 0);
+	}
+}
+
+void morpthis_widget_set_text_color(morpthis_widget_t *widget, uint32_t rgb) {
+	if (!widget || !widget->obj) {
+		return;
+	}
+	lv_obj_set_style_text_color(widget->obj, rgb_color(rgb), 0);
+	if (widget->label && widget->label != widget->obj) {
+		lv_obj_set_style_text_color(widget->label, rgb_color(rgb), 0);
+	}
+	if (widget->value_label) {
+		lv_obj_set_style_text_color(widget->value_label, rgb_color(rgb), 0);
+	}
+}
+
+void morpthis_widget_set_radius(morpthis_widget_t *widget, int radius) {
+	if (!widget || !widget->obj) {
+		return;
+	}
+	lv_obj_set_style_radius(widget->obj, radius < 0 ? 0 : radius, 0);
+}
+
+void morpthis_widget_set_padding(morpthis_widget_t *widget, int left, int top, int right, int bottom) {
+	if (!widget || !widget->obj) {
+		return;
+	}
+	lv_obj_set_style_pad_left(widget->obj, left < 0 ? 0 : left, 0);
+	lv_obj_set_style_pad_top(widget->obj, top < 0 ? 0 : top, 0);
+	lv_obj_set_style_pad_right(widget->obj, right < 0 ? 0 : right, 0);
+	lv_obj_set_style_pad_bottom(widget->obj, bottom < 0 ? 0 : bottom, 0);
+}
+
 void morpthis_widget_set_enabled(morpthis_widget_t *widget, bool enabled) {
 	if (!widget || !widget->obj) {
 		return;
@@ -1277,4 +2226,309 @@ bool morpthis_widget_is_enabled(const morpthis_widget_t *widget) {
 
 void morpthis_toast(const char *text) {
 	toast_plain(text ? text : "");
+}
+
+void morpthis_toast_success(const char *text) { toast_success(text ? text : ""); }
+
+void morpthis_toast_error(const char *text) { toast_error(text ? text : ""); }
+
+void morpthis_toast_busy(const char *text) { toast_busy(text ? text : ""); }
+
+void morpthis_toast_busy_end(void) { toast_busy_end(); }
+
+static bool sdk_modal_open;
+
+void morpthis_ui_modal_show(const char *title, const char *subtitle) {
+	if (!sdk_app || !sdk_app->alive) {
+		return;
+	}
+	sdk_modal_open = true;
+	gui_modal_show(NULL, theme()->accent, title ? title : "", subtitle ? subtitle : "");
+}
+
+void morpthis_ui_modal_progress(int percent) {
+	if (sdk_modal_open) {
+		gui_modal_progress(percent);
+	}
+}
+
+void morpthis_ui_modal_hide(void) {
+	if (sdk_modal_open) {
+		sdk_modal_open = false;
+		gui_modal_hide();
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Theme and chrome
+// ---------------------------------------------------------------------------
+
+static uint32_t theme_rgb(lv_color_t color) {
+	return ((uint32_t)color.red << 16) | ((uint32_t)color.green << 8) | (uint32_t)color.blue;
+}
+
+void morpthis_ui_theme(morpthis_theme_t *out) {
+	if (!out) {
+		return;
+	}
+	const theme_palette_t *palette = theme();
+	out->screen_bg = theme_rgb(palette->screen_bg);
+	out->surface = theme_rgb(palette->surface);
+	out->panel = theme_rgb(palette->panel);
+	out->cover_bg = theme_rgb(palette->cover_bg);
+	out->text_primary = theme_rgb(palette->text_primary);
+	out->text_secondary = theme_rgb(palette->text_secondary);
+	out->accent = theme_rgb(palette->accent);
+	out->dark = palette->dark;
+}
+
+bool morpthis_ui_set_dark(bool dark) {
+	theme_set_dark(dark);
+	return true;
+}
+
+bool morpthis_ui_set_accent(int index) {
+	if (index < 0 || index >= THEME_ACCENT_COUNT) {
+		return false;
+	}
+	theme_set_accent(index);
+	return true;
+}
+
+void morpthis_ui_set_status_bar_visible(bool visible) {
+	if (app_is_game()) {
+		return; // the game owns the whole panel; the player's chrome stays away
+	}
+	topbar_set_hidden(!visible);
+}
+
+bool morpthis_ui_status_bar_visible(void) {
+	return !topbar_is_hidden();
+}
+
+// ---------------------------------------------------------------------------
+// Modal dialogs
+// ---------------------------------------------------------------------------
+
+static morpthis_action_cb sdk_confirm_cb;
+static void *sdk_confirm_user;
+static bool sdk_confirm_open;
+
+static void sdk_confirm_action(void *user) {
+	(void)user;
+	morpthis_action_cb cb = sdk_confirm_cb;
+	void *cb_user = sdk_confirm_user;
+	sdk_confirm_open = false;
+	sdk_confirm_cb = NULL;
+	sdk_confirm_user = NULL;
+	if (cb) {
+		cb(cb_user);
+	}
+}
+
+bool morpthis_ui_confirm(const char *title, const char *message, const char *ok_label,
+					 morpthis_action_cb cb, void *user) {
+	if (!sdk_app || !sdk_app->alive) {
+		return false;
+	}
+	sdk_confirm_cb = cb;
+	sdk_confirm_user = user;
+	sdk_confirm_open = true;
+	confirm_show(title ? title : "", message, ok_label, sdk_confirm_action, NULL);
+	return true;
+}
+
+void morpthis_ui_notice(const char *title, const char *message) {
+	if (!sdk_app || !sdk_app->alive) {
+		return;
+	}
+	// A notice has no callback into the app, so it needs no teardown tracking:
+	// the player owns the card and can close it whenever it likes.
+	confirm_notice(title ? title : "", message);
+}
+
+// ---------------------------------------------------------------------------
+// Text prompt
+// ---------------------------------------------------------------------------
+
+static lv_obj_t *prompt_modal;
+static lv_obj_t *prompt_field;
+static keyboard_t *prompt_keyboard;
+static morpthis_text_cb prompt_cb;
+static void *prompt_user;
+
+static void prompt_finish(bool deliver, bool accepted);
+
+static void prompt_cancel_cb(lv_event_t *e) {
+	(void)e;
+	prompt_finish(true, false);
+}
+
+static void prompt_accept_cb(lv_event_t *e) {
+	(void)e;
+	prompt_finish(true, true);
+}
+
+// Destroys the card without entering the app. Used by teardown: a callback into
+// a shared object that is about to be unmapped would be the last thing it ever
+// did.
+static void prompt_abandon(void) { prompt_finish(false, false); }
+
+static void prompt_finish(bool deliver, bool accepted) {
+	if (!prompt_modal) {
+		return;
+	}
+
+	char *text = NULL;
+	if (accepted && prompt_field) {
+		const char *value = lv_textarea_get_text(prompt_field);
+		if (value) {
+			text = sdk_strdup(value);
+		}
+	}
+
+	morpthis_text_cb cb = prompt_cb;
+	void *cb_user = prompt_user;
+	keyboard_t *kb = prompt_keyboard;
+	lv_obj_t *modal = prompt_modal;
+
+	prompt_modal = NULL;
+	prompt_field = NULL;
+	prompt_keyboard = NULL;
+	prompt_cb = NULL;
+	prompt_user = NULL;
+	prompt_owner = NULL;
+
+	keyboard_destroy(kb);
+	lv_obj_delete(modal);
+
+	if (deliver && cb) {
+		cb(accepted, text ? text : "", cb_user);
+	}
+	free(text);
+}
+
+static bool prompt_show(const char *title, const char *initial, bool password, morpthis_text_cb cb,
+						void *user, morpthis_widget_t *owner) {
+	if (!sdk_cfg || !sdk_app || !sdk_app->alive || !cb) {
+		return false;
+	}
+
+	// A second prompt replaces the first; the first is cancelled without a
+	// callback, because the app is already busy opening another.
+	prompt_abandon();
+
+	lv_obj_t *modal = lv_obj_create(lv_layer_top());
+	if (!modal) {
+		return false;
+	}
+	lv_obj_set_size(modal, lv_pct(100), lv_pct(100));
+	lv_obj_set_style_bg_color(modal, lv_color_black(), 0);
+	lv_obj_set_style_bg_opa(modal, LV_OPA_60, 0);
+	lv_obj_set_style_border_width(modal, 0, 0);
+	lv_obj_set_style_pad_all(modal, 0, 0);
+	lv_obj_set_scrollable(modal, false);
+	lv_obj_set_clickable(modal, true);
+
+	lv_obj_t *card = lv_obj_create(modal);
+	lv_obj_set_width(card, lv_pct(90));
+	lv_obj_set_height(card, 110);
+	lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 14);
+	lv_obj_add_style(card, &theme_style_card, 0);
+	lv_obj_set_style_radius(card, 14, 0);
+	lv_obj_set_style_border_width(card, 0, 0);
+	lv_obj_set_style_shadow_width(card, 0, 0);
+	lv_obj_set_style_pad_all(card, 10, 0);
+	lv_obj_set_scrollable(card, false);
+
+	lv_obj_t *heading = lv_label_create(card);
+	lv_label_set_text(heading, title ? title : "");
+	lv_obj_add_style(heading, &theme_style_text, 0);
+	lv_obj_set_style_text_font(heading, &font_ui_18, 0);
+	lv_obj_align(heading, LV_ALIGN_TOP_LEFT, 0, 0);
+
+	lv_obj_t *field = lv_textarea_create(card);
+	lv_obj_set_width(field, lv_pct(100));
+	lv_obj_set_height(field, 36);
+	lv_obj_align(field, LV_ALIGN_TOP_MID, 0, 24);
+	lv_textarea_set_one_line(field, true);
+	lv_textarea_set_text(field, initial ? initial : "");
+	lv_obj_set_style_bg_color(field, theme()->surface, 0);
+	lv_obj_set_style_bg_opa(field, LV_OPA_COVER, 0);
+	lv_obj_set_style_text_color(field, theme()->text_primary, 0);
+	lv_obj_set_style_text_font(field, &font_ui_16, 0);
+	lv_obj_set_style_border_width(field, 0, 0);
+	lv_obj_set_style_radius(field, 8, 0);
+	lv_obj_set_style_pad_all(field, 6, 0);
+	if (password) {
+		lv_textarea_set_password_mode(field, true);
+		keyboard_style_password(field, 0);
+	}
+	lv_obj_add_state(field, LV_STATE_FOCUSED);
+
+	lv_obj_t *cancel = lv_button_create(card);
+	lv_obj_set_size(cancel, 74, 28);
+	lv_obj_align(cancel, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+	lv_obj_set_style_bg_opa(cancel, LV_OPA_TRANSP, 0);
+	lv_obj_set_style_border_width(cancel, 0, 0);
+	lv_obj_set_style_shadow_width(cancel, 0, 0);
+	lv_obj_set_style_pad_all(cancel, 0, 0);
+	lv_obj_t *cancel_label = lv_label_create(cancel);
+	lv_label_set_text(cancel_label, "Cancel");
+	lv_obj_add_style(cancel_label, &theme_style_text_dim, 0);
+	lv_obj_set_style_text_font(cancel_label, &font_ui_14, 0);
+	lv_obj_center(cancel_label);
+	lv_obj_add_event_cb(cancel, prompt_cancel_cb, LV_EVENT_CLICKED, NULL);
+
+	int keyboard_height = sdk_cfg->screen_width < 320 ? 144 : 316;
+	keyboard_t *kb = keyboard_create(modal, sdk_cfg->screen_width, keyboard_height, field, NULL, "OK",
+								 prompt_accept_cb, NULL);
+	if (!kb) {
+		lv_obj_delete(modal);
+		return false;
+	}
+
+	prompt_modal = modal;
+	prompt_field = field;
+	prompt_keyboard = kb;
+	prompt_cb = cb;
+	prompt_user = user;
+	prompt_owner = owner;
+	lv_obj_move_foreground(modal);
+	return true;
+}
+
+bool morpthis_ui_prompt_text(const char *title, const char *initial, bool password,
+						 morpthis_text_cb cb, void *user) {
+	return prompt_show(title, initial, password, cb, user, NULL);
+}
+
+// Called from the host's teardown, on the GUI thread. Removes every piece of
+// player chrome that holds a callback into the app, before the shared object is
+// unmapped.
+void sdk_ui_app_reset(bool teardown) {
+	morpthis_menu_close();
+	prompt_abandon();
+	if (sdk_confirm_open) {
+		confirm_close();
+	}
+	sdk_confirm_open = false;
+	sdk_confirm_cb = NULL;
+	sdk_confirm_user = NULL;
+	morpthis_ui_modal_hide();
+
+	// The app's own timers belong to its loaded lifetime, not to a screen. A
+	// backgrounded app keeps them (a music app may poll while away); a teardown
+	// must delete them before the shared object is unmapped.
+	if (teardown) {
+		while (sdk_timers) {
+			morpthis_timer_delete(sdk_timers);
+		}
+	}
+
+	// An app that hid the status bar must not leave the next page wearing that
+	// choice. A game's own screen hooks put the bar back on unload.
+	if (!app_is_game()) {
+		topbar_set_hidden(false);
+	}
 }

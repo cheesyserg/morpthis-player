@@ -223,6 +223,11 @@ void power_charging_release(void);
 // menu and the automatic shutdown both end here.
 void power_shutdown(void);
 
+// Restarts the device the same way: the position flushed, the panel and LED
+// dark, audio quiesced, the clock in the RTC, the card released, then `reboot`
+// through init. Does not return. The power menu and the SDK both end here.
+void power_reboot(void);
+
 // Forbids or allows charging outright, on top of the percentage limit. Used by
 // DAC mode, where the point of not charging is to keep the charger's noise off
 // the cable. Stopping the charger takes three writes in a set order -- see

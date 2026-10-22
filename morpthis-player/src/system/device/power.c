@@ -1127,6 +1127,32 @@ void power_shutdown(void) {
 	reboot(RB_POWER_OFF);
 }
 
+void power_reboot(void) {
+	device_state_remember_flush();
+	power_screen_off();
+	led_shutdown();
+	if (!audio_prepare_poweroff()) {
+		fprintf(stderr, "power: audio did not quiesce completely before reboot\n");
+	}
+	clock_shutdown();
+	radio_store_close();
+	qobuzcache_clear_on_exit();
+	tidalcache_clear_on_exit();
+	podcastcache_clear_on_exit();
+	dlna_clear_on_exit();
+	storage_release_for_shutdown();
+	sync();
+
+	// Through init, the same way down as power_shutdown(). The syscall stays as
+	// the last resort, on the same eight-second guard, for a firmware whose init
+	// never gets there.
+	int rc = system("reboot");
+	(void)rc;
+	sleep(8);
+	reboot(RB_AUTOBOOT);
+	execl("/bin/sh", "sh", "-c", "reboot", (char *)NULL);
+}
+
 // The automatic shutdown, from the normal awake tick and from the RTC alarm
 // path just after a resume: the same way down as the power menu's.
 static void power_auto_off_now(const char *why) {

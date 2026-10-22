@@ -96,6 +96,7 @@ static const char *const KB_T9_NUM2[KB_T9_KEYS] = {
 struct keyboard_s {
 	lv_obj_t *tray;
 	lv_obj_t *field;
+	lv_obj_t *screen; // where the unload hook was registered, for destroy
 
 	// The height of one key row in the tray: the caps have to fit it. The
 	// number-mode T9 caps choose one or two lines by it (see
@@ -1218,12 +1219,38 @@ keyboard_t *keyboard_create(lv_obj_t *parent, int width, int height, lv_obj_t *f
 	// their text between visits.
 	lv_obj_t *screen = lv_obj_get_screen(kb->tray);
 	if (screen) {
+		kb->screen = screen;
 		lv_obj_add_event_cb(screen, kb_screen_left_cb, LV_EVENT_SCREEN_UNLOADED, kb);
 	}
 	return kb;
 }
 
 lv_obj_t *keyboard_obj(keyboard_t *kb) { return kb ? kb->tray : NULL; }
+
+void keyboard_destroy(keyboard_t *kb) {
+	if (!kb) {
+		return;
+	}
+
+	keyboard_t **link = &kb_list;
+	while (*link && *link != kb) {
+		link = &(*link)->next;
+	}
+	if (*link == kb) {
+		*link = kb->next;
+	}
+
+	if (kb->tray) {
+		if (kb->screen) {
+			lv_obj_remove_event_cb_with_user_data(kb->screen, kb_screen_left_cb, kb);
+		}
+		lv_obj_delete(kb->tray);
+	}
+	if (kb->t9_timer) {
+		lv_timer_delete(kb->t9_timer);
+	}
+	free(kb);
+}
 
 void keyboard_set_visible(keyboard_t *kb, bool visible) {
 	if (!kb || !kb->tray) {

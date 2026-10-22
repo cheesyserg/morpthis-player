@@ -36,10 +36,15 @@ the exported-symbol list and the teardown rules are in the SDK's
 morpthis-sdk/
   include/morpthis/
     app.h          // entry point, lifecycle, API version
-    ui.h           // screens, widgets, events
+    ui.h           // screens, widgets, events, dialogs, theme
     input.h        // buttons, touch, gestures
-    audio.h        // playback control, PCM access
-    fs.h           // card paths, package and data folders
+    audio.h        // transport control, raw PCM output
+    playback.h     // the player's own queue and playback engine
+    library.h      // the music index, favourites and playlists
+    system.h       // device status, screen, clock, USB, power, config
+    wireless.h     // Wi-Fi and Bluetooth
+    net.h          // the player's HTTP/TLS client
+    fs.h           // package/data paths, and absolute-path access
     log.h          // logging
     version.h      // MORPTHIS_APP_API_VERSION
   src/             // SDK runtime, if the API needs a shim
@@ -93,7 +98,7 @@ does not have to build binutils, GCC and glibc to compile a calculator.
 
 ## API surface, first cut
 
-Keep the first version small enough to ship:
+The API started small and grew by version:
 
 - `app`: name, version, package folder, data folder, API version, `post()`,
   `quit()`, `background()`, `back_handled()`.
@@ -120,10 +125,21 @@ Keep the first version small enough to ship:
   root, and a resolve call for libraries that open files themselves.
 - `log`: one line to the player's log.
 
-Do not add networking or Bluetooth in the first version. They are the player's,
-and an app that needs them can ask for them later. The DAC is different: an app
-can take it, but there is no mixer, so it is one writer at a time and the app
-closes the stream before it quits.
+API 3 adds the rest of the player's own services: `playback.h` (the local
+queue, seek, transport, queue reading/insertion and cover path), the 10-band
+equalizer in `audio.h`, `library.h`
+(index lists, search, favourites, play counts, playlists and scans), `system.h`
+(info, storage, battery, screen, brightness, clock, screenshot, power-off and
+reboot, and the player's config store), `wireless.h` (Wi-Fi and Bluetooth),
+`net.h` (HTTP/HTTPS through the player's TLS), `morpthis_app_is_background()`,
+`morpthis_ui_theme()`/Dark/accent, the status bar switch, the player's
+confirm/notice cards and a themed text prompt with the on-screen keyboard, and
+the absolute-path filesystem calls plus a directory walk in `fs.h`.
+
+Networking and Bluetooth are the player's own modules rather than a second
+stack in the app. The DAC is still one writer at a time: an app that opens the
+raw output stops local playback and radio, and closes the stream before it
+quits.
 
 ## Packaging
 
@@ -172,8 +188,11 @@ screens and unloading the shared object.
 - `min_player` in the manifest is the minimum player build.
 - A plugin built for API 1 runs on every player that advertises API 1. API 2
   adds the hi-res output, the playing flag, background operation, the published
-  track for the control centre, and the app-controlled BACK step; an API 2
-  plugin is refused by an API 1 player, so its manifest says `min_player: 2`.
+  track for the control centre, and the app-controlled BACK step. API 3 gives
+  an app the player's own playback engine, library, playlists, HTTP/TLS client,
+  Wi-Fi and Bluetooth, device status and controls, absolute-path filesystem
+  access, theme/dialog UI and app background state. An API 3 plugin is refused
+  by an older player, so its manifest says `min_player: 3`.
 - One app is loaded at a time. A background app keeps its screens, threads and
   audio; the player's back chevron leaves it running when the app asks for the
   background from its BACK handler, and a player-drawn corner button in the

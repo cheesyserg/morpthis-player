@@ -24,6 +24,16 @@ typedef enum {
 	SDK_WIDGET_IMAGE,
 	SDK_WIDGET_SLIDER,
 	SDK_WIDGET_CANVAS,
+	SDK_WIDGET_CONTAINER,
+	SDK_WIDGET_SWITCH,
+	SDK_WIDGET_PROGRESS,
+	SDK_WIDGET_SPINNER,
+	SDK_WIDGET_SEGMENTED,
+	SDK_WIDGET_SETTINGS_ROW,
+	SDK_WIDGET_TEXT_INPUT,
+	SDK_WIDGET_QRCODE,
+	SDK_WIDGET_ROLLER,
+	SDK_WIDGET_ARC,
 } sdk_widget_kind_t;
 
 // One row of an SDK list. The objects are children of the row button; the
@@ -43,10 +53,23 @@ struct morpthis_widget {
 	morpthis_screen_t *screen;
 	lv_obj_t *obj;
 	lv_obj_t *label; // the text child of a label or a button
+	lv_obj_t *value_label; // a settings row's value on the right
 	sdk_widget_kind_t kind;
 
 	char *text;
 	char *image;
+
+	// The SDK tree, for containers. `next` is the screen's widget list;
+	// `next_sibling` is the parent's child list.
+	struct morpthis_widget *parent;
+	struct morpthis_widget *children;
+	struct morpthis_widget *next_sibling;
+
+	// A text input's prompt title and the app callback its edit reports to.
+	morpthis_text_cb text_cb;
+	void *text_user;
+	bool password;
+	bool text_scroll;
 
 	// An icon button's glyph child, and which glyph it is. `icon` is only used
 	// by a button; an image widget keeps its picture in `obj`.
@@ -173,7 +196,14 @@ bool sdk_audio_app_playing(void);
 bool sdk_audio_app_track(morpthis_track_t *out);
 void sdk_audio_app_reset(void);
 
+// sdk_playback.c
+void sdk_playback_app_reset(void);
+
+// sdk_system.c
+void sdk_system_app_reset(void);
+
 // sdk_ui.c
 void sdk_screen_destroy(morpthis_screen_t *screen);
+void sdk_ui_app_reset(bool teardown);
 
 #endif /* SDK_INTERNAL_H */

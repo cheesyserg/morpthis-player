@@ -9,6 +9,7 @@
 #include "src/gui/shell/topbar.h"
 #include "src/system/audio/alsa-controls.h"
 #include "src/system/audio/audio.h"
+#include "src/system/audio/eq.h"
 #include "src/system/playback/device_state.h"
 #include "src/system/streaming/radio.h"
 
@@ -106,6 +107,24 @@ bool morpthis_audio_set_volume(int volume) {
 	topbar_refresh_volume(volume);
 	return true;
 }
+
+bool morpthis_audio_eq_enabled(void) { return eq_get_enabled(); }
+
+void morpthis_audio_set_eq_enabled(bool enabled) { eq_set_enabled(enabled); }
+
+int morpthis_audio_eq_band(int band) {
+	return band >= 0 && band < MORPTHIS_EQ_BANDS ? eq_get_band(band) : 0;
+}
+
+bool morpthis_audio_set_eq_band(int band, int gain_db) {
+	if (band < 0 || band >= MORPTHIS_EQ_BANDS) {
+		return false;
+	}
+	eq_set_band(band, gain_db);
+	return true;
+}
+
+void morpthis_audio_eq_reset(void) { eq_reset(); }
 
 // ---------------------------------------------------------------------------
 // Raw output

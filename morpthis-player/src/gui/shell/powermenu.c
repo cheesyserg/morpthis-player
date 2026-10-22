@@ -120,35 +120,7 @@ static void do_power_off(void) {
 
 static void do_reboot(void) {
 	printf("power: rebooting\n");
-	device_state_remember_flush();
-	power_screen_off();
-	// The status LED, faded out like the power-off path: the screen is already
-	// dark, so this is the last thing the device says before it restarts.
-	led_shutdown();
-	if (!audio_prepare_poweroff()) {
-		fprintf(stderr, "power: audio did not quiesce completely before reboot\n");
-	}
-	clock_shutdown();
-	radio_store_close();
-	qobuzcache_clear_on_exit();
-	tidalcache_clear_on_exit();
-	podcastcache_clear_on_exit();
-	dlna_clear_on_exit();
-	storage_release_for_shutdown();
-	sync();
-
-	// Through init, the same way down as power_shutdown(). `reboot(RB_AUTOBOOT)`
-	// restarts the machine from inside this process: init's shutdown hooks never
-	// run, so the daemons are not stopped and nothing is remounted read-only or
-	// unmounted, apart from the card, which is released above either way.
-	//
-	// The syscall stays as the last resort, on the same eight-second guard, for
-	// a firmware whose init never gets there.
-	int rc = system("reboot");
-	(void)rc;
-	sleep(8);
-	reboot(RB_AUTOBOOT);
-	execl("/bin/sh", "sh", "-c", "reboot", (char *)NULL);
+	power_reboot();
 }
 
 static void cancel_cb(lv_event_t *e) {

@@ -220,7 +220,15 @@ void morpthis_app_quit(void) {
 }
 
 bool morpthis_app_background(void) {
+	// Player-owned chrome must not outlive the app on screen: a popover, dialog,
+	// prompt or screen hold belongs to the page that is being put away.
+	sdk_ui_app_reset(false);
+	sdk_system_app_reset();
 	return apphost_background();
+}
+
+bool morpthis_app_is_background(void) {
+	return sdk_app && sdk_app->alive && sdk_app->backgrounded;
 }
 
 void morpthis_app_back_handled(void) {

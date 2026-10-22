@@ -24,6 +24,12 @@ keyboard_t *keyboard_create(lv_obj_t *parent, int width, int height, lv_obj_t *f
 							const lv_image_dsc_t *accept_icon, const char *accept_text, lv_event_cb_t on_accept,
 							void *user);
 
+// Destroys the keyboard and its tray. The textarea is the caller's and is left
+// alone. Most pages keep one keyboard for their lifetime; a modal that can be
+// opened many times needs this so the per-keyboard state and the screen-unload
+// hook do not accumulate.
+void keyboard_destroy(keyboard_t *kb);
+
 // The tray object itself (for aligning, moving to the foreground...).
 lv_obj_t *keyboard_obj(keyboard_t *kb);
 
