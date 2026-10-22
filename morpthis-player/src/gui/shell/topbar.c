@@ -627,6 +627,32 @@ void topbar_refresh_playback(void) {
 	refresh_play_icon(&state);
 }
 
+void topbar_refresh_led(bool playing, int sample_rate, bool lossy, int bits, bool podcast, bool dsd) {
+	if (apphost_audio_playing()) {
+		// The app's output is what is coming out of the jack. Its rate and depth
+		// are the ones it opened with; the SDK does not carry a lossy flag, so
+		// the colour falls back to the CD/Hi-Fi tier rather than guessing. Lit
+		// is the point: this is what keeps the LED out of the standby-darkening
+		// branch while a stream is playing.
+		playing = true;
+		sample_rate = apphost_audio_rate();
+		bits = apphost_audio_bits();
+		lossy = false;
+		podcast = false;
+		dsd = false;
+	}
+	led_update_playback(playing, sample_rate, lossy, bits, podcast, dsd);
+}
+
+void topbar_refresh_led_current(void) {
+	device_state_t state;
+	device_state_get(&state);
+	topbar_refresh_led(state.status == AUDIO_STATUS_PLAYING, state.stream_sample_rate,
+					   audio_stream_is_lossy(), audio_get_stream_bits(),
+					   !state.live && podcastcache_is_episode(state.current_file),
+					   !state.live && audio_get_dsd_multiple() > 0);
+}
+
 static void refresh_play_icon(const device_state_t *state) {
 	if (!play_icon) {
 		return;
@@ -797,10 +823,10 @@ static void timer_update_cb(lv_timer_t *timer) {
 	// enough for plugging the charger in to show at once. What is on this poll
 	// is what nobody is standing over -- the playback colour, Wi-Fi transfer,
 	// DAC mode.
-	led_update_playback(state.status == AUDIO_STATUS_PLAYING, state.stream_sample_rate,
-						audio_stream_is_lossy(), audio_get_stream_bits(),
-						!state.live && podcastcache_is_episode(state.current_file),
-						!state.live && audio_get_dsd_multiple() > 0);
+	topbar_refresh_led(state.status == AUDIO_STATUS_PLAYING, state.stream_sample_rate,
+					   audio_stream_is_lossy(), audio_get_stream_bits(),
+					   !state.live && podcastcache_is_episode(state.current_file),
+					   !state.live && audio_get_dsd_multiple() > 0);
 	// Wi-Fi transfer takes the same route: its pattern stays lit, screen off
 	// included, for as long as the transfer is on. The switch rather than the
 	// process, because this poll is five seconds apart and the server takes a

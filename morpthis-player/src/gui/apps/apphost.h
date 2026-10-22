@@ -90,6 +90,11 @@ void apphost_close_active_then(void (*done)(void *user), void *user);
 bool apphost_audio_active(void);
 bool apphost_audio_playing(void);
 
+// The rate and bit depth of that output, for the status LED's playback colour.
+// Zero until the app has opened a stream.
+int apphost_audio_rate(void);
+int apphost_audio_bits(void);
+
 // The track the loaded app published for the control centre. False when it has
 // not published one; `out` is zeroed then.
 bool apphost_app_track(morpthis_track_t *out);

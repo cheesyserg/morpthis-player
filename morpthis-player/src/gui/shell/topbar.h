@@ -25,6 +25,14 @@ void topbar_refresh_audio_outputs(void);
 // changes rather than letting the glyph lag behind the button.
 void topbar_refresh_playback(void);
 
+// Sets the status LED's playback colour. `playing`, the rate, depth and flags
+// describe the player's own engine. A sideloaded app's raw output is not in
+// device_state (the app owns the DAC and the local engine is stopped), so this
+// is the one place that merges the app host's playing flag and format; without
+// it a playing app counted as idle and the "LED off in standby" option darkened
+// the light while music was coming out.
+void topbar_refresh_led(bool playing, int sample_rate, bool lossy, int bits, bool podcast, bool dsd);
+
 // Repaints the two radio glyphs, left of the battery: bluetooth first, then
 // wifi, then the charge percentage. Each appears only while its radio is on,
 // and is drawn dimmed while that radio is up but connected to nothing -- the

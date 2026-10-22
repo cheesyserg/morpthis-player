@@ -44,6 +44,11 @@ bool usb_dac_mode(void);
 // already exported back first; clearing it lets the watcher export again on
 // its next poll. The Apps page, a loaded app and a running tool each hold the
 // guard, so it stays on until the last of them is gone.
+//
+// Only the medium is held back. The empty card reader stays enumerated while
+// the guard is up: a host has to be able to see the device for the watcher to
+// tell a PC from a charger and put up the "close the app and share the card?"
+// prompt.
 void usb_set_apps_mode(bool on);
 
 // Coordination with ADB, whose init script needs the one USB controller for

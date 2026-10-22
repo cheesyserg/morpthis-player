@@ -366,6 +366,11 @@ bool apphost_audio_active(void) { return sdk_audio_app_active(); }
 
 bool apphost_audio_playing(void) { return sdk_audio_app_playing(); }
 
+// The format of the app's raw output, for the status LED. Read by the GUI
+// thread; the mixer thread only changes it when it opens a new stream.
+int apphost_audio_rate(void) { return sdk_audio_app_rate(); }
+int apphost_audio_bits(void) { return sdk_audio_app_bits(); }
+
 bool apphost_app_track(morpthis_track_t *out) { return sdk_audio_app_track(out); }
 
 bool apphost_media_button(morpthis_button_t button) {
@@ -450,6 +455,15 @@ static void mass_storage_confirmed(void *user) {
 		// The normal quit path: the app's optional shutdown hook runs before
 		// its screens and the shared object go away.
 		apphost_request_quit();
+		if (sdk_app && sdk_app->alive && !sdk_app->quitting) {
+			// The quit could not be queued (the GUI queue was full). Nothing
+			// will call apphost_finish_mass_storage() then, and leaving this
+			// set would make apphost_mass_storage_closing() true forever: the
+			// watcher would never ask again and mass storage would stay dead
+			// until reboot. Clear it so the next poll can try again.
+			close_for_mass_storage = false;
+			fprintf(stderr, "usb: could not queue the app quit; will ask again\n");
+		}
 		return;
 	}
 

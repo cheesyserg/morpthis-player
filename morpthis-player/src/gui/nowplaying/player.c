@@ -37,7 +37,6 @@
 #include "src/system/core/lang.h"
 #include "src/system/library/library.h"
 #include "src/system/library/lyrics.h"
-#include "src/system/device/led.h"
 #include "src/system/playback/playlist.h"
 #include "src/system/streaming/podcast.h"
 #include "src/system/streaming/podcastcache.h"
@@ -4527,10 +4526,10 @@ static void update_progress(void) {
 	// The status LED follows playback promptly from here (the battery poll
 	// only comes round once a minute). Only writes when the colour changes.
 	// A podcast lights purple instead of the sample-rate colour.
-	led_update_playback(state.status == AUDIO_STATUS_PLAYING, state.stream_sample_rate,
-						audio_stream_is_lossy(), audio_get_stream_bits(),
-						!state.live && podcastcache_is_episode(state.current_file),
-						!state.live && audio_get_dsd_multiple() > 0);
+	topbar_refresh_led(state.status == AUDIO_STATUS_PLAYING, state.stream_sample_rate,
+					   audio_stream_is_lossy(), audio_get_stream_bits(),
+					   !state.live && podcastcache_is_episode(state.current_file),
+					   !state.live && audio_get_dsd_multiple() > 0);
 
 	// Where the book got to. Not the same thing as "remember track" below and
 	// not subject to its switch: that setting is about which track comes back

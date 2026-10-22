@@ -193,6 +193,8 @@ void sdk_dispatch_button(morpthis_button_t button, morpthis_input_action_t actio
 // sdk_audio.c
 bool sdk_audio_app_active(void);
 bool sdk_audio_app_playing(void);
+int sdk_audio_app_rate(void);
+int sdk_audio_app_bits(void);
 bool sdk_audio_app_track(morpthis_track_t *out);
 void sdk_audio_app_reset(void);
 

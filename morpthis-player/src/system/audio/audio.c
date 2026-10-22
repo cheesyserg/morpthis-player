@@ -4894,6 +4894,7 @@ void audio_external_end(void) {
 	external_playing = false;
 	pthread_mutex_lock(&external_lock);
 
+	bool had_output = external_pcm != NULL;
 	if (external_pcm) {
 		snd_pcm_drop(external_pcm);
 		snd_pcm_close(external_pcm);
@@ -4905,8 +4906,46 @@ void audio_external_end(void) {
 	}
 
 	pthread_mutex_unlock(&external_lock);
+	// A pause mutes the DAC before dropping the queue; closing the app must not
+	// leave the next source silent. The call is a no-op when nothing was muted
+	// and respects a suspend or power-off mute that owns the DAC.
+	if (had_output) {
+		alsa_track_unmute();
+	}
 }
 
-void audio_external_set_playing(bool playing) { external_playing = playing; }
+void audio_external_set_playing(bool playing) {
+	external_playing = playing;
+	if (!playing) {
+		pthread_mutex_lock(&external_lock);
+		// Local playback drops the queued stream on pause; the external path used
+		// to leave it feeding the DAC for the whole deep buffer (about 750 ms),
+		// which made an app's pause look late.
+		//
+		// Bluetooth is the exception. bluealsa's transport is released by the
+		// drop and only a fresh open takes it back, so dropping here would leave
+		// every write after resume accepted but silent. Its own transport buffer
+		// is the unavoidable tail there.
+		if (external_pcm && !pcm_is_bluetooth(external_pcm)) {
+			snd_pcm_sframes_t queued = 0;
+			if (snd_pcm_delay(external_pcm, &queued) < 0 || queued < 0) {
+				queued = 0;
+			}
+			// Silent before the drop: a running DAC taken away mid-sample is a
+			// click. The next set_playing(true), or the close, lifts the mute.
+			alsa_track_mute();
+			snd_pcm_drop(external_pcm);
+			snd_pcm_prepare(external_pcm);
+			fprintf(stderr, "audio: external source paused (stream dropped, %ld frames unplayed)\n",
+					(long)queued);
+		}
+		pthread_mutex_unlock(&external_lock);
+		return;
+	}
+
+	if (external_pcm) {
+		alsa_track_unmute();
+	}
+}
 
 bool audio_external_is_playing(void) { return external_playing; }

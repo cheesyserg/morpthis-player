@@ -139,8 +139,8 @@ void morpthis_audio_eq_reset(void) { eq_reset(); }
 // thread: the app can call set_playing() from its mixer, so every repaint goes
 // through a posted callback rather than straight into LVGL.
 static volatile bool external_open;
-static int external_bits = 16;
-static int external_rate;
+static volatile int external_bits = 16;
+static volatile int external_rate;
 static int external_channels;
 static int external_buffer_ms;
 static volatile bool app_output_active;
@@ -156,12 +156,17 @@ static bool app_track_valid;
 static void refresh_playback_cb(void *user) {
 	(void)user;
 	topbar_refresh_playback();
+	// The LED is part of the same answer: an app starting, pausing or changing
+	// track has to light or settle it now, not at the next five-second poll.
+	topbar_refresh_led_current();
 }
 
 static void request_playback_refresh(void) { morpthis_app_post(refresh_playback_cb, NULL); }
 
 bool sdk_audio_app_active(void) { return app_output_active; }
 bool sdk_audio_app_playing(void) { return app_output_playing; }
+int sdk_audio_app_rate(void) { return external_rate; }
+int sdk_audio_app_bits(void) { return external_bits; }
 
 bool sdk_audio_app_track(morpthis_track_t *out) {
 	if (!out) {
@@ -198,6 +203,7 @@ void sdk_audio_app_reset(void) {
 	app_track_valid = false;
 	pthread_mutex_unlock(&track_lock);
 	topbar_refresh_playback();
+	topbar_refresh_led_current();
 }
 
 bool morpthis_audio_open_ex(int rate, int channels, int bits, int buffer_ms) {
