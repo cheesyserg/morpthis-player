@@ -123,7 +123,7 @@ For a private development build, `sonix-player/tools/seal_streamkeys.py` can pla
 
 Subsonic is an app now: copy `subsonic.pkgmerp` to `Apps/pkgmerps/` on the card and launch it from **Apps**. The player no longer carries a built-in Subsonic page, its client or its RAM streaming bridge; the app owns the HTTP/TLS client, the MP3 and FLAC decoders, and the queue.
 
-The app browses artists, albums, folders, playlists, genres, starred, random and newest, has a letter keyboard for server search, and can star the current track. Quality is MP3 256/320 or lossless FLAC (server transcoding). Server, account and TLS settings live in `merp_data/subsonic/settings.json`; see the app's README for the file format and the device notes.
+The app browses artists, albums, folders, playlists, genres, starred, random and newest, has a letter keyboard for server search, and can star the current track. Quality is MP3 256/320 or lossless FLAC (server transcoding). Server, account and TLS settings live in `Apps/merp_data/subsonic/settings.json`; see the app's README for the file format and the device notes.
 
 The Subsonic app uses the player's raw PCM output (`morpthis_audio_open_ex`/`write_pcm`), so playback, pause, next/previous and the player's volume all go through the same DAC path as local music. A 24-bit FLAC is written as 32-bit left-justified and reaches the DAC as S24, the same depth the local player gives a hi-res file. Pressing BACK while music is loaded leaves the app playing in the background, with the status-bar indicator still lit; its queue is not saved across reboots.
 

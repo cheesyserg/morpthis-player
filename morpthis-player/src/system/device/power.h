@@ -39,8 +39,9 @@ typedef struct {
 	const char *blank_path;			 // e.g. /sys/class/graphics/fb0/blank (screen on/off: 0=on, 1=off)
 	const char *power_state_path;	 // e.g. /sys/power/state ("mem" = suspend to RAM); NULL = never
 
-	// Desired on-screen backlight level in raw backlight units. If <= 0 at
-	// init, the current sysfs value is adopted as the on-level instead.
+	// Desired on-screen backlight level in raw backlight units. If below
+	// power_get_min_brightness() at init, the current sysfs value is adopted as
+	// the on-level, or the panel maximum if that is too dim as well.
 	long brightness;
 
 	bool screen_off_enabled;
@@ -174,9 +175,17 @@ void power_notify_power_button(void);
 bool power_headset_keys_settling(void);
 
 // --- Runtime configuration (driven by the settings pages) ---
-void power_set_brightness(long value); // raw backlight units, clamped to [0, max]
+//
+// The dimmest level the brightness sliders offer, as a percentage of the
+// panel's range. Below this the panel is too dim to read in normal light, so
+// the UI does not go lower; a stored value under the floor is treated as unset
+// and the slider falls back to the panel's maximum.
+#define POWER_BRIGHTNESS_MIN_PERCENT 5
+
+void power_set_brightness(long value); // raw backlight units, clamped to [min, max]
 long power_get_brightness(void);	   // current on-level
-long power_get_max_brightness(void);   // -1 if unknown
+long power_get_max_brightness(void);   // panel maximum (100 if unknown)
+long power_get_min_brightness(void);   // raw units for POWER_BRIGHTNESS_MIN_PERCENT, at least 1
 
 // While held, the idle timer never blanks the screen. Used by anything the
 // user is expected to look at and think about before touching again -- the

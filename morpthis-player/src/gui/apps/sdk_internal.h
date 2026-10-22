@@ -53,6 +53,10 @@ struct morpthis_widget {
 	lv_obj_t *icon;
 	morpthis_icon_t icon_kind;
 
+	// Slider release (the finger lifted), for a seek bar. Other widgets ignore it.
+	morpthis_value_cb release_cb;
+	void *release_user;
+
 	bool visible;
 	bool enabled;
 
@@ -114,7 +118,7 @@ struct morpthis_app {
 	char name[APPS_NAME_MAX];
 	char version[APPS_VERSION_MAX];
 	char folder[APPS_FOLDER_MAX]; // the mounted, read-only package root
-	char data[APPS_FOLDER_MAX];	  // the writable merp_data folder
+	char data[APPS_FOLDER_MAX];	  // the writable Apps/merp_data folder
 	app_tier_t tier;
 	app_category_t category;
 

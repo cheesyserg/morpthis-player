@@ -72,8 +72,8 @@ calculator.pkgmerp
 
 The name carries no version: one package per app, replaced in place on the
 card. A user copies it to `Apps/pkgmerps/<id>.pkgmerp`; the app's writable
-files live in `merp_data/<id>/`, which survives the replacement. There is no
-install step in the player yet.
+files live in `Apps/merp_data/<id>/`, which survives the replacement. There is
+no install step in the player yet.
 
 ## CI
 

@@ -23,9 +23,9 @@ described in [app-sdk.md](app-sdk.md) and [apps-repo.md](apps-repo.md).
     pkgmerps/
       calculator.pkgmerp
       notes.pkgmerp
-  merp_data/
-    calculator/        calculator's own files
-    notes/             notes' own files
+    merp_data/
+      calculator/      calculator's own files
+      notes/           notes' own files
 ```
 
 - `Apps/pkgmerps/` is scanned when the Apps page opens. There is no install
@@ -45,10 +45,12 @@ described in [app-sdk.md](app-sdk.md) and [apps-repo.md](apps-repo.md).
   decoded to the tile size; a missing or unreadable icon falls back to the
   generic apps glyph. The tiles follow the player's menu layout in Dark, Light
   and Tokyo Night.
-- `merp_data/<id>/` is the app's writable folder. The SDK reads from it first
-  and falls back to the package, and sends every write there, so a package
-  update never overwrites a save or a setting. The folder is created when the
-  app is launched.
+- `Apps/merp_data/<id>/` is the app's writable folder. The SDK reads from it
+  first and falls back to the package, and sends every write there, so a
+  package update never overwrites a save or a setting. The folder is created
+  when the app is launched. A card from before the move kept it at
+  `<card>/merp_data/`; the player moves that tree into `Apps/` on the first
+  scan or launch.
 
 ## Manifest
 
@@ -248,7 +250,7 @@ work; until then, install apps you trust.
 - A UI app is not sandboxed: a fault in it takes the player down.
 - Heavy reclaim is best-effort; static pages of the player stay mapped.
 - No install/uninstall UI: copy or delete the package, and delete
-  `merp_data/<id>/` to remove its data too.
+  `Apps/merp_data/<id>/` to remove its data too.
 - No hot reload: the page rescans when it is opened.
 - No permissions, signing or sandbox.
 - `min_player` is read but not enforced yet.

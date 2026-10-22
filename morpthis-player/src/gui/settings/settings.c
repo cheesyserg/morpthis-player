@@ -205,11 +205,8 @@ static void screen_off_changed_cb(lv_event_t *e) {
 	lv_label_set_text(screen_off_value, tr(SCREEN_OFF[index].label));
 }
 
-// 1% of the panel's range, or 1 if the driver's scale is under 100.
-static long brightness_floor(long max) {
-	long floor = max / 100;
-	return floor > 0 ? floor : 1;
-}
+// The slider's floor comes from power_get_min_brightness(): 5 % of the
+// panel's range, so the dimmest setting stays readable.
 
 static void brightness_show_value(long value, long max) {
 	lv_label_set_text_fmt(brightness_value, "%d%%", (int)((value * 100 + max / 2) / max));
@@ -239,10 +236,11 @@ static void screensettings_loaded_cb(lv_event_t *e) {
 	if (max <= 0) {
 		max = 100;
 	}
-	lv_slider_set_range(brightness_slider, (int32_t)brightness_floor(max), (int32_t)max);
+	long floor = power_get_min_brightness();
+	lv_slider_set_range(brightness_slider, (int32_t)floor, (int32_t)max);
 
 	long value = power_get_brightness();
-	if (value < brightness_floor(max)) {
+	if (value < floor) {
 		value = max;
 	}
 	lv_slider_set_value(brightness_slider, (int32_t)value, LV_ANIM_OFF);
@@ -289,12 +287,12 @@ static void build_screen_page(gui_config_t *cfg) {
 
 	// The Adwaita slider: thin round trough, accent fill, white knob.
 	// Inset the track slightly so the round knob and its border/shadow never
-	// overhang the card's horizontal padding at 1% or 100%.
+	// overhang the card's horizontal padding at the floor or at 100%.
 	brightness_slider = lv_slider_create(card);
 	lv_obj_set_width(brightness_slider, bp_pick(lv_pct(92), lv_pct(96)));
 	lv_obj_set_height(brightness_slider, 10);
 	lv_obj_align(brightness_slider, LV_ALIGN_BOTTOM_MID, 0, bp_pick(-9, -14));
-	lv_slider_set_range(brightness_slider, 1, 100);
+	lv_slider_set_range(brightness_slider, POWER_BRIGHTNESS_MIN_PERCENT, 100);
 
 	lv_obj_set_style_radius(brightness_slider, LV_RADIUS_CIRCLE, LV_PART_MAIN);
 	lv_obj_set_style_bg_color(brightness_slider, theme()->text_secondary, LV_PART_MAIN);

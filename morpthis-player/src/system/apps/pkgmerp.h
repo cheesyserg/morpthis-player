@@ -19,7 +19,7 @@
 // Mount points live under /tmp/morpthis/pkgmerp/<id>: a directory there costs
 // nothing of consequence, and it disappears with a reboot even if a run left
 // something behind. The data an app writes is not here; apps keep it in
-// <card>/merp_data/<id>, which is a real writable folder on the card.
+// <card>/Apps/merp_data/<id>, which is a real writable folder on the card.
 
 #define PKGMERP_EXT ".pkgmerp"
 #define PKGMERP_DIR "pkgmerps"

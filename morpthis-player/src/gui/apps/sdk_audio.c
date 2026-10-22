@@ -173,6 +173,7 @@ void sdk_audio_app_reset(void) {
 	external_buffer_ms = 0;
 	app_output_active = false;
 	app_output_playing = false;
+	audio_external_set_playing(false);
 	pthread_mutex_lock(&track_lock);
 	memset(&app_track, 0, sizeof(app_track));
 	app_track_valid = false;
@@ -210,6 +211,7 @@ bool morpthis_audio_open_ex(int rate, int channels, int bits, int buffer_ms) {
 		external_buffer_ms = buffer_ms;
 		app_output_active = true;
 		app_output_playing = true;
+		audio_external_set_playing(true);
 		request_playback_refresh();
 	}
 	return external_open;
@@ -242,6 +244,7 @@ void morpthis_audio_set_playing(bool playing) {
 		return;
 	}
 	app_output_playing = playing;
+	audio_external_set_playing(playing);
 	request_playback_refresh();
 }
 
@@ -258,6 +261,7 @@ void morpthis_audio_set_track(const morpthis_track_t *track, bool playing) {
 
 	if (external_open) {
 		app_output_playing = playing;
+		audio_external_set_playing(playing);
 		request_playback_refresh();
 	}
 }
@@ -274,6 +278,7 @@ void morpthis_audio_close(void) {
 	external_buffer_ms = 0;
 	app_output_active = false;
 	app_output_playing = false;
+	audio_external_set_playing(false);
 	pthread_mutex_lock(&track_lock);
 	memset(&app_track, 0, sizeof(app_track));
 	app_track_valid = false;

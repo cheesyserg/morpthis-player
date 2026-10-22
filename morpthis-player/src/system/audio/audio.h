@@ -241,4 +241,12 @@ bool audio_external_begin_latency(int sample_rate, int channels, int bits, int b
 int audio_external_write(const void *frames, int count);
 void audio_external_end(void);
 
+// Whether the external source is producing sound right now, as opposed to
+// merely holding the device. The app SDK's set_playing() drives this, and the
+// power manager treats it like audio_get_status(): a track streaming through an
+// app keeps the device awake while the screen is dark, and a pause lets the
+// standby timer run again. Cleared by audio_external_end().
+void audio_external_set_playing(bool playing);
+bool audio_external_is_playing(void);
+
 #endif // AUDIO_H

@@ -24,7 +24,7 @@
 #include "src/system/playback/device_state.h"
 #include "src/system/remote/dlna.h"
 #include "src/system/remote/sonixlink.h"
-#include "src/system/streaming/podcastcache.h"
+#include "src/system/streaming/qobuzcache.h"
 #include "src/system/streaming/podcastcache.h"
 #include "src/system/streaming/podcastdl.h"
 #include "src/system/streaming/tidalcache.h"
@@ -75,9 +75,11 @@ static uint32_t since(uint32_t mark, uint32_t now) {
 	return elapsed > 0 ? (uint32_t)elapsed : 0;
 }
 
-// The dimmest level offered on the slider. Zero would be accepted by the
-// backlight driver and put the PWM out, but it would leave a black screen on a
-// fully powered panel: turning the screen off is the blank node's job.
+// The lowest level ever written to the backlight driver. Zero would be
+// accepted by the driver and put the PWM out, but it would leave a black screen
+// on a fully powered panel: turning the screen off is the blank node's job.
+// The dimmest level the UI *offers* is POWER_BRIGHTNESS_MIN_PERCENT (power.h),
+// which is higher; this floor is still what the screen-off fade ends at.
 #define BRIGHTNESS_MIN 1
 #define BRIGHTNESS_MAX_DEFAULT 100
 
@@ -99,7 +101,7 @@ static uint32_t since(uint32_t mark, uint32_t now) {
 // Zero and not BRIGHTNESS_MIN, although the floor exists so that no *user*
 // chooses a level too dim to see. The floor is a level the panel is *looked at
 // through*; this one is a level it is never seen at, and a white reset frame
-// at the floor's one percent is still a white frame -- which is the flash. Nor
+// at the dimmest setting is still a white frame -- which is the flash. Nor
 // is a zero the risk a stopped PWM pin is sometimes said to be: the blank the
 // driver already performs on this board puts the PWM at zero with the panel
 // unpowered behind it, and the screen stays dark for as long as the screen is
@@ -711,6 +713,12 @@ static bool g_bt_parked;
 // the automatic shutdown disabled for the rest of the day after one listen.
 static bool streaming_playback_active(void) {
 	if (radio_is_playing()) {
+		return true;
+	}
+	// An app's external output is usually a stream (Subsonic, a radio app). The
+	// player cannot see what it is reading, so while it is producing sound the
+	// network is treated as in use: parking Wi-Fi mid-track would end it.
+	if (audio_external_is_playing()) {
 		return true;
 	}
 	if (audio_get_status() == AUDIO_STATUS_STOPPED) {
@@ -1770,16 +1778,17 @@ static void power_timer_cb(lv_timer_t *timer) {
 
 	// 2. music playing keeps resetting the suspend clock (but not the screen
 	//    clock -- the screen still dims while a track plays untouched)
-	// A live stream goes out through audio_external_*, which audio.c's own
-	// status knows nothing about -- so without the second half of this the
-	// automatic shutdown would count a playing radio as an idle device and
-	// switch it off mid-broadcast.
+	// A live stream or an app's raw output goes out through audio_external_*, which
+	// audio.c's own status knows nothing about -- so without the second half of
+	// this the automatic shutdown would count a playing radio or an app's music as
+	// an idle device and switch it off mid-track.
 	//
 	// The Bluetooth receiver is the third of those: the music is on a phone and
 	// comes in over A2DP, so neither of the first two answers says anything
 	// about it. Streaming rather than merely active, because the mode left on
 	// with the phone paused is exactly the idle state the timer exists for.
-	bool playing = (audio_get_status() == AUDIO_STATUS_PLAYING) || radio_is_playing() || btreceiver_is_streaming();
+	bool playing = (audio_get_status() == AUDIO_STATUS_PLAYING) || audio_external_is_playing() ||
+				   radio_is_playing() || btreceiver_is_streaming();
 	if (playing) {
 		g_last_playing_ms = now;
 	}
@@ -1876,11 +1885,12 @@ void power_notify_power_button(void) {
 // --- Runtime configuration ---
 void power_set_brightness(long value) {
 	long max = brightness_max();
+	long floor = power_get_min_brightness();
 	if (value > max) {
 		value = max;
 	}
-	if (value < BRIGHTNESS_MIN) {
-		value = BRIGHTNESS_MIN;
+	if (value < floor) {
+		value = floor;
 	}
 	g_cfg.brightness = value;
 	if (g_screen_on) {
@@ -1890,6 +1900,18 @@ void power_set_brightness(long value) {
 
 long power_get_brightness(void) { return g_cfg.brightness; }
 long power_get_max_brightness(void) { return brightness_max(); }
+
+long power_get_min_brightness(void) {
+	long max = brightness_max();
+	long floor = max * POWER_BRIGHTNESS_MIN_PERCENT / 100;
+	if (floor < BRIGHTNESS_MIN) {
+		floor = BRIGHTNESS_MIN;
+	}
+	if (floor > max) {
+		floor = max;
+	}
+	return floor;
+}
 
 void power_hold_screen_on(bool hold) {
 	g_screen_on_hold = hold;
@@ -1987,8 +2009,9 @@ void power_init(const power_config_t *cfg, lv_display_t *disp) {
 	// if no explicit on-brightness was configured, adopt whatever the panel is
 	// currently set to (falling back to max). Never adopt a too-dim value: a
 	// prior run may have exited with the screen off, leaving the panel at MIN --
-	// adopting that would make the screen appear black once turned "on".
-	if (g_cfg.brightness < BRIGHTNESS_MIN) {
+	// adopting that would make the screen appear black once turned "on". A
+	// stored value under the UI's floor is treated the same way, as unset.
+	if (g_cfg.brightness < power_get_min_brightness()) {
 		long cur = g_cfg.brightness_path ? read_long_from_file(g_cfg.brightness_path) : -1;
 		g_cfg.brightness = cur >= BRIGHTNESS_ON_FLOOR ? cur : brightness_max();
 	}

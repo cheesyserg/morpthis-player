@@ -13,11 +13,14 @@
 // is tapped. Nothing is extracted to the card, and replacing the file is the
 // whole update.
 //
-// An app's writable state lives outside the image, in <card>/merp_data/<id>.
-// The package is read-only by construction, so the SDK's fs calls read from the
-// data folder first and fall back to the package, and every write goes to the
-// data folder. Deleting the package leaves the data behind; deleting both
-// uninstalls the app.
+// An app's writable state lives outside the image, in
+// <card>/Apps/merp_data/<id>, beside the packages. The package is read-only by
+// construction, so the SDK's fs calls read from the data folder first and fall
+// back to the package, and every write goes to the data folder. Deleting the
+// package leaves the data behind; deleting both uninstalls the app.
+//
+// Before the layout had Apps/, the data folder was <card>/merp_data. The player
+// moves it into Apps on the first scan or launch; see migrate_legacy_data().
 //
 // The manifest is the whole contract between the player and an app built in
 // another repository:
@@ -55,7 +58,8 @@
 #define APPS_DIR "Apps"
 #define APPS_PACKAGE_DIR "pkgmerps"
 #define APPS_PACKAGE_EXT ".pkgmerp"
-#define APPS_DATA_DIR "merp_data"
+#define APPS_DATA_DIR APPS_DIR "/merp_data"
+#define APPS_LEGACY_DATA_DIR "merp_data"
 #define APPS_MAX 64
 #define APPS_ID_MAX 64
 #define APPS_NAME_MAX 96
@@ -87,7 +91,7 @@ typedef struct {
 	char dir[APPS_ID_MAX];		 // the package name, without .pkgmerp
 	char package[APPS_FOLDER_MAX]; // the absolute .pkgmerp file
 	char folder[APPS_FOLDER_MAX];  // the mount point, valid while mounted
-	char data[APPS_FOLDER_MAX];	 // the absolute merp_data folder
+	char data[APPS_FOLDER_MAX];	 // the absolute Apps/merp_data folder
 	bool icon_cached;			 // icon[] is an absolute cached path
 	app_tier_t tier;
 	app_category_t category;

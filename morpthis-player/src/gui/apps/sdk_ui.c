@@ -7,6 +7,7 @@
 #include "src/gui/apps/apphost.h"
 #include "src/gui/fonts/fonts.h"
 #include "src/gui/shell/icons.h"
+#include "src/gui/shell/popover.h"
 #include "src/gui/shell/settingsrow.h"
 #include "src/gui/shell/switcher.h"
 #include "src/gui/shell/theme.h"
@@ -843,6 +844,76 @@ void morpthis_list_set_select_cb(morpthis_widget_t *list, morpthis_index_cb cb, 
 	list->select_user = user;
 }
 
+// ---------------------------------------------------------------------------
+// Menus
+// ---------------------------------------------------------------------------
+
+// One popover exists at a time, so the callback that its items run can live
+// here rather than in a per-menu allocation. A new show replaces it, and the
+// app teardown calls morpthis_menu_close() before the shared object goes away.
+static morpthis_menu_cb sdk_menu_cb;
+static void *sdk_menu_user;
+
+static void sdk_menu_item_cb(void *user) {
+	int index = (int)(intptr_t)user;
+	morpthis_menu_cb cb = sdk_menu_cb;
+	void *cb_user = sdk_menu_user;
+	sdk_menu_cb = NULL;
+	sdk_menu_user = NULL;
+	if (cb) {
+		cb(index, cb_user);
+	}
+}
+
+static bool sdk_menu_show_at(lv_obj_t *anchor, const morpthis_menu_item_t *items, int count,
+							 morpthis_menu_cb cb, void *user) {
+	if (!anchor || !items || count <= 0 || !sdk_app || !sdk_app->alive) {
+		return false;
+	}
+	if (count > MORPTHIS_MENU_MAX) {
+		count = MORPTHIS_MENU_MAX;
+	}
+
+	popover_item_t rows[MORPTHIS_MENU_MAX];
+	for (int i = 0; i < count; i++) {
+		rows[i].label = items[i].label ? items[i].label : "";
+		rows[i].action = sdk_menu_item_cb;
+		rows[i].user = (void *)(intptr_t)i;
+		rows[i].checked = items[i].checked;
+	}
+
+	sdk_menu_cb = cb;
+	sdk_menu_user = user;
+	popover_show(anchor, rows, count);
+	return true;
+}
+
+bool morpthis_menu_show(morpthis_widget_t *anchor, const morpthis_menu_item_t *items, int count,
+						morpthis_menu_cb cb, void *user) {
+	if (!anchor || !anchor->obj) {
+		return false;
+	}
+	return sdk_menu_show_at(anchor->obj, items, count, cb, user);
+}
+
+bool morpthis_menu_show_row(morpthis_widget_t *list, int row, const morpthis_menu_item_t *items,
+							int count, morpthis_menu_cb cb, void *user) {
+	if (!list || list->kind != SDK_WIDGET_LIST || !list->rows || row < 0 || row >= list->item_count) {
+		return false;
+	}
+	sdk_list_row_t *entry = list->rows[row];
+	if (!entry || !entry->row) {
+		return false;
+	}
+	return sdk_menu_show_at(entry->row, items, count, cb, user);
+}
+
+void morpthis_menu_close(void) {
+	sdk_menu_cb = NULL;
+	sdk_menu_user = NULL;
+	popover_close();
+}
+
 static void image_reload(morpthis_widget_t *widget) {
 	if (!widget || widget->kind != SDK_WIDGET_IMAGE || !widget->image) {
 		return;
@@ -914,6 +985,18 @@ static void slider_event_cb(lv_event_t *e) {
 	}
 }
 
+// The one event a seek bar acts on: the finger let go. PRESS_LOST is the same
+// moment when the finger slides off the control, and without it a seek would
+// stay "in progress" and the page would stop following the stream.
+static void slider_release_event_cb(lv_event_t *e) {
+	morpthis_widget_t *widget = lv_event_get_user_data(e);
+	if (!widget || widget->kind != SDK_WIDGET_SLIDER || !widget->release_cb) {
+		return;
+	}
+	widget->value = lv_slider_get_value(widget->obj);
+	widget->release_cb(widget, widget->value, widget->release_user);
+}
+
 morpthis_widget_t *morpthis_slider_create(morpthis_screen_t *screen, int min, int max,
 										  int value, morpthis_value_cb cb, void *user) {
 	if (max < min) {
@@ -947,6 +1030,8 @@ morpthis_widget_t *morpthis_slider_create(morpthis_screen_t *screen, int min, in
 	theme_apply_slider_knob(widget->obj);
 	lv_obj_set_style_pad_all(widget->obj, 8, LV_PART_KNOB);
 	lv_obj_add_event_cb(widget->obj, slider_event_cb, LV_EVENT_VALUE_CHANGED, widget);
+	lv_obj_add_event_cb(widget->obj, slider_release_event_cb, LV_EVENT_RELEASED, widget);
+	lv_obj_add_event_cb(widget->obj, slider_release_event_cb, LV_EVENT_PRESS_LOST, widget);
 	return widget;
 }
 
@@ -974,6 +1059,14 @@ void morpthis_slider_set_value(morpthis_widget_t *slider, int value) {
 
 int morpthis_slider_value(const morpthis_widget_t *slider) {
 	return slider && slider->kind == SDK_WIDGET_SLIDER ? slider->value : 0;
+}
+
+void morpthis_slider_set_release_cb(morpthis_widget_t *slider, morpthis_value_cb cb, void *user) {
+	if (!slider || slider->kind != SDK_WIDGET_SLIDER) {
+		return;
+	}
+	slider->release_cb = cb;
+	slider->release_user = user;
 }
 
 morpthis_widget_t *morpthis_canvas_create(morpthis_screen_t *screen, int width, int height) {

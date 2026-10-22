@@ -239,6 +239,10 @@ static void apphost_teardown(morpthis_app_t *app) {
 		audio_external_end();
 	}
 
+	// A menu left open would keep an item callback into the shared object alive
+	// after it is unmapped. The app's screen is already behind the Apps page.
+	morpthis_menu_close();
+
 	// Nothing may enter the shared object after this point. Posts already
 	// waiting in the GUI queue are detached; a callback that arrives after
 	// this sees no app and drops itself.

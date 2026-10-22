@@ -108,6 +108,73 @@ static int make_directories(const char *path) {
 	return 0;
 }
 
+// The data folder used to be <card>/merp_data. Move it under Apps, beside
+// pkgmerps, so the card has one app tree. The whole folder is renamed in one
+// step when the destination is free; if a previous partial move left both, each
+// app folder is moved into the new root and an existing one is kept as it is.
+// A failure here is not fatal: the app falls back to a fresh data folder.
+static void migrate_legacy_data(const char *root) {
+	if (!root || !root[0]) {
+		return;
+	}
+
+	char legacy[APPS_FOLDER_MAX];
+	char current[APPS_FOLDER_MAX];
+	int n = snprintf(legacy, sizeof(legacy), "%s/%s", root, APPS_LEGACY_DATA_DIR);
+	if (n < 0 || (size_t)n >= sizeof(legacy)) {
+		return;
+	}
+	n = snprintf(current, sizeof(current), "%s/%s", root, APPS_DATA_DIR);
+	if (n < 0 || (size_t)n >= sizeof(current)) {
+		return;
+	}
+
+	struct stat st;
+	if (stat(legacy, &st) != 0 || !S_ISDIR(st.st_mode)) {
+		return;
+	}
+
+	if (rename(legacy, current) == 0) {
+		fprintf(stderr, "apps: moved %s to %s\n", legacy, current);
+		return;
+	}
+
+	// The destination exists already (or the rename was refused). Create it and
+	// move the app folders one by one, never over a folder that is already there.
+	if (make_directories(current) != 0 && errno != EEXIST) {
+		return;
+	}
+
+	DIR *d = opendir(legacy);
+	if (!d) {
+		return;
+	}
+	struct dirent *entry;
+	while ((entry = readdir(d)) != NULL) {
+		if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+			continue;
+		}
+		char from[APPS_FOLDER_MAX];
+		char to[APPS_FOLDER_MAX];
+		n = snprintf(from, sizeof(from), "%s/%s", legacy, entry->d_name);
+		if (n < 0 || (size_t)n >= sizeof(from)) {
+			continue;
+		}
+		n = snprintf(to, sizeof(to), "%s/%s", current, entry->d_name);
+		if (n < 0 || (size_t)n >= sizeof(to)) {
+			continue;
+		}
+		if (stat(to, &st) == 0) {
+			continue; // both copies: keep the one already migrated
+		}
+		if (rename(from, to) == 0) {
+			fprintf(stderr, "apps: moved %s to %s\n", from, to);
+		}
+	}
+	closedir(d);
+	rmdir(legacy); // only succeeds when every entry moved
+}
+
 static bool copy_file(const char *from, const char *to) {
 	char buffer[4096];
 	FILE *in = fopen(from, "rb");
@@ -283,6 +350,8 @@ int apps_scan(app_t *out, int max) {
 		return -1;
 	}
 
+	migrate_legacy_data(root);
+
 	char dir[APPS_FOLDER_MAX];
 	int n = snprintf(dir, sizeof(dir), "%s/%s/%s", root, APPS_DIR, APPS_PACKAGE_DIR);
 	if (n < 0 || (size_t)n >= sizeof(dir)) {
@@ -382,6 +451,9 @@ bool apps_mount(app_t *app, char *error, size_t error_size) {
 	}
 
 	const char *root = storage_sd_root();
+	if (root && root[0]) {
+		migrate_legacy_data(root);
+	}
 	if (!app->data[0] && root && root[0]) {
 		int n = snprintf(app->data, sizeof(app->data), "%s/%s/%s", root, APPS_DATA_DIR, app->dir);
 		if (n < 0 || (size_t)n >= sizeof(app->data)) {

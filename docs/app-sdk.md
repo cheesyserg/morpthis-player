@@ -103,8 +103,9 @@ Keep the first version small enough to ship:
   canvas the app draws into (`create`, `buffer`, `invalidate`) and `refresh()`
   to put it on the panel now. The player's own glyphs as icon buttons and in the
   heading row, its text sizes, dim colour and alignment, a full-height screen
-  without the title row, and `image_set_source()` for a picture downloaded to
-  the data folder.
+  without the title row, popover menus for a choice or a row action, a slider's
+  release callback for a seek bar, and `image_set_source()` for a picture
+  downloaded to the data folder.
 - `input`: button events, touch events, back gesture, and the control-centre
   now-playing tap.
 - `audio`: play/pause/next/prev, current track, volume; or "leave the player's
@@ -112,7 +113,9 @@ Keep the first version small enough to ship:
   (`open`/`open_ex`/`write`/`write_pcm`/`close`) for an app that mixes or
   streams its own sound, at 16, 24 or 32 bits, `set_playing()` for the
   status-bar indicator, and `set_track()` to publish what is playing to the
-  control centre.
+  control centre. While that output is playing, the player treats it like local
+  playback for power: the screen still turns off on the idle timer, but the
+  device stays awake and keeps Wi-Fi up; pausing releases the hold.
 - `fs`: the package root, the writable data folder, read/write helpers, card
   root, and a resolve call for libraries that open files themselves.
 - `log`: one line to the player's log.
@@ -139,9 +142,9 @@ step and no extracted copy: the file the user copies is the file that runs.
 The package name carries no version, because the card holds at most one package
 per app id; replacing the file is the update.
 
-An app's writable state lives beside it in `merp_data/<id>/`, never inside the
-image. `fs.h` presents the two as one tree: reads fall back from data to
-package, writes go to data, and a shipped file opened for update is copied to
+An app's writable state lives beside it in `Apps/merp_data/<id>/`, never
+inside the image. `fs.h` presents the two as one tree: reads fall back from data
+to package, writes go to data, and a shipped file opened for update is copied to
 data first. That is what lets a package be replaced without losing a save.
 
 While the Apps page, a loaded app or a tool is using the card, the player keeps

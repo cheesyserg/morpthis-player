@@ -4661,7 +4661,12 @@ static int external_bits;
 static int external_buffer_ms;
 static int external_route = -1;			// alsa_output_key() at the open
 static char external_device[160];		// the ALSA name at the open
-static long external_checked_ms;		// when the two above were last compared
+static long external_checked_ms;			// when the two above were last compared
+
+// Whether the owner of the output says it is making sound. Written by the app
+// SDK's set_playing() on the app's mixer thread and read by the power timer, so
+// volatile; a missed tick is harmless and the next one sees it.
+static volatile bool external_playing;
 
 // Underruns since the open, and when the last one was reported. A receiver
 // that stutters says so in the log, and how often -- which is the difference
@@ -4886,6 +4891,7 @@ int audio_external_write(const void *frames, int count) {
 }
 
 void audio_external_end(void) {
+	external_playing = false;
 	pthread_mutex_lock(&external_lock);
 
 	if (external_pcm) {
@@ -4900,3 +4906,7 @@ void audio_external_end(void) {
 
 	pthread_mutex_unlock(&external_lock);
 }
+
+void audio_external_set_playing(bool playing) { external_playing = playing; }
+
+bool audio_external_is_playing(void) { return external_playing; }
