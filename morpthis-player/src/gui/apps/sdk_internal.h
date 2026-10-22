@@ -198,12 +198,14 @@ int sdk_audio_app_bits(void);
 bool sdk_audio_app_track(morpthis_track_t *out);
 void sdk_audio_app_reset(void);
 void sdk_audio_suspend_prepare(void);
+void sdk_audio_resume_after_suspend(void);
 
 // sdk_playback.c
 void sdk_playback_app_reset(void);
 
 // sdk_system.c
 void sdk_system_app_reset(void);
+bool sdk_system_app_awake(void);
 
 // sdk_ui.c
 void sdk_screen_destroy(morpthis_screen_t *screen);

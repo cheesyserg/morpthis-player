@@ -242,14 +242,14 @@ int audio_external_write(const void *frames, int count);
 void audio_external_end(void);
 
 // Whether the external source is producing sound right now, as opposed to
-// merely holding the device. The app SDK's set_playing() drives this, and the
-// power manager treats it like audio_get_status(): a track streaming through an
-// app keeps the device awake while the screen is dark, and a pause lets the
-// standby timer run again. False also drops the queued PCM and mutes the DAC
-// for as long as the pause lasts, so the pause is heard at once rather than
-// after the deep buffer has played out; true lifts that mute. An app that holds
-// the output open but stops writing reads as not playing after five seconds.
-// Cleared by audio_external_end().
+// merely holding the device. The app SDK's set_playing() drives this, and its
+// status LED uses it. It is not the app power hold: that is the explicit
+// morpthis_system_hold_awake() flag, because a game mixer writes silence all
+// day. False also drops the queued PCM and mutes the DAC for as long as the
+// pause lasts, so the pause is heard at once rather than after the deep buffer
+// has played out; true lifts that mute. An app that holds the output open but
+// stops writing reads as not playing after five seconds. Cleared by
+// audio_external_end().
 void audio_external_set_playing(bool playing);
 bool audio_external_is_playing(void);
 

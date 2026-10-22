@@ -150,6 +150,8 @@ static volatile bool app_output_playing;
 // reopens the same stream. Without this the open PCM keeps
 // audio_suspend_freeze() from ever letting the SoC sleep.
 static volatile bool external_suspended;
+static pthread_mutex_t suspend_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t suspend_cond = PTHREAD_COND_INITIALIZER;
 
 // The track the app publishes for the player's control centre. Kept under its
 // own lock because an app may publish it from its mixer thread while the GUI
@@ -170,9 +172,11 @@ static void request_playback_refresh(void) { morpthis_app_post(refresh_playback_
 
 // Reopens the terms a suspend released. The caller is the app's mixer or the
 // GUI thread; audio_external_begin_latency() is already safe against both
-// reaching it with the same terms.
-static bool reopen_suspended(void) {
-	if (!external_suspended || !app_output_active || external_rate <= 0) {
+// reaching it with the same terms. `playing` is the app's explicit intent,
+// not an inference from the write: a game mixer that was feeding silence
+// reopens for its sound effects without taking the power hold.
+static bool reopen_output(bool playing) {
+	if (external_open || external_suspended || !app_output_active || external_rate <= 0) {
 		return false;
 	}
 	int rate = external_rate;
@@ -189,9 +193,10 @@ static bool reopen_suspended(void) {
 	if (!external_open) {
 		return false;
 	}
-	external_suspended = false;
-	app_output_playing = true;
-	audio_external_set_playing(true);
+	app_output_playing = playing;
+	if (playing) {
+		audio_external_set_playing(true);
+	}
 	request_playback_refresh();
 	return true;
 }
@@ -202,18 +207,58 @@ static bool reopen_suspended(void) {
 // audio_suspend_freeze() forever. Release it only when it is not producing
 // sound; a live source never reaches this call.
 void sdk_audio_suspend_prepare(void) {
-	if (!external_open || !app_output_active) {
+	if (!external_open || !app_output_active || app_output_playing) {
 		return;
 	}
-	if (audio_external_is_playing()) {
+	pthread_mutex_lock(&suspend_lock);
+	if (external_suspended) {
+		pthread_mutex_unlock(&suspend_lock);
 		return;
 	}
+	// Raised before the close, so a mixer already inside write() treats the
+	// resulting zero as "parked", not as "the output died".
+	external_suspended = true;
+	pthread_mutex_unlock(&suspend_lock);
+
 	audio_external_end();
 	external_open = false;
-	external_suspended = true;
 	app_output_playing = false;
 	request_playback_refresh();
 	morpthis_logi("apps", "released the paused app output for suspend");
+}
+
+// Called after the power timer returns from a suspend attempt, successful or
+// not. Writers parked by sdk_audio_suspend_prepare() wake here and reopen the
+// same terms, so a game's mixer thread survives the sleep instead of exiting
+// on the write that returned zero.
+void sdk_audio_resume_after_suspend(void) {
+	pthread_mutex_lock(&suspend_lock);
+	bool was_suspended = external_suspended;
+	external_suspended = false;
+	pthread_cond_broadcast(&suspend_cond);
+	pthread_mutex_unlock(&suspend_lock);
+	if (was_suspended) {
+		request_playback_refresh();
+		morpthis_logi("apps", "app output resumed after suspend");
+	}
+}
+
+// Blocks a mixer parked by the suspend handoff. False when the app is gone.
+static bool wait_out_suspend(void) {
+	pthread_mutex_lock(&suspend_lock);
+	while (external_suspended) {
+		pthread_cond_wait(&suspend_cond, &suspend_lock);
+	}
+	bool active = app_output_active;
+	pthread_mutex_unlock(&suspend_lock);
+	return active;
+}
+
+static void clear_suspended(void) {
+	pthread_mutex_lock(&suspend_lock);
+	external_suspended = false;
+	pthread_cond_broadcast(&suspend_cond);
+	pthread_mutex_unlock(&suspend_lock);
 }
 
 bool sdk_audio_app_active(void) { return app_output_active; }
@@ -240,11 +285,12 @@ bool sdk_audio_app_track(morpthis_track_t *out) {
 // the output; a force-closed app may still think it owns it, so release the DAC
 // and clear the flags the status bar reads. Runs on the GUI thread.
 void sdk_audio_app_reset(void) {
-	if (app_output_active) {
+	app_output_active = false; // a parked writer must not try to reopen
+	if (external_open) {
 		audio_external_end();
 	}
 	external_open = false;
-	external_suspended = false;
+	clear_suspended();
 	external_bits = 16;
 	external_rate = 0;
 	external_channels = 0;
@@ -288,10 +334,14 @@ bool morpthis_audio_open_ex(int rate, int channels, int bits, int buffer_ms) {
 		external_rate = rate;
 		external_channels = channels;
 		external_buffer_ms = buffer_ms;
-		external_suspended = false;
+		// Mark the output available before waking a writer parked by suspend;
+		// otherwise it can observe an inactive app between the two assignments.
 		app_output_active = true;
-		app_output_playing = true;
-		audio_external_set_playing(true);
+		app_output_playing = false;
+		clear_suspended();
+		// Opening the DAC is not a claim of playback, and definitely not a power
+		// hold. A game mixer feeds silence continuously; only set_playing(true)
+		// makes that output "playing".
 		request_playback_refresh();
 	}
 	return external_open;
@@ -305,13 +355,35 @@ size_t morpthis_audio_write_pcm(const void *pcm, size_t frames) {
 	if (!pcm || frames == 0) {
 		return 0;
 	}
-	if (!external_open && !reopen_suspended()) {
+	for (int attempt = 0; attempt < 2; attempt++) {
+		if (external_suspended && !wait_out_suspend()) {
+			return 0;
+		}
+		if (external_open || reopen_output(false)) {
+			break;
+		}
+		// reopen_output() refuses while a new suspend is being set up. Wait
+		// for that handoff rather than failing the app's mixer.
+		if (!external_suspended) {
+			return 0;
+		}
+	}
+	if (!external_open) {
 		return 0;
 	}
 	if (frames > (size_t)INT_MAX) {
 		frames = (size_t)INT_MAX;
 	}
 	int written = audio_external_write(pcm, (int)frames);
+	if (written == 0 && external_suspended) {
+		// The handoff closed the PCM while this write was in flight. Park,
+		// then continue with the reopened stream rather than telling the app
+		// its sound has died.
+		if (!wait_out_suspend() || !reopen_output(false)) {
+			return 0;
+		}
+		written = audio_external_write(pcm, (int)frames);
+	}
 	return written > 0 ? (size_t)written : 0;
 }
 
@@ -323,7 +395,7 @@ size_t morpthis_audio_write(const int16_t *pcm, size_t frames) {
 }
 
 void morpthis_audio_set_playing(bool playing) {
-	if (playing && !external_open && !reopen_suspended()) {
+	if (playing && !external_open && !reopen_output(true)) {
 		return;
 	}
 	if (!external_open) {
@@ -350,7 +422,7 @@ void morpthis_audio_set_track(const morpthis_track_t *track, bool playing) {
 	pthread_mutex_unlock(&track_lock);
 
 	if (playing && !external_open) {
-		reopen_suspended();
+		reopen_output(playing);
 	}
 	if (external_open) {
 		app_output_playing = playing;
@@ -366,11 +438,12 @@ void morpthis_audio_close(void) {
 	if (!external_open && !external_suspended) {
 		return;
 	}
+	app_output_active = false; // a parked writer must not reopen
 	if (external_open) {
 		audio_external_end();
 	}
 	external_open = false;
-	external_suspended = false;
+	clear_suspended();
 	external_bits = 16;
 	external_rate = 0;
 	external_channels = 0;

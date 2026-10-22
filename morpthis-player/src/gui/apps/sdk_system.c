@@ -18,6 +18,9 @@
 // ---------------------------------------------------------------------------
 
 static bool app_screen_hold;
+// Read by the power manager from the GUI thread, written by the app's GUI
+// callbacks. A hold is explicit: opening the DAC or writing PCM is not one.
+static volatile bool app_awake_hold;
 
 static void copy_string(char *out, size_t size, const char *text) {
 	if (!out || size == 0) {
@@ -121,9 +124,20 @@ void morpthis_system_hold_screen(bool hold) {
 	power_hold_screen_on(hold);
 }
 
+void morpthis_system_hold_awake(bool hold) {
+	if (app_awake_hold != hold) {
+		morpthis_logi("apps", "awake hold %s", hold ? "on" : "off");
+	}
+	app_awake_hold = hold;
+}
+
+bool sdk_system_app_awake(void) { return app_awake_hold; }
+
 // Called from the host's teardown. An app force-closed while it was holding the
-// screen must not leave the panel lit for ever.
+// screen must not leave the panel lit for ever, and a stale power hold must not
+// keep the device awake either.
 void sdk_system_app_reset(void) {
+	app_awake_hold = false;
 	if (app_screen_hold) {
 		app_screen_hold = false;
 		power_hold_screen_on(false);

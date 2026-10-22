@@ -716,10 +716,11 @@ static bool streaming_playback_active(void) {
 	if (radio_is_playing()) {
 		return true;
 	}
-	// An app's external output is usually a stream (Subsonic, a radio app). The
-	// player cannot see what it is reading, so while it is producing sound the
-	// network is treated as in use: parking Wi-Fi mid-track would end it.
-	if (audio_external_is_playing()) {
+	// An app holding the device awake is usually a streaming music app
+	// (Subsonic, a radio app). The player cannot see what it is reading, so the
+	// hold keeps the network up as well: parking Wi-Fi mid-track would end it.
+	// Audio writes alone are not a hold -- a game mixer writes silence all day.
+	if (apphost_awake_hold()) {
 		return true;
 	}
 	if (audio_get_status() == AUDIO_STATUS_STOPPED) {
@@ -1360,7 +1361,7 @@ static void suspend_if_idle(uint32_t now, bool playing) {
 		return; // the last attempt gave up: do not hammer
 	}
 	if (playing) {
-		mem_skip("music is playing");
+		mem_skip("something is playing or holding the device awake");
 		return;
 	}
 	// Pause counts as a stopped state: the PCM is already released after five
@@ -1820,7 +1821,12 @@ static void power_timer_cb(lv_timer_t *timer) {
 	// comes in over A2DP, so neither of the first two answers says anything
 	// about it. Streaming rather than merely active, because the mode left on
 	// with the phone paused is exactly the idle state the timer exists for.
-	bool playing = (audio_get_status() == AUDIO_STATUS_PLAYING) || audio_external_is_playing() ||
+	// An app's raw output is deliberately not in this answer. Games keep a
+	// mixer writing silence for their sound effects, and counting those writes
+	// as playback kept the device awake for as long as the app was loaded. The
+	// app says what it is doing with morpthis_system_hold_awake(); that is the
+	// only app-side hold.
+	bool playing = (audio_get_status() == AUDIO_STATUS_PLAYING) || apphost_awake_hold() ||
 				   radio_is_playing() || btreceiver_is_streaming();
 	if (playing) {
 		g_last_playing_ms = now;
@@ -1885,6 +1891,11 @@ static void power_timer_cb(lv_timer_t *timer) {
 	//           off the network, the SoC halts the way the stock binary makes it
 	//           halt.
 	suspend_if_idle(now, playing);
+
+	// The suspend sequence may have closed a paused app's output (or parked a
+	// game mixer) before a failed attempt, and a successful one returns here
+	// after the wake. The app side reopens whatever it still owns.
+	apphost_resume_after_suspend();
 
 	// 4b. the charger, if it is being held below full: the MP2731 by the
 	//     percentage, or the PMIC by its own two switches on the R1

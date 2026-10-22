@@ -118,9 +118,10 @@ The API started small and grew by version:
   (`open`/`open_ex`/`write`/`write_pcm`/`close`) for an app that mixes or
   streams its own sound, at 16, 24 or 32 bits, `set_playing()` for the
   status-bar indicator, and `set_track()` to publish what is playing to the
-  control centre. While that output is playing, the player treats it like local
-  playback for power: the screen still turns off on the idle timer, but the
-  device stays awake and keeps Wi-Fi up; pausing releases the hold.
+  control centre. Raw output is not a power hold: `system.h`'s
+  `hold_awake(true)` is. A music app holds while a track plays and clears it on
+  pause; a game can keep a mixer writing silence and still let the player
+  suspend.
 - `fs`: the package root, the writable data folder, read/write helpers, card
   root, and a resolve call for libraries that open files themselves.
 - `log`: one line to the player's log.
@@ -129,8 +130,9 @@ API 3 adds the rest of the player's own services: `playback.h` (the local
 queue, seek, transport, queue reading/insertion and cover path), the 10-band
 equalizer in `audio.h`, `library.h`
 (index lists, search, favourites, play counts, playlists and scans), `system.h`
-(info, storage, battery, screen, brightness, clock, screenshot, power-off and
-reboot, and the player's config store), `wireless.h` (Wi-Fi and Bluetooth),
+(info, storage, battery, screen, brightness, the explicit hold-awake power
+hold, clock, screenshot, power-off and reboot, and the player's config store),
+`wireless.h` (Wi-Fi and Bluetooth),
 `net.h` (HTTP/HTTPS through the player's TLS), `morpthis_app_is_background()`,
 `morpthis_ui_theme()`/Dark/accent, the status bar switch, the player's
 confirm/notice cards and a themed text prompt with the on-screen keyboard, and

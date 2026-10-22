@@ -49,10 +49,19 @@ bool apphost_mass_storage_closing(void);
 // are delivered to its button callback if it set one.
 bool apphost_active(void);
 
+// True while the loaded app explicitly holds the device out of standby with
+// morpthis_system_hold_awake(). This is the only app-side power hold; raw PCM
+// output, background app presence and a busy mixer are not.
+bool apphost_awake_hold(void);
+
 // Before entering suspend: a paused app's raw PCM has no reason to keep the
 // device awake, and an open PCM makes audio_suspend_freeze() fail forever. The
 // SDK hands the output back and reopens the same terms on the next play.
 void apphost_suspend_prepare(void);
+
+// After the suspend attempt returns, successful or not. App mixer threads
+// parked by apphost_suspend_prepare() wake and reopen their output here.
+void apphost_resume_after_suspend(void);
 
 // True when the loaded app asked for the game category: no title row, no status
 // bar, no chevron or edge swipe, and the top-edge pull-down is the game's.
