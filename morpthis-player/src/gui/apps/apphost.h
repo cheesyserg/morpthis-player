@@ -50,13 +50,25 @@ bool apphost_mass_storage_closing(void);
 bool apphost_active(void);
 
 // True while the loaded app explicitly holds the device out of standby with
-// morpthis_system_hold_awake(). This is the only app-side power hold; raw PCM
-// output, background app presence and a busy mixer are not.
+// morpthis_power_set_holds(). A network hold also reads as awake. This is the
+// only app-side standby hold; raw PCM output, background app presence and a
+// busy mixer are not.
 bool apphost_awake_hold(void);
 
-// Before entering suspend: a paused app's raw PCM has no reason to keep the
-// device awake, and an open PCM makes audio_suspend_freeze() fail forever. The
-// SDK hands the output back and reopens the same terms on the next play.
+// True while the app holds MORPTHIS_POWER_NETWORK. Keeps Wi-Fi/Bluetooth from
+// being parked by power management.
+bool apphost_network_hold(void);
+
+// Expires timed app power holds. Called from the player's power timer.
+void apphost_power_tick(void);
+
+// The panel changed state. Sent after the transition has completed, on the GUI
+// thread; no-op when no app is loaded.
+void apphost_notify_screen(bool on);
+
+// Before entering suspend: notify the app, then hand a paused raw PCM back so
+// audio_suspend_freeze() can complete. The SDK reopens the output on the next
+// play or write.
 void apphost_suspend_prepare(void);
 
 // After the suspend attempt returns, successful or not. App mixer threads

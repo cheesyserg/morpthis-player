@@ -41,7 +41,8 @@ morpthis-sdk/
     audio.h        // transport control, raw PCM output
     playback.h     // the player's own queue and playback engine
     library.h      // the music index, favourites and playlists
-    system.h       // device status, screen, clock, USB, power, config
+    system.h       // device status, screen, clock, USB, config
+    power.h        // awake/screen/network holds, suspend and screen events
     wireless.h     // Wi-Fi and Bluetooth
     net.h          // the player's HTTP/TLS client
     fs.h           // package/data paths, and absolute-path access
@@ -118,10 +119,13 @@ The API started small and grew by version:
   (`open`/`open_ex`/`write`/`write_pcm`/`close`) for an app that mixes or
   streams its own sound, at 16, 24 or 32 bits, `set_playing()` for the
   status-bar indicator, and `set_track()` to publish what is playing to the
-  control centre. Raw output is not a power hold: `system.h`'s
-  `hold_awake(true)` is. A music app holds while a track plays and clears it on
-  pause; a game can keep a mixer writing silence and still let the player
-  suspend.
+  control centre. Raw output is not a power hold: `power.h`'s
+  `MORPTHIS_POWER_AWAKE`/`MORPTHIS_POWER_NETWORK` are. A streaming music app
+  holds both while a track plays and clears them on pause; a game can keep a
+  mixer writing silence and still let the player suspend. A download that has
+  no audio can hold NETWORK on its own and use `set_holds_for()` to bound it.
+  The app SCREEN hold is separate from the player's own page holds, so closing
+  a player page cannot release it.
 - `fs`: the package root, the writable data folder, read/write helpers, card
   root, and a resolve call for libraries that open files themselves.
 - `log`: one line to the player's log.
@@ -130,13 +134,22 @@ API 3 adds the rest of the player's own services: `playback.h` (the local
 queue, seek, transport, queue reading/insertion and cover path), the 10-band
 equalizer in `audio.h`, `library.h`
 (index lists, search, favourites, play counts, playlists and scans), `system.h`
-(info, storage, battery, screen, brightness, the explicit hold-awake power
-hold, clock, screenshot, power-off and reboot, and the player's config store),
+(info, storage, battery, screen, brightness, clock, screenshot, power-off and
+reboot, and the player's config store), `power.h` (the independent
+awake/screen/network holds, timed holds, and suspend/resume/screen on/off
+callbacks),
 `wireless.h` (Wi-Fi and Bluetooth),
 `net.h` (HTTP/HTTPS through the player's TLS), `morpthis_app_is_background()`,
 `morpthis_ui_theme()`/Dark/accent, the status bar switch, the player's
 confirm/notice cards and a themed text prompt with the on-screen keyboard, and
 the absolute-path filesystem calls plus a directory walk in `fs.h`.
+
+The power callback is one registration and runs on the GUI thread. `SUSPENDING`
+is sent only after the player has decided to sleep, so setting a hold there
+cannot veto the attempt; set it while the work is running instead. `RESUMED` is
+sent only to the callback that received `SUSPENDING`. `SCREEN_OFF` means the
+panel and the rendering timers are already down, so save state rather than
+drawing; `SCREEN_ON` arrives after the wake repaint.
 
 Networking and Bluetooth are the player's own modules rather than a second
 stack in the app. The DAC is still one writer at a time: an app that opens the

@@ -1,5 +1,6 @@
 #include "sdk_internal.h"
 
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,10 +18,72 @@
 // system.h
 // ---------------------------------------------------------------------------
 
-static bool app_screen_hold;
-// Read by the power manager from the GUI thread, written by the app's GUI
-// callbacks. A hold is explicit: opening the DAC or writing PCM is not one.
-static volatile bool app_awake_hold;
+#define APP_POWER_BITS                                                         \
+	(MORPTHIS_POWER_AWAKE | MORPTHIS_POWER_SCREEN | MORPTHIS_POWER_NETWORK)
+
+// The app's hold set, its optional expiry and the suspend callback. The lock
+// matters because a hold may be changed from an app worker (downloads, audio)
+// while the power timer reads it on the GUI thread.
+static pthread_mutex_t app_power_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint32_t app_power_holds;
+static uint64_t app_power_deadline_ms;
+static morpthis_power_event_cb app_power_event_cb;
+static void *app_power_event_user;
+static bool app_power_suspended;
+// The callback that actually received SUSPENDING. RESUMED is sent only to it:
+// an app that replaces its callback across the sleep must not receive an
+// unpaired resume.
+static morpthis_power_event_cb app_power_suspended_cb;
+static void *app_power_suspended_user;
+
+static uint64_t now_ms(void) {
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	// Cast before the divide: a 64-bit divide on MIPS32 is a libgcc call, and
+	// tv_nsec is already below one second.
+	return (uint64_t)ts.tv_sec * 1000u + (uint32_t)ts.tv_nsec / 1000000u;
+}
+
+static void app_power_log(uint32_t old_holds, uint64_t old_deadline, uint32_t holds, uint64_t deadline) {
+	if (old_holds != holds || (old_deadline != 0) != (deadline != 0)) {
+		morpthis_logi("power", "holds 0x%x%s", (unsigned)holds, deadline ? " (timed)" : "");
+	}
+}
+
+// Changes the set under the lock, then applies the one hold that lives in the
+// player's display code. Applying it under the same lock keeps two app threads
+// from leaving the display flag at the older of their two states. The app flag
+// is deliberately not power_hold_screen_on(): that one belongs to player pages
+// and jobs, and either side releasing it would drop the other's hold.
+// `deadline` is only replaced when set_deadline is true: hold_screen()/
+// hold_awake() must not silently cancel a timed set_holds_for().
+static void app_power_modify(uint32_t set_bits, uint32_t clear_bits, bool set_deadline,
+						 uint64_t deadline) {
+	pthread_mutex_lock(&app_power_lock);
+	uint32_t old_holds = app_power_holds;
+	uint64_t old_deadline = app_power_deadline_ms;
+	uint32_t holds = (old_holds | (set_bits & APP_POWER_BITS)) & ~clear_bits;
+	app_power_holds = holds;
+	if (set_deadline) {
+		app_power_deadline_ms = deadline;
+	}
+	uint64_t new_deadline = app_power_deadline_ms;
+	bool old_screen = (old_holds & MORPTHIS_POWER_SCREEN) != 0;
+	bool new_screen = (holds & MORPTHIS_POWER_SCREEN) != 0;
+	if (old_screen != new_screen) {
+		power_hold_screen_for_app(new_screen);
+	}
+	pthread_mutex_unlock(&app_power_lock);
+
+	app_power_log(old_holds, old_deadline, holds, new_deadline);
+}
+
+static uint32_t app_power_get(void) {
+	pthread_mutex_lock(&app_power_lock);
+	uint32_t holds = app_power_holds;
+	pthread_mutex_unlock(&app_power_lock);
+	return holds;
+}
 
 static void copy_string(char *out, size_t size, const char *text) {
 	if (!out || size == 0) {
@@ -120,28 +183,122 @@ bool morpthis_system_set_brightness(int percent) {
 }
 
 void morpthis_system_hold_screen(bool hold) {
-	app_screen_hold = hold;
-	power_hold_screen_on(hold);
+	app_power_modify(hold ? MORPTHIS_POWER_SCREEN : 0, hold ? 0 : MORPTHIS_POWER_SCREEN, false, 0);
 }
 
 void morpthis_system_hold_awake(bool hold) {
-	if (app_awake_hold != hold) {
-		morpthis_logi("apps", "awake hold %s", hold ? "on" : "off");
-	}
-	app_awake_hold = hold;
+	app_power_modify(hold ? MORPTHIS_POWER_AWAKE : 0, hold ? 0 : MORPTHIS_POWER_AWAKE, false, 0);
 }
 
-bool sdk_system_app_awake(void) { return app_awake_hold; }
+void morpthis_power_set_holds(morpthis_power_t holds) {
+	app_power_modify((uint32_t)holds, APP_POWER_BITS, true, 0);
+}
+
+void morpthis_power_set_holds_for(morpthis_power_t holds, uint32_t timeout_ms) {
+	uint64_t deadline = timeout_ms ? now_ms() + timeout_ms : 0;
+	app_power_modify((uint32_t)holds, APP_POWER_BITS, true, deadline);
+}
+
+void morpthis_power_release_all(void) {
+	app_power_modify(0, APP_POWER_BITS, true, 0);
+}
+
+morpthis_power_t morpthis_power_holds(void) { return (morpthis_power_t)app_power_get(); }
+
+void morpthis_power_set_event_cb(morpthis_power_event_cb cb, void *user) {
+	pthread_mutex_lock(&app_power_lock);
+	app_power_event_cb = cb;
+	app_power_event_user = user;
+	pthread_mutex_unlock(&app_power_lock);
+}
+
+// NETWORK is deliberately stronger than AWAKE: a parked radio cannot finish a
+// transfer. The power manager therefore reads either bit as an awake hold.
+bool sdk_system_app_awake(void) {
+	uint32_t holds = app_power_get();
+	return (holds & (MORPTHIS_POWER_AWAKE | MORPTHIS_POWER_NETWORK)) != 0;
+}
+
+bool sdk_system_app_network(void) { return (app_power_get() & MORPTHIS_POWER_NETWORK) != 0; }
+
+void sdk_system_notify_suspend(void) {
+	pthread_mutex_lock(&app_power_lock);
+	morpthis_power_event_cb cb = app_power_event_cb;
+	void *user = app_power_event_user;
+	app_power_suspended = cb != NULL;
+	app_power_suspended_cb = cb;
+	app_power_suspended_user = user;
+	pthread_mutex_unlock(&app_power_lock);
+	if (cb) {
+		cb(MORPTHIS_POWER_SUSPENDING, user);
+	}
+}
+
+void sdk_system_notify_resume(void) {
+	pthread_mutex_lock(&app_power_lock);
+	bool was = app_power_suspended;
+	morpthis_power_event_cb cb = app_power_suspended_cb;
+	void *user = app_power_suspended_user;
+	bool still_current = cb && cb == app_power_event_cb && user == app_power_event_user;
+	app_power_suspended = false;
+	app_power_suspended_cb = NULL;
+	app_power_suspended_user = NULL;
+	pthread_mutex_unlock(&app_power_lock);
+	if (was && still_current) {
+		cb(MORPTHIS_POWER_RESUMED, user);
+	}
+}
+
+void sdk_system_notify_screen(bool on) {
+	pthread_mutex_lock(&app_power_lock);
+	morpthis_power_event_cb cb = app_power_event_cb;
+	void *user = app_power_event_user;
+	pthread_mutex_unlock(&app_power_lock);
+	if (cb) {
+		cb(on ? MORPTHIS_POWER_SCREEN_ON : MORPTHIS_POWER_SCREEN_OFF, user);
+	}
+}
+
+// The player's power tick. A timed hold is enforced here, not by a thread of
+// the app's own, so an app that fills the GUI queue cannot postpone it.
+void sdk_system_tick(void) {
+	pthread_mutex_lock(&app_power_lock);
+	uint32_t old_holds = app_power_holds;
+	uint64_t deadline = app_power_deadline_ms;
+	if (deadline == 0 || now_ms() < deadline) {
+		pthread_mutex_unlock(&app_power_lock);
+		return;
+	}
+	app_power_holds = 0;
+	app_power_deadline_ms = 0;
+	bool screen = (old_holds & MORPTHIS_POWER_SCREEN) != 0;
+	if (screen) {
+		// Under the same lock as the set: a hold set by an app thread between
+		// the expiry and this call must not have its SCREEN bit cleared here.
+		power_hold_screen_for_app(false);
+	}
+	pthread_mutex_unlock(&app_power_lock);
+
+	app_power_log(old_holds, deadline, 0, 0);
+}
 
 // Called from the host's teardown. An app force-closed while it was holding the
-// screen must not leave the panel lit for ever, and a stale power hold must not
-// keep the device awake either.
+// screen must not leave the panel lit for ever, and a stale power hold or
+// callback must not survive into the next app.
 void sdk_system_app_reset(void) {
-	app_awake_hold = false;
-	if (app_screen_hold) {
-		app_screen_hold = false;
-		power_hold_screen_on(false);
+	pthread_mutex_lock(&app_power_lock);
+	bool screen = (app_power_holds & MORPTHIS_POWER_SCREEN) != 0;
+	app_power_holds = 0;
+	app_power_deadline_ms = 0;
+	app_power_event_cb = NULL;
+	app_power_event_user = NULL;
+	app_power_suspended = false;
+	app_power_suspended_cb = NULL;
+	app_power_suspended_user = NULL;
+	if (screen) {
+		power_hold_screen_for_app(false);
 	}
+	pthread_mutex_unlock(&app_power_lock);
 }
 
 bool morpthis_system_time(int64_t *epoch_seconds) {

@@ -406,11 +406,23 @@ void apphost_release_audio(void) {
 	}
 }
 
-void apphost_suspend_prepare(void) { sdk_audio_suspend_prepare(); }
+void apphost_notify_screen(bool on) { sdk_system_notify_screen(on); }
 
-void apphost_resume_after_suspend(void) { sdk_audio_resume_after_suspend(); }
+void apphost_suspend_prepare(void) {
+	sdk_system_notify_suspend();
+	sdk_audio_suspend_prepare();
+}
+
+void apphost_resume_after_suspend(void) {
+	sdk_system_notify_resume();
+	sdk_audio_resume_after_suspend();
+}
 
 bool apphost_awake_hold(void) { return sdk_system_app_awake(); }
+
+bool apphost_network_hold(void) { return sdk_system_app_network(); }
+
+void apphost_power_tick(void) { sdk_system_tick(); }
 
 // ---------------------------------------------------------------------------
 // The USB guard

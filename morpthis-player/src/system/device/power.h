@@ -197,6 +197,12 @@ void power_hold_screen_on(bool hold);
 // of the two letting go does not release the other.
 void power_hold_screen_for_view(bool hold);
 
+// An app's SCREEN hold. A flag of its own again, because a player page closing
+// must not release an app's hold and an app stopping must not release the power
+// menu's. Safe from any thread: the flag is locked, and a release posts the
+// idle-clock reset to the GUI thread rather than touching LVGL from a worker.
+void power_hold_screen_for_app(bool hold);
+
 // Stops charging once the battery reaches `percent` (80..100; 100 means no
 // limit). Whether this can be enforced depends on the charger driver exposing
 // a control node -- power_charge_limit_supported() says whether it found one.

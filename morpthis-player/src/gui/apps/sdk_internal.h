@@ -206,6 +206,11 @@ void sdk_playback_app_reset(void);
 // sdk_system.c
 void sdk_system_app_reset(void);
 bool sdk_system_app_awake(void);
+bool sdk_system_app_network(void);
+void sdk_system_tick(void);
+void sdk_system_notify_suspend(void);
+void sdk_system_notify_resume(void);
+void sdk_system_notify_screen(bool on);
 
 // sdk_ui.c
 void sdk_screen_destroy(morpthis_screen_t *screen);

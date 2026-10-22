@@ -435,6 +435,14 @@ static uint32_t input_idle_ms(uint32_t now) {
 
 static bool g_screen_on_hold;
 static bool g_screen_view_hold; // see power_hold_screen_for_view
+static bool g_screen_app_hold;  // see power_hold_screen_for_app; protected by g_lock
+
+static bool screen_app_hold_active(void) {
+	pthread_mutex_lock(&g_lock);
+	bool hold = g_screen_app_hold;
+	pthread_mutex_unlock(&g_lock);
+	return hold;
+}
 
 // ---------------------------------------------------------------------------
 // charge limit
@@ -716,11 +724,9 @@ static bool streaming_playback_active(void) {
 	if (radio_is_playing()) {
 		return true;
 	}
-	// An app holding the device awake is usually a streaming music app
-	// (Subsonic, a radio app). The player cannot see what it is reading, so the
-	// hold keeps the network up as well: parking Wi-Fi mid-track would end it.
+	// A network hold keeps the radios up for a streaming or downloading app.
 	// Audio writes alone are not a hold -- a game mixer writes silence all day.
-	if (apphost_awake_hold()) {
+	if (apphost_network_hold()) {
 		return true;
 	}
 	if (audio_get_status() == AUDIO_STATUS_STOPPED) {
@@ -1638,6 +1644,11 @@ void power_screen_off(void) {
 	clock_remember();
 
 	fprintf(stderr, "power: screen off\n");
+
+	// Last, with the panel and the rendering timers already down. The app is
+	// told after the transition, not in the middle of it, so a callback cannot
+	// draw into a refresh that is about to be paused.
+	apphost_notify_screen(false);
 }
 
 // Paints the whole interface into the framebuffer once: every layer made
@@ -1766,6 +1777,10 @@ void power_screen_on(void) {
 
 	fprintf(stderr, "power: screen on (brightness=%ld, wake %ums)\n", g_cfg.brightness,
 			(unsigned)(monotonic_ms() - wake_started));
+
+	// After the repaint and the fade, so an app that draws on the way back is
+	// drawing into a panel that is already showing the current frame.
+	apphost_notify_screen(true);
 }
 
 void power_toggle_screen(void) {
@@ -1792,6 +1807,9 @@ void power_bluetooth_off(void) {
 
 static void power_timer_cb(lv_timer_t *timer) {
 	(void)timer;
+	// Expire any timed app hold before this tick decides whether the device is
+	// busy. The SDK owns the deadline; this is the only thread that applies it.
+	apphost_power_tick();
 	uint32_t now = lv_tick_get();
 
 	// 1. consume a queued power-button short-press
@@ -1824,8 +1842,8 @@ static void power_timer_cb(lv_timer_t *timer) {
 	// An app's raw output is deliberately not in this answer. Games keep a
 	// mixer writing silence for their sound effects, and counting those writes
 	// as playback kept the device awake for as long as the app was loaded. The
-	// app says what it is doing with morpthis_system_hold_awake(); that is the
-	// only app-side hold.
+	// app says what it is doing with the power.h hold mask; AWAKE (or NETWORK,
+	// which implies it) is the only app-side standby hold.
 	bool playing = (audio_get_status() == AUDIO_STATUS_PLAYING) || apphost_awake_hold() ||
 				   radio_is_playing() || btreceiver_is_streaming();
 	if (playing) {
@@ -1864,7 +1882,7 @@ static void power_timer_cb(lv_timer_t *timer) {
 
 	// 4. auto screen-off after the configured input-idle timeout
 	if (g_screen_on && g_cfg.screen_off_enabled && !g_screen_on_hold && !g_screen_view_hold &&
-		input_idle >= g_cfg.screen_off_timeout_ms) {
+		!screen_app_hold_active() && input_idle >= g_cfg.screen_off_timeout_ms) {
 		// Say why. A screen that goes dark on its own is indistinguishable
 		// from a crash unless the log records that it was the idle timer.
 		printf("power: screen off after %u ms without input (timeout %u ms)\n", input_idle,
@@ -1983,6 +2001,28 @@ void power_hold_screen_for_view(bool hold) {
 		if (g_disp) {
 			lv_display_trigger_activity(g_disp);
 		}
+	}
+}
+
+// Runs on the GUI thread: a worker may be the one releasing the app's hold, and
+// LVGL has no locks here.
+static void app_screen_hold_released_cb(void *unused) {
+	(void)unused;
+	power_notify_activity();
+	if (g_screen_on && g_disp) {
+		lv_display_trigger_activity(g_disp);
+	}
+}
+
+void power_hold_screen_for_app(bool hold) {
+	pthread_mutex_lock(&g_lock);
+	bool changed = g_screen_app_hold != hold;
+	g_screen_app_hold = hold;
+	pthread_mutex_unlock(&g_lock);
+	if (changed && !hold) {
+		// As with the other holds: start the idle window when the hold goes,
+		// not when the screen was last touched before a long read or job.
+		gui_post(app_screen_hold_released_cb, NULL);
 	}
 }
 
