@@ -9,7 +9,10 @@
 // Power / display management: mirrors the stock firmware's idle behaviour.
 //
 //   - Short-pressing the power button toggles the screen off/on. Music keeps
-//     playing while the screen is off.
+//     playing while the screen is off. A plain screen-off only puts the
+//     backlight out and leaves the panel powered, so the wake is the backlight
+//     coming back over the frame already on the glass; the panel itself is
+//     powered down when the device enters standby.
 //   - After screen_off_timeout_ms with no user input the screen turns off on
 //     its own (even while music is playing).
 //   - Suspend-to-RAM. The stock standby executes `mem` 60 s after the screen
@@ -58,15 +61,13 @@ void power_init(const power_config_t *cfg, lv_display_t *disp);
 // framebuffer path is in use (the page-flipping display or LVGL's plain fbdev
 // driver -- calling the fbdev driver's functions on the page-flipping display
 // dereferences driver data it does not have). The blank/unblank cycle tears
-// down the panel's scan-out and may reset the video mode, so waking needs a
-// display-specific kick: `begin` restores the video mode and re-arms scan-out,
-// `end` closes it off. Both are no-ops on the host build.
+// down the panel's scan-out and may reset the video mode, so waking a blanked
+// panel needs a display-specific kick: `begin` restores the video mode and
+// re-arms scan-out, `end` closes it off. Both are no-ops on the host build.
 //
-// `begin` brackets each repaint of a wake, and there are three: one drawn
-// while the panel is still blanked, so the frame is waiting when the
-// controller comes back, and two after the unblank, because a frame pushed
-// before the panel is listening is lost without a word. Only the last two can
-// pan -- see power_panel_is_blanked().
+// `begin` brackets the repaint of a wake from a blanked panel. An ordinary
+// screen-off leaves the panel powered, so its wake never calls this. See
+// power_panel_is_blanked().
 void display_wake_begin(lv_display_t *disp);
 void display_wake_end(lv_display_t *disp);
 
@@ -113,16 +114,26 @@ void power_toggle_screen(void);
 bool power_screen_is_on(void);
 
 // Whether the panel itself is blanked, which is not the same question as
-// whether the screen is on: a wake unblanks the panel in the middle of its own
-// sequence, after the first of its repaints. The display uses it to skip what
-// cannot succeed while the panel is dark -- see display_wake_begin(). False
-// when the platform has no blank control, because then the panel is never
-// blanked at all.
+// whether the screen is on: an ordinary screen-off leaves the panel powered
+// (false) and a wake from it needs no reset or init. A dark spell that went
+// through standby has blanked the panel (true), and its wake unblanks it in the
+// middle of its own sequence, before the repaint that pushes the new frame. The
+// display uses this to skip what cannot succeed while the panel is dark -- see
+// display_wake_begin(). False when the platform has no blank control, because
+// then the panel is never blanked at all.
 bool power_panel_is_blanked(void);
+
+// Powers the panel and its touch controller down now. The screen-off gesture
+// deliberately does not do this: it leaves them up so the next wake is
+// immediate. For the moments with no such wake ahead -- entering standby, and
+// the exits that end in a reboot or a power-off. Idempotent; a no-op where the
+// platform has no blank control.
+void power_panel_off(void);
 
 // --- Activity notifications (thread-safe; call from any thread) ---
 // Reset the idle timers because the user did something (e.g. a physical
-// button press). Touch input is already accounted for automatically.
+// button press). Touch is accounted for automatically while the screen is on;
+// a touch on a dark screen is not use and is not counted (see system.c).
 void power_notify_activity(void);
 
 // Double-tap-to-wake via the touch controller's gesture mode (gesture_sw).

@@ -266,6 +266,14 @@ not been exercised on this board), logging the raw value to stderr whenever it
 changes so the 4.4 mm socket's encoding can be read off a real plug later.
 ### The white flash on wake, and what it actually was
 
+The sequence below is what a wake from **standby** owes the panel, where the
+dark spell included a power-down. An ordinary screen-off no longer powers the
+panel down at all: it takes the backlight to zero and leaves the panel scanning
+the frame it already holds, so the power key lights that frame again instead of
+paying the unblank, the panel init and the vsync hold. The panel is powered
+down when `mem` is about to be written (`power_panel_off()`), and on the
+shutdown, reboot and recovery exits, where no quick wake follows.
+
 The panel is an SLCD: its glass shows the contents of its own memory, and a
 reset leaves that memory white. Writing `0` to `/sys/class/graphics/fb0/blank`
 resets and re-initialises the panel and re-arms the controller's scan-out, and
@@ -292,27 +300,29 @@ however long the hold is.
    is still a white frame. Zero is safe here as well as darker: the blank the
    driver already performs puts the PWM at zero with the panel unpowered
    behind it, and the screen stays dark for as long as the screen is off. The
-   same zero is left behind at the screen-off blank, so the level the driver
-   itself restores at an unblank is already a dark one. Overridable as
-   `[screen] wake_hold_level` in `device_config.ini` for a board whose driver
-   needs the floor back (set it to 1).
+   same zero is left behind as the screen goes dark, so the level the driver
+   itself restores at the unblank after a sleep is already a dark one.
+   Overridable as `[screen] wake_hold_level` in `device_config.ini` for a board
+   whose driver needs the floor back (set it to 1).
 2. **The panel's own init is waited out, still dark** (`WAKE_PANEL_SETTLE_MS`,
    120 ms), before a frame is pushed at it.
-3. **A frame is pushed after the unblank, twice** (`wake_repaint()`: the kick
-   from `main.c` that re-arms the video mode and the scan-out, then a full
-   repaint that pans to the frame), `WAKE_PUSH_SETTLE_MS` apart, because a push
-   that arrives before the panel is listening is lost in silence and there is
-   no way to ask. Only then does `backlight_hold_until_panel_shows()` end the
-   hold -- on two `FBIO_WAITFORVSYNC` scan-outs, believed only when they cost
-   what two scan-outs cost, or on a fallback now that stands in for those
-   frames rather than for the whole wake. A credible two-frame answer now has
-   a 50 ms minimum total hold instead of 90 ms; the fallback remains longer.
-   The configured level then fades up over the finished picture.
+3. **A frame is pushed after the unblank** (`wake_repaint()`: the kick from
+   `main.c` that re-arms the video mode and the scan-out, then a full repaint
+   that pans to the frame), because a push that arrives before the panel is
+   listening is lost in silence and there is no way to ask. Only then does
+   `backlight_hold_until_panel_shows()` end the hold -- on two
+   `FBIO_WAITFORVSYNC` scan-outs, believed only when they cost what two
+   scan-outs cost, or on a fallback now that stands in for those frames rather
+   than for the whole wake. A credible two-frame answer now has a 50 ms
+   minimum total hold instead of 90 ms; the fallback remains longer. The
+   configured level then fades up over the finished picture.
 
-With a working vsync path the wake takes about a quarter of a second of dark
-screen from the unblank to the fade; the conservative fallback takes a little
-over a third. The backlight stays at zero until the confirmed frame is ready,
-so the wait stays invisible; what was visible was the white.
+With a working vsync path the wake from standby takes about a quarter of a
+second of dark screen from the unblank to the fade; the conservative fallback
+takes a little over a third. The backlight stays at zero until the confirmed
+frame is ready, so the wait stays invisible; what was visible was the white.
+A wake from an ordinary screen-off is the backlight coming up over the frame
+the panel is already showing, and takes only the wake fade.
 
 Two-column, three-row pages with five entries let the fifth tile span the last
 row. Compact tile captions are one fixed line with an ellipsis and no extra

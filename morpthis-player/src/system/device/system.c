@@ -1816,7 +1816,16 @@ static void *input_thread_func(void *arg) {
 		}
 
 		if (ev.value == 1) {
-			power_notify_activity(); // any physical button counts as use
+			// A physical button is use. Touch on a dark screen is not: the touch
+			// controller keeps reporting taps even then, a pocket included, and
+			// counting each one would hold the standby countdown back for as long
+			// as the player is carried. The panel is powered down only when that
+			// countdown expires, so such a player would never get there. The
+			// double tap that does wake the screen resets the clocks through the
+			// power-key path instead.
+			if (power_screen_is_on() || ev.code < 0x100) {
+				power_notify_activity(); // any physical button counts as use
+			}
 
 			// Volume + power: if a combination has fired -- now, or because the
 			// other key was already down -- this key belongs to it. The volume

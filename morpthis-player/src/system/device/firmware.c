@@ -112,6 +112,9 @@ void firmware_update_start(void) {
 	// follows holds this thread for seconds, and a frozen page reads as a
 	// device that has hung. A dark one reads as a device that is restarting.
 	power_screen_off();
+	// The screen-off gesture only puts the backlight out and leaves the panel
+	// powered for a quick wake. None is coming here: recovery ends in a reboot.
+	power_panel_off();
 	// And the status LED with it, faded out like every other exit path -- without
 	// this it stayed lit through the whole recovery reboot.
 	led_shutdown();

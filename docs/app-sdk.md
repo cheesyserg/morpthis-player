@@ -148,8 +148,8 @@ The power callback is one registration and runs on the GUI thread. `SUSPENDING`
 is sent only after the player has decided to sleep, so setting a hold there
 cannot veto the attempt; set it while the work is running instead. `RESUMED` is
 sent only to the callback that received `SUSPENDING`. `SCREEN_OFF` means the
-panel and the rendering timers are already down, so save state rather than
-drawing; `SCREEN_ON` arrives after the wake repaint.
+screen is already dark and the rendering timers are down, so save state rather
+than drawing; `SCREEN_ON` arrives after the wake repaint.
 
 Networking and Bluetooth are the player's own modules rather than a second
 stack in the app. The DAC is still one writer at a time: an app that opens the

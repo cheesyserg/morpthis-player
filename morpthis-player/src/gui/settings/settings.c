@@ -163,10 +163,10 @@ static void rotate_toggle_cb(lv_event_t *e) {
 	}
 }
 
-// The lowest level offered. The stock player never writes below 5 of its
-// Blanking this panel powers its touch controller down with it, so the only
-// way back is the power key. Thirty seconds is the default; "never" is there
-// for anyone who would rather not be caught out by it.
+// The lowest level offered. A dark screen stops reading touch: a single tap
+// does nothing and the only way back is the power key -- or the double-tap
+// gesture, where it is enabled. Thirty seconds is the default; "never" is
+// there for anyone who would rather not be caught out by it.
 //
 // The setting is written under [power], where it has always lived: it is read
 // by power.c, and moving the key would lose everybody's choice.

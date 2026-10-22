@@ -2333,10 +2333,10 @@ int main(int argc, char **argv) {
 #endif
 		.brightness = -1, // adopt the panel's current level as the on-brightness
 		.screen_off_enabled = false,
-		// Off unless asked for in Settings. Blanking this panel powers the
-		// touch controller down with it, so the screen cannot be woken by
-		// touching it -- only by the power key. A timer that traps the user
-		// like that is not something to have on by default.
+		// Off unless asked for in Settings. A dark screen ignores touch: a
+		// single tap does nothing and only the power key -- or the double-tap
+		// gesture, where it is enabled -- brings it back. A timer that traps
+		// the user like that is not something to have on by default.
 		.screen_off_timeout_ms = 60000,
 	};
 	// Whatever was chosen in Settings last time.

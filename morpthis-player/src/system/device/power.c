@@ -76,11 +76,12 @@ static uint32_t since(uint32_t mark, uint32_t now) {
 	return elapsed > 0 ? (uint32_t)elapsed : 0;
 }
 
-// The lowest level ever written to the backlight driver. Zero would be
-// accepted by the driver and put the PWM out, but it would leave a black screen
-// on a fully powered panel: turning the screen off is the blank node's job.
-// The dimmest level the UI *offers* is POWER_BRIGHTNESS_MIN_PERCENT (power.h),
-// which is higher; this floor is still what the screen-off fade ends at.
+// The lowest level the fades step through. The screen-off path goes one step
+// further to a true zero through backlight_hold(): the panel is left powered
+// while the screen is dark (see power_screen_off), and zero is what makes that
+// invisible. The dimmest level the UI *offers* is
+// POWER_BRIGHTNESS_MIN_PERCENT (power.h), which is higher; this floor is still
+// what the screen-off fade ends at.
 #define BRIGHTNESS_MIN 1
 #define BRIGHTNESS_MAX_DEFAULT 100
 
@@ -112,6 +113,10 @@ static uint32_t since(uint32_t mark, uint32_t now) {
 #define WAKE_HOLD_LEVEL_DEFAULT 0
 
 // The wake of this panel, and what the white flash was.
+//
+// All of this is the wake of a panel that was powered down, which now only
+// happens when the dark spell included a sleep: the ordinary screen-off leaves
+// the panel powered and its wake is just the backlight (see power_screen_off).
 //
 // The panel is an SLCD: its glass shows the contents of its own memory, and a
 // reset leaves that memory white. Writing 0 to the blank node resets and
@@ -188,9 +193,11 @@ static bool g_screen_on = true;
 static uint32_t g_screen_off_at; // lv_tick when the panel last went dark
 
 // Whether the panel is blanked, which is not the same question as whether the
-// screen is on: a wake turns the screen on first and unblanks the panel a few
-// hundred milliseconds into its own sequence, after its first repaint. Kept by
-// screen_power(), read by the display through power_panel_is_blanked().
+// screen is on. A screen-off only puts the backlight out and leaves the panel
+// powered and scanning, so that a wake is the backlight returning over a frame
+// the panel is already showing. The panel is blanked when the device goes to
+// standby, and the following wake then runs the full reset/init sequence. Kept
+// by screen_power(), read by the display through power_panel_is_blanked().
 static bool g_panel_blanked;
 
 // The standby countdown: the idle wait before a suspend attempt. It restarts at
@@ -381,6 +388,20 @@ static void screen_power(bool on) {
 // What screen_power() last wrote. Asked by the display, which must not attempt
 // a page flip on a panel that is still blanked (see display_wake_begin).
 bool power_panel_is_blanked(void) { return g_panel_blanked; }
+
+// Whether the panel is blanked right now. The node is asked directly instead of
+// trusting the flag alone: the framebuffer console's own blanking timer, where
+// the kernel has one armed, can power the panel down behind this file's back,
+// and the wake has to know or it would bring the backlight up over a glass that
+// has been reset. Falls back to the flag when the node cannot be read, and is
+// false on a platform with no blank control.
+static bool panel_is_blanked_now(void) {
+	if (!g_cfg.blank_path) {
+		return false;
+	}
+	long blank = read_long_from_file(g_cfg.blank_path);
+	return blank >= 0 ? blank != FB_BLANK_UNBLANK : g_panel_blanked;
+}
 
 // Enable/disable every LVGL input device (i.e. the touchscreen). Physical
 // buttons live in their own threads and are unaffected, so volume/power keys
@@ -637,7 +658,7 @@ void power_set_auto_off(bool enabled, uint32_t minutes) {
 }
 
 
-static bool g_double_tap_wake; // rearmed at every blank; see power_set_double_tap_wake
+static bool g_double_tap_wake; // armed at every screen-off and every blank; see power_set_double_tap_wake
 
 // ---------------------------------------------------------------------------
 // The headphone remote across a suspend
@@ -1086,11 +1107,14 @@ void power_shutdown(void) {
 	// never be written.
 	device_state_remember_flush();
 
-	// Dark the panel immediately, then fade/close audio before the kernel takes
+	// Dark the screen immediately, then fade/close audio before the kernel takes
 	// power away from the output stage. In particular, the HBC3000 is parked on
 	// its unused socket while its amplifier is still powered, avoiding a pop in
 	// the connected headphones during shutdown.
 	power_screen_off();
+	// The screen-off gesture leaves the panel powered for a quick wake; this
+	// exit has no wake, and the power may not go for several seconds.
+	power_panel_off();
 	// And the status LED, faded out rather than cut: the screen is already dark,
 	// so this is the last thing the device says on its way down.
 	led_shutdown();
@@ -1138,6 +1162,7 @@ void power_shutdown(void) {
 void power_reboot(void) {
 	device_state_remember_flush();
 	power_screen_off();
+	power_panel_off(); // no quick wake follows a reboot
 	led_shutdown();
 	if (!audio_prepare_poweroff()) {
 		fprintf(stderr, "power: audio did not quiesce completely before reboot\n");
@@ -1215,6 +1240,14 @@ static void suspend_to_ram(void) {
 	// 4-ter. The RTC alarm: if the automatic shutdown deadline falls during the
 	//        sleep, it is what wakes the device to actually shut down.
 	rtc_alarm_arm_for_auto_off();
+
+	// 4-quater. The panel, left powered while the screen was dark so that an
+	//           ordinary wake could be immediate. It is powered down here for
+	//           the sleep: scanning through `mem` would hold the panel, its
+	//           controller and the touch controller up all night, and nobody is
+	//           awake to see the reset. The wake from this sleep takes
+	//           power_screen_on()'s full sequence.
+	power_panel_off();
 
 	// 5. The write that stops the SoC. Blocks until the wake: everything after
 	//    it already runs on the other side.
@@ -1576,32 +1609,40 @@ void power_screen_off(void) {
 	// starts here, unless activity keeps pushing it back.
 	g_mem_active_ms = g_screen_off_at;
 
-	// Written right before the blank, either way round: the touch driver reads
-	// this flag when the blank reaches it, and chooses doze or a full
-	// power-off from it. Off has to be written too, not merely left as the
-	// settings page last put it, or the controller dozes on a night when
+	// The gesture flag is armed here, as the screen goes dark, so the software
+	// double-tap path works during the dark spell; the touch driver reads the
+	// same flag when the panel is later blanked for the sleep, and chooses doze
+	// or a full power-off from it. Off has to be written too, not merely left
+	// as the settings page last put it, or the controller dozes on a night when
 	// nothing is listening for the gesture.
 	power_set_double_tap_wake(g_double_tap_wake);
 
-	set_indevs_enabled(false); // no touch events into LVGL while the panel is down
+	set_indevs_enabled(false); // no touch events into LVGL while the screen is dark
 	fade_to(BRIGHTNESS_MIN);   // smooth dim down
-	screen_power(false);
 
-	// And left at the hold level rather than at the fade's floor: the
-	// backlight driver restores the level it held before the blank when the
-	// panel is next unblanked, and the floor is a level the panel is *looked
-	// at through*. Left at a true zero the panel comes back invisible whatever
-	// the driver restores, which is half of what keeps the wake free of the
-	// white reset frame (see WAKE_HOLD_LEVEL_DEFAULT). The user's level is not
-	// lost: the wake's fade ends at g_cfg.brightness.
+	// The panel is deliberately left powered and scanning the frame it already
+	// holds; only the backlight is put out. Blanking it here powers the panel,
+	// its controller and the touch controller down, and the wake then owes the
+	// unblank a reset and the panel's own init before anything can be seen --
+	// the quarter second of dark screen between the press and the picture. Left
+	// up, the wake is the backlight returning over a frame the panel is already
+	// showing. The panel is blanked in suspend_to_ram() instead, for the sleep,
+	// where the reset costs nothing that is being waited on.
+	//
+	// The true zero, not the fade's floor: the floor is a level the panel is
+	// *looked at through*, while this is a level it is never seen at. It is
+	// also what the backlight driver restores at the unblank after a sleep
+	// (see WAKE_HOLD_LEVEL_DEFAULT). The user's level is not lost: the wake's
+	// fade ends at g_cfg.brightness.
 	backlight_hold();
 
-	// With the panel dark, draw what the next wake should open on straight
-	// into the framebuffer. Unblanking presents whatever the framebuffer
-	// already holds, and it holds the last thing drawn, so without this the
-	// page underneath flashes up before the screensaver however early the wake
-	// hook runs. Done here it costs one invisible frame and the wake shows the
-	// right thing from its very first scan-out.
+	// Draw what the next wake should open on straight into the framebuffer
+	// while it is invisible. The panel is still powered and keeps scanning what
+	// it is given, so this is literally the picture the next wake shows when
+	// the backlight comes back; after a sleep and its unblank it is also the
+	// frame the panel presents before the wake repaint, so the page underneath
+	// never flashes up before the screensaver. Done here it costs one invisible
+	// frame.
 	if (g_wake_hook && g_wake_hook()) {
 		lv_obj_invalidate(lv_layer_top());
 		lv_obj_t *scr = lv_screen_active();
@@ -1611,15 +1652,15 @@ void power_screen_off(void) {
 		lv_refr_now(g_disp);
 	}
 
-	// Stop rendering entirely while the panel is dark (physical buttons live
+	// Stop rendering entirely while nothing is presented (physical buttons live
 	// on their own threads, so they are still handled by the state machine).
 	if (g_refr_timer) {
 		lv_timer_pause(g_refr_timer);
 	}
 
-	// And stop reading input through LVGL. The touch controller is powered down
-	// with the panel and the double-tap wake arrives on the button threads, so
-	// this timer has nothing left to do.
+	// And stop reading input through LVGL. The touchscreen's events still reach
+	// the input threads, where a double tap can wake the screen, but nothing may
+	// click a page that is not being shown.
 	indev_timers_set_paused(true);
 
 	// Everything that only paints: the status bar, the progress slider, the
@@ -1645,24 +1686,29 @@ void power_screen_off(void) {
 
 	fprintf(stderr, "power: screen off\n");
 
-	// Last, with the panel and the rendering timers already down. The app is
-	// told after the transition, not in the middle of it, so a callback cannot
-	// draw into a refresh that is about to be paused.
+	// Last, with the screen dark and the rendering timers already down. The app
+	// is told after the transition, not in the middle of it, so a callback
+	// cannot draw into a refresh that is about to be paused.
 	apphost_notify_screen(false);
 }
 
 // Paints the whole interface into the framebuffer once: every layer made
 // dirty, then an explicit refresh -- which draws even while the refresh timer
-// is paused -- inside the display's own wake kick, the one that puts the video
-// mode and the scan-out back after a blank (see display_wake_begin).
-static void wake_repaint(void) {
-	display_wake_begin(g_disp);
+// is paused. No display kick: the caller knows whether the panel needs one.
+static void repaint_all(void) {
 	lv_obj_t *scr = lv_screen_active();
 	if (scr) {
 		lv_obj_invalidate(scr);
 	}
 	lv_obj_invalidate(lv_layer_top());
 	lv_refr_now(g_disp);
+}
+
+// The same inside the display's own wake kick, the one that puts the video
+// mode and the scan-out back after a blank (see display_wake_begin).
+static void wake_repaint(void) {
+	display_wake_begin(g_disp);
+	repaint_all();
 	display_wake_end(g_disp);
 }
 
@@ -1673,6 +1719,14 @@ void power_screen_on(void) {
 	}
 	g_screen_on = true;
 	uint32_t wake_started = monotonic_ms();
+
+	// Snapshot before anything unblanks: after a dark spell that went through
+	// standby the panel is powered down and the full wake below is owed; after
+	// an ordinary screen-off it was left powered and owes only the backlight.
+	// The node is asked rather than the flag, so a blank by someone else is not
+	// missed (see panel_is_blanked_now).
+	bool panel_blanked = panel_is_blanked_now();
+	g_panel_blanked = panel_blanked;
 
 	// And disarms the automatic-shutdown RTC alarm: there is a user. The
 	// shutdown timer goes back to zero here and stays there until the screen is
@@ -1704,20 +1758,25 @@ void power_screen_on(void) {
 	clock_resync();
 
 	// Before anything is drawn: whatever wants to own the first frame of the
-	// wake (the screensaver) is raised here, while the panel is still blank.
-	// Called after the wake repaint, it would show the page underneath for a
-	// split second before appearing.
+	// wake (the screensaver) is raised here, while the backlight is still down.
+	// Called after the repaint, it would show the page underneath for a split
+	// second before appearing. True means it changed what should be on screen,
+	// which is the only thing the quick wake has to redraw.
+	bool wake_painted = false;
 	if (g_wake_hook) {
-		(void)g_wake_hook();
+		wake_painted = g_wake_hook();
 	}
 
-	// --- The wake, in the order this panel needs it -----------------------
+	// --- The wake, one of two ways ----------------------------------------
 	//
-	// The backlight goes down first and stays down until the picture has
-	// reached the glass. Nothing below is meant to be visible before the fade
-	// at the end, so the panel may be white and the controller may still be
-	// waking up: what matters is that the level comes back over the *picture*,
-	// never over the panel's reset white (see WAKE_PANEL_SETTLE_MS).
+	// A panel left powered by the ordinary screen-off is still scanning the
+	// frame drawn as it went dark, so its wake is the backlight coming back
+	// over that frame -- plus one repaint if the hook above changed it. A
+	// panel that was blanked by a sleep has been reset and powered down, and
+	// owes the full sequence below (see WAKE_PANEL_SETTLE_MS).
+	//
+	// Either way the backlight stays down until the picture is there. Nothing
+	// below is meant to be visible before the fade at the end.
 	backlight_hold();
 
 	// Resume the timers first, so the one frame we draw below has the right
@@ -1737,35 +1796,46 @@ void power_screen_on(void) {
 		lv_timer_resume(anim_timer);
 	}
 
-	// Unblank: the panel resets to white, re-initialises and re-arms the
-	// controller's scan-out. Keep the backlight held down through that init;
-	// unlike an ordinary refresh, the frame has to be pushed after the panel
-	// is listening or the SLCD silently loses it.
-	screen_power(true);
-
-	// Say so if the unblank lit the backlight on its way through. The read is
-	// taken before the hold below overwrites it, and it is the one part of the
-	// wake that cannot be seen from the outside: a level restored here is what
-	// a white flash under the protection used to be.
-	if (g_cfg.brightness_path) {
-		long lit = read_long_from_file(g_cfg.brightness_path);
-		if (lit > g_wake_hold_level) {
-			printf("power: wake: the unblank left the backlight at %ld (hold %ld)\n", lit, g_wake_hold_level);
+	if (!panel_blanked) {
+		// The panel never stopped scanning: the frame drawn at screen-off is
+		// already on the glass, under a backlight at zero. Only a picture the
+		// hook swapped in needs drawing, and that is done while still dark so
+		// the level comes back over the finished frame.
+		if (wake_painted) {
+			repaint_all();
 		}
+	} else {
+		// Unblank: the panel resets to white, re-initialises and re-arms the
+		// controller's scan-out. Keep the backlight held down through that init;
+		// unlike an ordinary refresh, the frame has to be pushed after the panel
+		// is listening or the SLCD silently loses it.
+		screen_power(true);
+
+		// Say so if the unblank lit the backlight on its way through. The read is
+		// taken before the hold below overwrites it, and it is the one part of the
+		// wake that cannot be seen from the outside: a level restored here is what
+		// a white flash under the protection used to be.
+		if (g_cfg.brightness_path) {
+			long lit = read_long_from_file(g_cfg.brightness_path);
+			if (lit > g_wake_hold_level) {
+				printf("power: wake: the unblank left the backlight at %ld (hold %ld)\n", lit, g_wake_hold_level);
+			}
+		}
+
+		// The hold again at once -- then leave the panel dark through its full
+		// init window and a small safety margin. Drawing once, after that window,
+		// avoids spending two full-screen renders on the single-core audio path
+		// while still ensuring the SLCD gets a frame after it is ready.
+		if (g_cfg.blank_path) {
+			backlight_hold_for(WAKE_PANEL_SETTLE_MS + WAKE_PANEL_MARGIN_MS);
+		}
+		wake_repaint();
+
+		// Hold at zero until the controller has carried the fresh frame out to
+		// the panel -- the moment before this is when the reset white could show.
+		backlight_hold_until_panel_shows();
 	}
 
-	// The hold again at once -- then leave the panel dark through its full
-	// init window and a small safety margin. Drawing once, after that window,
-	// avoids spending two full-screen renders on the single-core audio path
-	// while still ensuring the SLCD gets a frame after it is ready.
-	if (g_cfg.blank_path) {
-		backlight_hold_for(WAKE_PANEL_SETTLE_MS + WAKE_PANEL_MARGIN_MS);
-	}
-	wake_repaint();
-
-	// Hold at zero until the controller has carried the fresh frame out to
-	// the panel -- the moment before this is when the reset white could show.
-	backlight_hold_until_panel_shows();
 	set_indevs_enabled(true);
 	indev_timers_set_paused(false);
 
@@ -2058,6 +2128,21 @@ void power_set_double_tap_wake(bool enabled) {
 	fputs(enabled ? "on" : "off", f);
 	fclose(f);
 	printf("power: double-tap wake %s\n", enabled ? "on" : "off");
+}
+
+// Powers the panel down now, rather than leaving it powered the way the
+// screen-off gesture deliberately does. For the moments with no quick wake
+// ahead: entering standby, and the exits that end in a reboot or a power-off.
+// Idempotent.
+void power_panel_off(void) {
+	if (!g_cfg.blank_path || g_panel_blanked) {
+		return;
+	}
+	// Written first: the touch driver reads this flag as the blank reaches it.
+	// The screen-off path has already armed it for a dark spell, but the setting
+	// is what the driver must see at the blank, not whatever the node last held.
+	power_set_double_tap_wake(g_double_tap_wake);
+	screen_power(false);
 }
 
 void power_set_screen_off_enabled(bool enabled) { g_cfg.screen_off_enabled = enabled; }
