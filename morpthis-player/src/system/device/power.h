@@ -12,7 +12,8 @@
 //     playing while the screen is off. A plain screen-off only puts the
 //     backlight out and leaves the panel powered, so the wake is the backlight
 //     coming back over the frame already on the glass; the panel itself is
-//     powered down when the device enters standby.
+//     powered down when the device enters standby, or once the standby wait
+//     has passed while the sleep is blocked (music playing above all).
 //   - After screen_off_timeout_ms with no user input the screen turns off on
 //     its own (even while music is playing).
 //   - Suspend-to-RAM. The stock standby executes `mem` 60 s after the screen
@@ -125,9 +126,10 @@ bool power_panel_is_blanked(void);
 
 // Powers the panel and its touch controller down now. The screen-off gesture
 // deliberately does not do this: it leaves them up so the next wake is
-// immediate. For the moments with no such wake ahead -- entering standby, and
-// the exits that end in a reboot or a power-off. Idempotent; a no-op where the
-// platform has no blank control.
+// immediate. For the moments with no such wake ahead -- entering standby, a
+// dark screen that has outlasted the standby wait, and the exits that end in a
+// reboot or a power-off. Idempotent; a no-op where the platform has no blank
+// control.
 void power_panel_off(void);
 
 // --- Activity notifications (thread-safe; call from any thread) ---

@@ -1626,8 +1626,9 @@ void power_screen_off(void) {
 	// unblank a reset and the panel's own init before anything can be seen --
 	// the quarter second of dark screen between the press and the picture. Left
 	// up, the wake is the backlight returning over a frame the panel is already
-	// showing. The panel is blanked in suspend_to_ram() instead, for the sleep,
-	// where the reset costs nothing that is being waited on.
+	// showing. The panel is blanked for the sleep in suspend_to_ram(), where the
+	// reset costs nothing that is being waited on, and by
+	// panel_off_if_dark_too_long() if the sleep never comes.
 	//
 	// The true zero, not the fade's floor: the floor is a level the panel is
 	// *looked at through*, while this is a level it is never seen at. It is
@@ -1875,6 +1876,26 @@ void power_bluetooth_off(void) {
 	bluetooth_power_down_stack();
 }
 
+// The panel is kept powered while the screen is dark so an ordinary wake can be
+// immediate, but only for as long as the walk to standby. A still frame left
+// behind a dark screen for hours is how a panel picks up image retention, and
+// the sleep that would have cut the panel's power never comes while music is
+// playing -- playback holds the standby countdown back every tick. So once the
+// screen has been dark for the standby wait and the device is still awake, the
+// panel is put down anyway. The next wake then takes the full sequence, which
+// is the right trade after a dark spell this long.
+static void panel_off_if_dark_too_long(uint32_t now) {
+	if (g_screen_on || g_panel_blanked || !g_cfg.blank_path) {
+		return;
+	}
+	if (since(g_screen_off_at, now) < g_mem_after_ms) {
+		return;
+	}
+	printf("power: panel off after %u s dark (standby wait %u s)\n",
+		   (unsigned)(since(g_screen_off_at, now) / 1000u), (unsigned)(g_mem_after_ms / 1000u));
+	power_panel_off();
+}
+
 static void power_timer_cb(lv_timer_t *timer) {
 	(void)timer;
 	// Expire any timed app hold before this tick decides whether the device is
@@ -1984,6 +2005,12 @@ static void power_timer_cb(lv_timer_t *timer) {
 	// game mixer) before a failed attempt, and a successful one returns here
 	// after the wake. The app side reopens whatever it still owns.
 	apphost_resume_after_suspend();
+
+	// 4a-bis-4. The panel, if the sleep above did not happen. Left powered behind
+	//           a dark screen it is a still frame on a live panel, which is what
+	//           image retention comes from -- and with music playing the sleep
+	//           never comes at all. See panel_off_if_dark_too_long().
+	panel_off_if_dark_too_long(lv_tick_get());
 
 	// 4b. the charger, if it is being held below full: the MP2731 by the
 	//     percentage, or the PMIC by its own two switches on the R1

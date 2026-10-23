@@ -271,8 +271,11 @@ dark spell included a power-down. An ordinary screen-off no longer powers the
 panel down at all: it takes the backlight to zero and leaves the panel scanning
 the frame it already holds, so the power key lights that frame again instead of
 paying the unblank, the panel init and the vsync hold. The panel is powered
-down when `mem` is about to be written (`power_panel_off()`), and on the
-shutdown, reboot and recovery exits, where no quick wake follows.
+down when `mem` is about to be written (`power_panel_off()`), after the standby
+wait when the sleep cannot happen -- music playing above all, where the panel
+would otherwise hold a still frame behind a dark screen for hours, which is
+how image retention starts -- and on the shutdown, reboot and recovery exits,
+where no quick wake follows.
 
 The panel is an SLCD: its glass shows the contents of its own memory, and a
 reset leaves that memory white. Writing `0` to `/sys/class/graphics/fb0/blank`
