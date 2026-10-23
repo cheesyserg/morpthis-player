@@ -5147,6 +5147,7 @@ static int32_t sheet_landing_x;
 // same thing pointed at the sheet.
 static lv_draw_buf_t *sheet_snapshot; // owned, freed with sheet_snapshot_drop()
 static lv_obj_t *sheet_snapshot_img;  // on the top layer, moving in its place
+static uint32_t sheet_slide_started;  // lv_tick_get() when the current slide began
 
 // Where the sheet was when the finger went down, and where the finger was.
 static int drag_origin_x;
@@ -5215,6 +5216,10 @@ static void sheet_anim_x_cb(void *obj, int32_t value) {
 // place, at the position the slide landed on.
 static void sheet_arrived_cb(lv_anim_t *a) {
 	(void)a;
+	// Said out loud because it is the one number that says whether the slide
+	// itself is the problem, and whether the stand-in was used at all.
+	bool had_snapshot = sheet_snapshot_img != NULL;
+	uint32_t took = (uint32_t)(lv_tick_get() - sheet_slide_started);
 	sheet_snapshot_drop();
 	// The page was hidden for the length of the slide; open, it takes the
 	// stand-in's place, closed, it stays away.
@@ -5232,6 +5237,7 @@ static void sheet_arrived_cb(lv_anim_t *a) {
 	if (progress_slider_timer) {
 		lv_timer_resume(progress_slider_timer);
 	}
+	fprintf(stderr, "player: sheet slide %u ms (%s)\n", (unsigned)took, had_snapshot ? "snapshot" : "live page");
 }
 
 // Moves the sheet to `x` (0 = fully open, sheet_width = fully out of the way).
@@ -5270,7 +5276,10 @@ static void sheet_move_to(int x, bool animate) {
 	sheet_snapshot_take();
 	if (sheet_snapshot_img) {
 		lv_obj_set_hidden(player_screen, true);
+	} else {
+		fprintf(stderr, "player: no snapshot for the slide, the page moves itself\n");
 	}
+	sheet_slide_started = lv_tick_get();
 
 	lv_anim_t a;
 	lv_anim_init(&a);

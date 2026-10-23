@@ -1297,6 +1297,10 @@ uint16_t *display_capture_frame(int *out_w, int *out_h) {
 	}
 	return copy;
 }
+
+// There is no framebuffer to hand anything to on the simulator.
+uint32_t fb_flush_us_take(void) { return 0; }
+
 #else
 // ---------------------------------------------------------------------------
 // Double-buffered framebuffer with page flipping.
@@ -1385,6 +1389,27 @@ static void area_set_full(lv_area_t *a) {
 	a->y2 = (int32_t)fb_var.yres - 1;
 }
 
+// Microseconds the current pass has spent handing frames to the panel: the
+// dirty rectangle turned around (only when the screen is rotated), and the page
+// flip, which the display driver latches on vsync and can therefore wait for.
+//
+// Reported beside a slow pass, because drawing a frame and delivering one lead
+// to completely different fixes, and only one of them is inside the player.
+static uint64_t fb_flush_us_total;
+
+static uint64_t now_us(void) {
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (uint64_t)ts.tv_sec * 1000000u + (uint64_t)ts.tv_nsec / 1000u;
+}
+
+// Takes the total for the pass just finished, and starts the next at zero.
+uint32_t fb_flush_us_take(void) {
+	uint32_t value = (uint32_t)fb_flush_us_total;
+	fb_flush_us_total = 0;
+	return value;
+}
+
 // Copies one dirty rectangle into `dst` (a whole framebuffer page) rotated by
 // 180 degrees: the pixel at (x, y) lands at (W-1-x, H-1-y).
 static void blit_rotated_180(uint16_t *dst, const uint16_t *src, const lv_area_t *area, int32_t width,
@@ -1405,12 +1430,14 @@ static void blit_rotated_180(uint16_t *dst, const uint16_t *src, const lv_area_t
 
 static void fb_pan_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px) {
 	bool second_page;
+	uint64_t flush_started = now_us();
 
 	if (fb_rotated) {
 		// Collect this frame's damage; the copy happens once, on the last
 		// area, into the page that is NOT on screen.
 		area_merge(&rot_frame_dirty, area);
 		if (!lv_display_flush_is_last(disp)) {
+			fb_flush_us_total += now_us() - flush_started;
 			lv_display_flush_ready(disp);
 			return;
 		}
@@ -1445,6 +1472,7 @@ static void fb_pan_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *
 			}
 		}
 	}
+	fb_flush_us_total += now_us() - flush_started;
 	lv_display_flush_ready(disp);
 }
 
@@ -2414,6 +2442,8 @@ int main(int argc, char **argv) {
 		uint32_t pass_started = custom_tick_get();
 		uint32_t time_till_next = lv_timer_handler();
 		uint32_t pass_took = custom_tick_get() - pass_started;
+		// Read every pass so the total never carries over into the next one.
+		uint32_t flush_ms = fb_flush_us_take() / 1000;
 
 		uint32_t serial = player_cover_serial();
 		if (serial != shown_serial) {
@@ -2426,8 +2456,11 @@ int main(int argc, char **argv) {
 		} else if (pass_took >= UI_SLOW_PASS_MS) {
 			// One pass that took this long is a stall somebody felt, and it is
 			// the only place it is visible: whatever caused it ran inside
-			// lv_timer_handler() and nothing else can say which.
-			fprintf(stderr, "ui: pass took %u ms\n", pass_took);
+			// lv_timer_handler() and nothing else can say which. The flush figure
+			// splits it: time in the flush is pixels reaching the panel, time
+			// outside it is the frame being drawn or laid out, and the two have
+			// nothing in common when it comes to fixing them.
+			fprintf(stderr, "ui: pass took %u ms (flush %u)\n", pass_took, flush_ms);
 		}
 
 		if (time_till_next > MAIN_LOOP_MAX_SLEEP_MS) {
