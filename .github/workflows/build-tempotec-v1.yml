@@ -286,8 +286,12 @@ jobs:
         if: steps.tools.outputs.needed == 'true'
         run: |
           set -euo pipefail
-          digest="$(printf '%s\n' "${ImageOS:-}" "${ImageVersion:-}" "$TOOL_PACKAGES" "$TOOLCHAIN_PACKAGES" \
-            | sha256sum | cut -c1-16)"
+          # The lists describe the image and its apt sources, not this workflow's
+          # package list, so the package names stay out of the key: editing them
+          # no longer throws the cache away. A newly wanted package simply misses
+          # in the archives and is downloaded. ImageVersion is in the key so a
+          # new runner image gets a fresh index.
+          digest="$(printf '%s\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}" | sha256sum | cut -c1-16)"
           echo "key=apt-${{ runner.os }}-${{ runner.arch }}-$digest" >> "$GITHUB_OUTPUT"
           echo "Dependency cache key: apt-${{ runner.os }}-${{ runner.arch }}-$digest"
 
@@ -297,9 +301,15 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: |
-            ${{ runner.temp }}/apt/lists
-            ${{ runner.temp }}/apt/archives
+            ${{ github.workspace }}/.apt/lists
+            ${{ github.workspace }}/.apt/archives
           key: ${{ steps.apt-key.outputs.key }}
+          # A new image version is a new key, but the previous index is still
+          # usable: the archive keeps old versions, and if a package cannot be
+          # resolved the install step refreshes the lists and tries again. This
+          # keeps a cold 36 MB update off every weekly image roll.
+          restore-keys: |
+            apt-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install build and firmware tools
         id: apt-install
@@ -311,16 +321,19 @@ jobs:
           echo "Installing:$MISSING"
 
           # apt downloads as the _apt user, so both directories have to be
-          # writable by it, whether they were just created or restored. They
-          # are handed back to the runner at the end so the save step can read
-          # them.
-          lists="$RUNNER_TEMP/apt/lists"
-          archives="$RUNNER_TEMP/apt/archives"
+          # writable by it, whether they were just created or restored. They are
+          # under the workspace and not RUNNER_TEMP: that directory is mode 700,
+          # which _apt cannot traverse, and apt then falls back to downloading
+          # unsandboxed as root. They are handed back to the runner at the end so
+          # the save step can read them.
+          lists="$GITHUB_WORKSPACE/.apt/lists"
+          archives="$GITHUB_WORKSPACE/.apt/archives"
           mkdir -p "$lists/partial" "$archives/partial"
           sudo chown -R _apt:root "$lists" "$archives"
           apt_opts=(-o "Dir::State::lists=$lists"
                     -o "Dir::Cache::archives=$archives"
-                    -o "APT::Keep-Downloaded-Packages=true")
+                    -o "APT::Keep-Downloaded-Packages=true"
+                    -o "Acquire::Languages=none")
 
           # A restored lists directory means the index is already there. The
           # update is the slow half of apt and there is nothing left to fetch
@@ -348,8 +361,8 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: |
-            ${{ runner.temp }}/apt/lists
-            ${{ runner.temp }}/apt/archives
+            ${{ github.workspace }}/.apt/lists
+            ${{ github.workspace }}/.apt/archives
           key: ${{ steps.apt-key.outputs.key }}
 
       # The stock image is the same file from run to run, and it is the slowest

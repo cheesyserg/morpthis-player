@@ -3,6 +3,10 @@
 # ccache, as the CI workflow keeps it inside the workspace.
 .ccache/
 
+# apt's package lists and .deb files, as the CI workflow keeps them inside the
+# workspace (RUNNER_TEMP is not traversable by apt's _apt user).
+.apt/
+
 morpthis-player/morpthis_player
 morpthis-player/morpthis_player_debug
 morpthis-player/morpthis_player_host
