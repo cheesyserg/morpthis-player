@@ -168,4 +168,21 @@ bool cover_thumb_load(const char *path, bool is_dir, int size, cover_image_t *ou
 // affordable and a hundred decodes are not.
 bool cover_thumb_cached(const char *path, int size, cover_image_t *out);
 
+// The square the list rows draw their thumbnails in. The rows and the
+// pre-render below both ask this, so they cannot end up at different sizes --
+// which would make every pre-rendered entry a miss.
+int cover_thumb_size(void);
+
+// Renders the Albums list's thumbnails into the on-card cache, in the order the
+// page shows them. Meant to run on the scan thread after a full scan, with the
+// progress page still up, so the first visit to Albums is a read rather than a
+// dozen decodes.
+//
+// Every album already in the cache costs one small read, so re-running after a
+// rescan does only the new ones. `stop` is polled between albums and may be
+// NULL; `progress` is called after each one and may be NULL. Returns how many
+// thumbnails were produced, or -1 when there is no index to walk or no cache to
+// write to.
+int cover_precache_albums(bool (*stop)(void), void (*progress)(int done, int total, void *user), void *user);
+
 #endif // COVER_H

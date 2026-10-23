@@ -367,6 +367,11 @@ static char scan_folder[512];
 static char scan_file[512];
 static pthread_mutex_t scan_progress_lock = PTHREAD_MUTEX_INITIALIZER;
 
+// Run on the scan thread once a full scan has committed: the interface's
+// chance to turn the fresh index into cached artwork while the progress page
+// is still up. See library_set_scan_finish_hook().
+static void (*scan_finish_hook)(void);
+
 // Whether every file is named in the log as it is read. Developer options has
 // the switch; see library_set_log_database.
 static bool scan_log_files;
@@ -5767,6 +5772,13 @@ static void *scan_thread_func(void *arg) {
 		full_scan_run();
 		if (!scan_cancel && !scan_db_failed) {
 			playlists_follow_library();
+			// The index is final and the progress page is still up: this is where
+			// the artwork is rendered into the cache, so the first visit to the
+			// album list is a read. Stop still works -- the hook polls
+			// library_scan_stopping().
+			if (scan_finish_hook) {
+				scan_finish_hook();
+			}
 			if (update_listener) {
 				update_listener(LIBRARY_UPDATE_SCANNED, 0, 0, 0);
 			}
@@ -5984,6 +5996,20 @@ bool library_is_open(void) {
 }
 
 bool library_scan_running(void) { return scan_running; }
+
+void library_set_scan_finish_hook(void (*hook)(void)) { scan_finish_hook = hook; }
+
+bool library_scan_stopping(void) { return scan_cancel; }
+
+void library_scan_note(const char *text) {
+	// The page shows the current file while there is one and only falls back to
+	// the folder line when it is empty, so the note has to clear it as well or
+	// it would never be seen.
+	pthread_mutex_lock(&scan_progress_lock);
+	snprintf(scan_folder, sizeof(scan_folder), "%s", text ? text : "");
+	scan_file[0] = '\0';
+	pthread_mutex_unlock(&scan_progress_lock);
+}
 
 int library_scan_found(void) { return atomic_load_explicit(&scan_found, memory_order_relaxed); }
 

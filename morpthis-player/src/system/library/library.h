@@ -206,6 +206,21 @@ void library_scan_current_file(char *out, size_t size);
 // Asks a running scan to stop early; it winds up at the next file.
 void library_scan_stop(void);
 
+// Installs the hook run on the scan thread after a full scan has finished and
+// before the SCANNED notice, with the progress page still up. The interface
+// uses it to turn the fresh index into cached artwork; it blocks the scan
+// thread until it returns. NULL uninstalls it.
+void library_set_scan_finish_hook(void (*hook)(void));
+
+// True once the running scan has been asked to stop. A finish hook that takes
+// a while polls this so Stop still works during it.
+bool library_scan_stopping(void);
+
+// Replaces the second line of the progress page -- normally the folder being
+// read -- for the duration of a finish hook, which uses it for its own count.
+// A copy, like library_scan_current_folder().
+void library_scan_note(const char *text);
+
 // Whether the scan names every file in the log as it reads it.
 //
 // Off by default, and it belongs off: a line per file is a write to the card

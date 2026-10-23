@@ -13,6 +13,7 @@
 #include "src/gui/board_profile.h"
 #include "src/gui/fonts/fonts.h"
 #include "src/gui/library/music.h"
+#include "src/gui/nowplaying/cover.h"
 #include "src/gui/shell/icons.h"
 #include "src/gui/shell/main_menu.h"
 #include "src/gui/shell/settingsrow.h"
@@ -54,6 +55,12 @@ static lv_obj_t *scan_note;
 static lv_obj_t *scan_container;
 static lv_timer_t *poll_timer;
 static char shown_file[512];
+
+// "Artwork %d/%d" in the language in force when the page was opened. tr() is
+// not called from the scan thread: the table it reads is replaced wholesale on
+// a language change, and a reader in the middle of that would see a half-built
+// one.
+static char artwork_format[64] = "Artwork %d/%d";
 
 static const char *sd_root;
 
@@ -126,6 +133,10 @@ static void cancel_cb(lv_event_t *e) {
 }
 
 void libraryscan_begin(void) {
+	// Refreshed here, on the interface thread, so a scan started after a
+	// language change shows the new wording.
+	snprintf(artwork_format, sizeof(artwork_format), "%s", tr("libraryscan_artwork"));
+
 	lv_label_set_text(count_label, "0");
 	lv_label_set_text(status_label, tr("libraryscan_tracks_found"));
 	shown_file[0] = '\0';
@@ -666,10 +677,28 @@ static void boot_check_cb(lv_timer_t *timer) {
 	library_card_returned(sd_root);
 }
 
+// Runs on the scan thread after a full scan has committed, with the progress
+// page still up: turns the fresh index into thumbnails on the card, so the
+// first look at Albums is a read instead of a dozen decodes. The cost lands
+// here, once per album, rather than on the page every time it is opened.
+//
+// Stop still works: cover_precache_albums() polls library_scan_stopping()
+// between albums, so at worst one cover is finished before it winds up.
+static void precache_progress(int done, int total, void *user) {
+	(void)user;
+	char text[64];
+	snprintf(text, sizeof(text), artwork_format, done, total);
+	library_scan_note(text);
+}
+
+static void precache_finish_hook(void) { cover_precache_albums(library_scan_stopping, precache_progress, NULL); }
+
 void libraryscan_init(gui_config_t *cfg) {
 	sd_root = cfg->sd_root_path;
 	pick_cfg = cfg;
 	library_set_update_listener(update_listener);
+	library_set_scan_finish_hook(precache_finish_hook);
+	snprintf(artwork_format, sizeof(artwork_format), "%s", tr("libraryscan_artwork"));
 
 	lv_obj_add_style(libraryscan_screen, &theme_style_screen, 0);
 

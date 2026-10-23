@@ -47,7 +47,7 @@ lv_obj_t *medialist_albums_screen;
 #define ROW_PITCH (ROW_HEIGHT + ROW_GAP)
 #define ROW_RADIUS bp_pick(10, 12)
 #define ROW_PAD bp_pick(4, 14)
-#define THUMB_SIZE bp_pick(36, 72)
+#define THUMB_SIZE cover_thumb_size()
 #define QUALITY_GAP bp_pick(0, 4) // between a title and the badge under it
 
 // The row's two lines.  On the V1 these are a step below the shell's usual

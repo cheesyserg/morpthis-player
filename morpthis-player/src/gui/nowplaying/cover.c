@@ -14,7 +14,9 @@
 
 #include "src/system/db/sqlite3.h"
 
+#include "src/gui/board_profile.h"
 #include "src/system/library/albumart.h"
+#include "src/system/library/library.h"
 #include "src/system/streaming/podcastcache.h"
 #include "src/system/image/jpeg_planes.h"
 #include "src/system/image/jpeg_scaled.h"
@@ -1910,4 +1912,118 @@ bool cover_thumb_load(const char *path, bool is_dir, int size, cover_image_t *ou
 	}
 
 	return built == COVER_BUILD_OK;
+}
+
+// ---------------------------------------------------------------------------
+// Pre-rendering the album list
+// ---------------------------------------------------------------------------
+
+int cover_thumb_size(void) { return bp_pick(36, 72); }
+
+// How many album paths are held at once while walking the index. Only the
+// working set of one query, not of the library.
+#define PRECACHE_WINDOW 16
+
+typedef struct {
+	int count;
+	char (*paths)[512];
+} precache_batch_t;
+
+static bool precache_row_cb(const char *name, const char *path, const char *artist, void *user) {
+	(void)name;
+	(void)artist;
+	precache_batch_t *batch = user;
+	if (batch->count >= PRECACHE_WINDOW) {
+		return false;
+	}
+	// An album row names the track its cover comes from; a row without one has
+	// nothing to render.
+	if (path && path[0]) {
+		snprintf(batch->paths[batch->count++], 512, "%s", path);
+	}
+	return true;
+}
+
+int cover_precache_albums(bool (*stop)(void), void (*progress)(int done, int total, void *user), void *user) {
+	// Without the database this would decode every cover and store nothing,
+	// and every browse would pay for it again. Better to do nothing at all.
+	pthread_mutex_lock(&thumb_db_lock);
+	bool ready = thumb_db != NULL;
+	pthread_mutex_unlock(&thumb_db_lock);
+	if (!ready) {
+		return -1;
+	}
+
+	// The same list the Albums page opens (music.c), so the entries land under
+	// the keys its rows will ask for.
+	library_index_t *ix = library_index_open(LIBRARY_LIST_ALBUMS, LIBRARY_FILTER_NONE, NULL, LIBRARY_ORDER_DEFAULT, false);
+	if (!ix) {
+		return -1;
+	}
+
+	int total = library_index_count(ix);
+	if (total < 0) {
+		total = 0;
+	}
+
+	precache_batch_t batch;
+	batch.count = 0;
+	batch.paths = malloc((size_t)PRECACHE_WINDOW * 512);
+	if (!batch.paths) {
+		library_index_close(ix);
+		return -1;
+	}
+
+	int done = 0;
+	int made = 0;
+	int offset = 0;
+	uint64_t started = now_ms();
+
+	// Shown before the first decode, so the page stops naming the last file the
+	// scan read and says what is happening now.
+	if (progress && total > 0) {
+		progress(0, total, user);
+	}
+
+	while (offset < total) {
+		if (stop && stop()) {
+			break;
+		}
+
+		batch.count = 0;
+		int got = library_index_window(ix, offset, PRECACHE_WINDOW, precache_row_cb, &batch);
+		if (got <= 0) {
+			break;
+		}
+
+		for (int i = 0; i < batch.count; i++) {
+			if (stop && stop()) {
+				break;
+			}
+
+			// Exactly what the list's worker asks for, so a hit here is a hit
+			// there: same path, same size, same key.
+			cover_image_t image;
+			if (cover_thumb_load(batch.paths[i], false, cover_thumb_size(), &image)) {
+				made++;
+			}
+			cover_free(&image);
+
+			done++;
+			if (progress) {
+				progress(done, total, user);
+			}
+		}
+
+		offset += got;
+	}
+
+	free(batch.paths);
+	library_index_close(ix);
+
+	// The measurement that matters for deciding whether this stays in the scan:
+	// what it cost, and how much of it was work at all rather than cache hits.
+	fprintf(stderr, "cover: album artwork pass: %d rendered, %d albums in %llu ms\n", made, done,
+			(unsigned long long)(now_ms() - started));
+	return made;
 }
