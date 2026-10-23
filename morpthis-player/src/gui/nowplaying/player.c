@@ -4938,6 +4938,9 @@ static void progress_slider_timer_cb(lv_timer_t *timer) {
 	apply_cover_id_result(); // "is the new track's picture the one already up?"
 	apply_cover_result();	 // artwork the worker has finished since last tick
 	update_progress();
+	// The play count and the queue position a track start noted: card writes,
+	// and this is the pass with nothing else to do.
+	device_state_bookkeeping_tick();
 }
 
 // The boot-time restore: the remembered track, paused at its position.

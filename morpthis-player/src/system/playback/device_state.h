@@ -64,6 +64,15 @@ void device_state_restore_file(const char *filepath, double position); // paused
 // step for long.
 void device_state_queue_changed(void);
 
+// Writes out what a track start noted but did not wait to commit: the play
+// count and the queue position. Both are card writes, and both used to happen
+// between the key press and the frame drawn for it.
+//
+// Called from the player's progress poll, which is the interface thread with
+// nothing else to do -- the cost is the same, but it lands where nobody is
+// looking. Nothing needs calling it for correctness: a power-off flushes it too.
+void device_state_bookkeeping_tick(void);
+
 // The boot-time restore for a queue that was a library list: the handle stands
 // in for the list of paths. Takes ownership of `ix`.
 //

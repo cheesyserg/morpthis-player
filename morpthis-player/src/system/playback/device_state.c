@@ -127,7 +127,9 @@ static bool remember_should_write(remember_state_t *st, const char *file, audio_
 	return true;
 }
 
-static uint32_t remember_now_ms(void) {
+// Milliseconds from an arbitrary origin. Only ever subtracted from itself, so
+// where it starts does not matter.
+static uint32_t mono_ms(void) {
 	struct timespec ts;
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 	return (uint32_t)(ts.tv_sec * 1000u + ts.tv_nsec / 1000000u);
@@ -146,19 +148,74 @@ static bool remember_worth_saving(const device_state_t *state) {
 // been started in this session.
 static bool restored_uncounted;
 
+// ---------------------------------------------------------------------------
+// Work a track start notes instead of doing
+//
+// Starting a track runs on the interface thread and used to end with two card
+// writes: the play count and the queue position. Each is a journal round-trip
+// on an SD card, and together they are the longest part of a skip that the user
+// feels -- the picture swap is thirty milliseconds, and these are the rest.
+//
+// Nothing waits for either. So they are noted here and written on a later pass
+// of the progress poll, which runs on the same thread with nothing else to do:
+// the write costs the same, but it lands where no frame is being drawn for a
+// finger, and nobody sees it.
+//
+// Bounded, and the queue is coalesced -- twenty skips in two seconds are one
+// queue write, because only the latest position is worth anything.
+// ---------------------------------------------------------------------------
+#define PENDING_PLAYS_MAX 8
+#define BOOKKEEPING_DELAY_MS 400
+
+typedef struct {
+	char path[512];
+	char name[256];
+	char artist[256];
+} pending_play_t;
+
+static pending_play_t pending_plays[PENDING_PLAYS_MAX];
+static int pending_play_count;
+static bool queue_save_pending;
+static uint32_t bookkeeping_since; // when the oldest unwritten item was noted
+
+// Starts the clock the delay is measured from, if nothing was already waiting:
+// the point is to get past the frame the user's finger drew, not to hold every
+// item for a fixed period of its own.
+static void bookkeeping_note(void) {
+	if (!queue_save_pending && pending_play_count == 0) {
+		bookkeeping_since = mono_ms();
+	}
+}
+
+static void device_state_bookkeeping_flush(void);
+
+// Counts the play later, or on the spot if the queue of them is full -- eight
+// track starts inside the delay -- which is there to keep the array from
+// growing rather than as a path anyone takes.
 static void record_current_track_play(void) {
 	if (!current_metadata_file[0] || audiobook_is_playing() || podcastcache_is_episode(current_metadata_file) ||
 		qobuzcache_owns(current_metadata_file) || tidalcache_owns(current_metadata_file)) {
 		return;
 	}
-	library_record_play(current_metadata_file, current_metadata.title, current_metadata.artist);
+	if (pending_play_count >= PENDING_PLAYS_MAX) {
+		library_record_play(current_metadata_file, current_metadata.title, current_metadata.artist);
+		return;
+	}
+
+	// Copied, not pointed at: by the time this is written down the player is
+	// on a different track and current_metadata describes that one.
+	pending_play_t *p = &pending_plays[pending_play_count++];
+	snprintf(p->path, sizeof(p->path), "%s", current_metadata_file);
+	snprintf(p->name, sizeof(p->name), "%s", current_metadata.title);
+	snprintf(p->artist, sizeof(p->artist), "%s", current_metadata.artist);
+	bookkeeping_note();
 }
 
 void device_state_remember_restored(const char *path, double position) {
 	snprintf(remember.file, sizeof(remember.file), "%s", path ? path : "");
 	remember.status = AUDIO_STATUS_PAUSED;
 	remember.pos = position;
-	remember.saved_ms = remember_now_ms();
+	remember.saved_ms = mono_ms();
 	remember.have = true;
 	remember.restore_pos = position;
 	remember.restore_ms = remember.saved_ms;
@@ -175,7 +232,7 @@ void device_state_remember_note(void) {
 		return;
 	}
 	if (remember_should_write(&remember, state.current_file, state.status, state.progress_current_secs,
-							  remember_now_ms())) {
+							  mono_ms())) {
 		library_playback_state_save(state.current_file, state.progress_current_secs);
 	}
 }
@@ -192,6 +249,10 @@ static void flush_book_position(const device_state_t *state) {
 }
 
 void device_state_remember_flush(void) {
+	// Whatever the bookkeeping is still holding goes down before the power does.
+	// The delay is for the interface's sake, not the card's.
+	device_state_bookkeeping_flush();
+
 	device_state_t state;
 	device_state_get(&state);
 	flush_book_position(&state);
@@ -212,7 +273,7 @@ void device_state_remember_flush(void) {
 	snprintf(remember.file, sizeof(remember.file), "%s", state.current_file);
 	remember.status = state.status;
 	remember.pos = state.progress_current_secs;
-	remember.saved_ms = remember_now_ms();
+	remember.saved_ms = mono_ms();
 	remember.have = true;
 }
 
@@ -360,7 +421,9 @@ static void queue_save_query_form(const library_index_spec_t *spec) {
 	free(slots);
 }
 
-static void queue_persist(void) {
+// The queue as it stands, written down. Called only from the bookkeeping below,
+// which is what decides when.
+static void queue_save_now(void) {
 	int count = playlist_count();
 	int current = playlist_current_index();
 	if (count <= 0 || current < 0) {
@@ -430,7 +493,47 @@ static void queue_persist(void) {
 	free(list);
 }
 
-void device_state_queue_changed(void) { queue_persist(); }
+// The queue is written later for the same reason the play count is. What the
+// flush records is the position the queue has by then, which is the only one
+// worth having.
+static void queue_persist(void) {
+	queue_save_pending = true;
+	bookkeeping_note();
+}
+
+// Writes everything the bookkeeping above is holding. Safe to call at any time:
+// with nothing pending it does nothing at all.
+static void device_state_bookkeeping_flush(void) {
+	for (int i = 0; i < pending_play_count; i++) {
+		library_record_play(pending_plays[i].path, pending_plays[i].name, pending_plays[i].artist);
+	}
+	pending_play_count = 0;
+
+	if (queue_save_pending) {
+		queue_save_pending = false;
+		queue_save_now();
+	}
+}
+
+void device_state_bookkeeping_tick(void) {
+	if (!queue_save_pending && pending_play_count == 0) {
+		return;
+	}
+	if ((uint32_t)(mono_ms() - bookkeeping_since) < BOOKKEEPING_DELAY_MS) {
+		return;
+	}
+	device_state_bookkeeping_flush();
+}
+
+// Not deferred. This is the one caller that is an edit to the mirror on disk
+// rather than a consequence of the track moving, and the comment on its
+// declaration says why a power-off straight after it must not lose it. Any
+// write a track start was holding is settled here too, so the queue does not go
+// down twice.
+void device_state_queue_changed(void) {
+	queue_save_pending = false;
+	queue_save_now();
+}
 
 // Four streaming preparations: Qobuz, Tidal, podcasts and Subsonic.
 #define PREPARE_CB_MAX 4
@@ -498,6 +601,18 @@ static void apply_track_speed(void) {
 // `position` is where to start; below zero means the beginning, which is what
 // every caller but the resume below wants.
 static void load_and_play_at(const char *filepath, double position) {
+	// Every route by which a track starts -- a tap, next, previous, the queue
+	// advancing on its own when one ends -- comes through here, and every line of
+	// it runs on the interface thread. Reading the tags off the card, working out
+	// the ReplayGain they ask for, recording the play in the library and writing
+	// the queue back are each a card round trip, and the user sees the whole lot
+	// as a stall between two frames. Reported only past the point where a frame
+	// would have been late, with the tag read broken out: that is the part that
+	// touches the file, so it is the part that moves first.
+	uint32_t started = mono_ms();
+	uint32_t tags_ms = 0;
+	uint32_t record_ms = 0;
+
 	// A position picked on the outgoing track means nothing on this one, and
 	// the track can change under a held button -- the queue advances on its
 	// own when the outgoing one ends.
@@ -527,6 +642,7 @@ static void load_and_play_at(const char *filepath, double position) {
 	// The ReplayGain the tags asked for, worked out once per track.
 	replaygain_load(&current_metadata);
 	apply_track_speed();
+	tags_ms = mono_ms() - started;
 
 	// The file may not be there yet: with Qobuz and Tidal the queue holds the
 	// whole album and playback can reach a track before its download does. The
@@ -543,7 +659,9 @@ static void load_and_play_at(const char *filepath, double position) {
 		audio_play_at(current_metadata_file, position);
 	} else {
 		audio_play(current_metadata_file);
+		uint32_t t = mono_ms();
 		record_current_track_play();
+		record_ms = mono_ms() - t;
 	}
 	restored_uncounted = false;
 
@@ -553,6 +671,11 @@ static void load_and_play_at(const char *filepath, double position) {
 	interrupted_pos = -1.0;
 
 	queue_persist();
+
+	uint32_t took = mono_ms() - started;
+	if (took >= 20) {
+		fprintf(stderr, "playback: starting a track took %u ms (tags %u, record %u)\n", took, tags_ms, record_ms);
+	}
 }
 
 static void load_and_play(const char *filepath) { load_and_play_at(filepath, -1.0); }
