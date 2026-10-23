@@ -436,6 +436,20 @@ jobs:
             morpthis-player/*.tar.xz
           key: v3-mips-libs-${{ runner.os }}-${{ hashFiles('morpthis-player/Makefile') }}${{ env.CACHE_SUFFIX }}
 
+      # LVGL's 483 objects as one archive. The key covers every input the
+      # Makefile folds into the archive name -- flags and LVGL version through
+      # the Makefile, lv_conf.h, the force-included compat header -- plus the
+      # compiler. A hit means the archive is valid for this run, and make never
+      # asks for a single LVGL compile. A miss costs exactly what the build did
+      # before this cache existed (ccache still covers it), never more.
+      - name: Restore the LVGL archive
+        id: lvgl-cache
+        if: inputs.fresh_build != true && inputs.fresh_keep_toolchain != true
+        uses: actions/cache/restore@v5
+        with:
+          path: morpthis-player/build_target/liblvgl-*.a
+          key: lvgl-${{ runner.os }}-${{ hashFiles('morpthis-player/Makefile', 'morpthis-player/lv_conf.h', 'morpthis-player/src/system/core/glibc_compat.h', 'morpthis-player/rockboxdev/**') }}${{ env.CACHE_SUFFIX }}
+
       # The target objects, through ccache. 483 of the 689 translation units are
       # LVGL and never change between commits; without this every run compiles
       # all of them again. Actions caches are immutable, so the key carries the
@@ -460,18 +474,31 @@ jobs:
           # the rest from scratch, and it sends each tool's make output to
           # tmp/rbdev-build/build-<tool>.log. Without this, the job shows only
           # "ROCKBOXDEV: glibc-2.27/make" for ten minutes and looks hung.
-          (
-            while :; do
-              log="$(ls -t tmp/rbdev-build/*.log 2>/dev/null | head -n 1 || true)"
-              if [ -n "$log" ]; then
-                echo "--- $log (last 5 lines)"
-                tail -n 5 "$log"
-              fi
-              sleep 30
-            done
-          ) &
-          watcher=$!
-          trap 'kill "$watcher" 2>/dev/null || true' EXIT
+          #
+          # Only a miss needs it, so a normal run starts no background process at
+          # all. When it does run, the sleep writes to /dev/null: otherwise an
+          # interrupted sleep still holds the step's stdout pipe open, and the
+          # runner waits for that before it can finish the step.
+          if [ ! -x rockbox-toolchain/bin/mipsel-rockbox-linux-gnu-gcc ]; then
+            (
+              while :; do
+                log="$(ls -t tmp/rbdev-build/*.log 2>/dev/null | head -n 1 || true)"
+                if [ -n "$log" ]; then
+                  echo "--- $log (last 5 lines)"
+                  tail -n 5 "$log"
+                fi
+                sleep 30 </dev/null >/dev/null 2>&1
+              done
+            ) &
+            watcher=$!
+            # Kill the sleep as well as the loop: the loop is normally sitting
+            # in it when the build ends.
+            trap 'pkill -P "$watcher" 2>/dev/null || true; kill "$watcher" 2>/dev/null || true' EXIT
+          fi
+          # The stats file lives inside the cached CCACHE_DIR, so without this
+          # the numbers printed at the end are cumulative across every run that
+          # restored the cache. Zero them so the hit rate is this run's.
+          ccache --zero-stats >/dev/null || true
           make target -j"$(nproc)" CROSS_CC_LAUNCH=ccache
           ccache --show-stats || true
 
@@ -499,6 +526,14 @@ jobs:
             morpthis-player/*.tar.bz2
             morpthis-player/*.tar.xz
           key: v3-mips-libs-${{ runner.os }}-${{ hashFiles('morpthis-player/Makefile') }}${{ env.CACHE_SUFFIX }}
+
+      - name: Save the LVGL archive
+        if: steps.lvgl-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: morpthis-player/build_target/liblvgl-*.a
+          key: lvgl-${{ runner.os }}-${{ hashFiles('morpthis-player/Makefile', 'morpthis-player/lv_conf.h', 'morpthis-player/src/system/core/glibc_compat.h', 'morpthis-player/rockboxdev/**') }}${{ env.CACHE_SUFFIX }}
 
       - name: Save the compiler cache
         if: steps.ccache-cache.outputs.cache-hit != 'true'
