@@ -1893,7 +1893,7 @@ static void wifi_transfer_clicked_cb(lv_event_t *e) {
 	quickpanel_close();
 	bool from_player = player_sheet_is_open();
 	if (from_player) {
-		player_sheet_close(false);
+		player_sheet_close();
 	}
 	wifitransfer_page_open_started();
 	if (from_player) {
@@ -1954,7 +1954,7 @@ static void open_page(lv_obj_t *screen) {
 	// player's own menu takes to the queue and the track details.
 	bool from_player = player_sheet_is_open();
 	if (from_player) {
-		player_sheet_close(false);
+		player_sheet_close();
 	}
 	if (screen == lv_screen_active()) {
 		return; // already there: switching would record a step nobody took

@@ -678,7 +678,7 @@ static void row_clicked_cb(lv_event_t *e) {
 	}
 	if (radio_play(&stations[index])) {
 		player_refresh_now_playing();
-		player_sheet_open(true);
+		player_sheet_open();
 	} else {
 		gui_notify_popup("radio_cannot_start_the_station");
 	}

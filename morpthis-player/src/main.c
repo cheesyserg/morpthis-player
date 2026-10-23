@@ -2317,7 +2317,7 @@ int main(int argc, char **argv) {
 	if (config_get_int("player", "remember_track", 0)) {
 		if (config_get_bool("music", "nowplaying_at_boot", false)) {
 			if (restore_saved_track()) {
-				player_sheet_open(false);
+				player_sheet_open();
 			}
 		} else {
 			lv_timer_create(restore_track_timer_cb, 600, NULL);

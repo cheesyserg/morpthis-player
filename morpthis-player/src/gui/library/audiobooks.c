@@ -708,7 +708,7 @@ static void play_book(const char *book) {
 
 	audiobookdb_touch(book); // the order by last listened moves it to the top
 	player_refresh_now_playing();
-	player_sheet_open(true);
+	player_sheet_open();
 }
 
 void audiobooks_play_at(const char *book, const char *file, double seconds) {

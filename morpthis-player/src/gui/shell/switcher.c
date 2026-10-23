@@ -432,7 +432,7 @@ void switch_screen(lv_obj_t *target_screen) {
 			lv_obj_t *previous = history_pop();
 			load_screen(previous ? previous : main_menu_screen);
 		}
-		player_sheet_open(true);
+		player_sheet_open();
 		return;
 	}
 
@@ -617,7 +617,7 @@ void back_btn_cb(lv_event_t *e) {
 	// The player sits on top of everything else, so it is what the chevron
 	// dismisses first.
 	if (player_sheet_is_open()) {
-		player_sheet_close(true);
+		player_sheet_close();
 		return;
 	}
 
@@ -641,7 +641,7 @@ void back_btn_cb(lv_event_t *e) {
 		player_return_screen = NULL;
 		lv_obj_t *previous = history_pop();
 		load_screen(previous ? previous : main_menu_screen);
-		player_sheet_open(false);
+		player_sheet_open();
 		return;
 	}
 

@@ -168,7 +168,7 @@ static void mark_pick_cb(lv_event_t *e) {
 	if (marks_from_player) {
 		back_btn_cb(NULL); // back to the player, which is where the jump is heard
 	} else {
-		player_sheet_open(true);
+		player_sheet_open();
 	}
 }
 
@@ -433,7 +433,7 @@ void audiobookextras_open_current_bookmarks(void) {
 	}
 	remember_book(book);
 	marks_from_player = true;
-	player_sheet_close(false);
+	player_sheet_close();
 	switch_screen(marks_screen);
 	switcher_set_player_return(marks_screen);
 }
@@ -444,7 +444,7 @@ void audiobookextras_open_current_summary(void) {
 		return;
 	}
 	remember_book(book);
-	player_sheet_close(false);
+	player_sheet_close();
 	switch_screen(summary_screen);
 	switcher_set_player_return(summary_screen);
 }

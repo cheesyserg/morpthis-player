@@ -269,7 +269,7 @@ static void recent_track_clicked_cb(lv_event_t *e) {
 	if (started) {
 		music_recent_refresh();
 		player_refresh_now_playing();
-		player_sheet_open(true);
+		player_sheet_open();
 	} else {
 		music_recent_refresh();
 	}

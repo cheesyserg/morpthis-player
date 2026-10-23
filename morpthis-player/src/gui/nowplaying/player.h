@@ -114,8 +114,17 @@ bool player_sheet_is_open(void);
 // tap handlers on the pages behind check this so that swiping the player in
 // across a button does not also press it.
 bool player_sheet_drag_active(void);
-void player_sheet_open(bool animate);
-void player_sheet_close(bool animate);
+
+// Puts the sheet up, or takes it down, in the pass it is called in -- no slide.
+//
+// The slide is kept for the gesture that drags the sheet, where the finger is
+// already moving it and letting go finishes a motion that has begun. Coming to
+// the player by any other route is a cut, deliberately: a full-panel composite
+// plus a vsync wait is what one frame of a slide costs on this panel, a 165 ms
+// slide gets four of them, and four frames across a whole screen is not motion
+// -- it is a snap with a delay in front of it.
+void player_sheet_open(void);
+void player_sheet_close(void);
 
 // Makes `obj` a place the sheet can be dragged from. `opening` picks the
 // direction: true for a surface behind the sheet (drag left to bring it in),

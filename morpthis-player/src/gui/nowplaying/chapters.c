@@ -240,7 +240,7 @@ static void loaded_cb(lv_event_t *e) {
 }
 
 void chapters_open(void) {
-	player_sheet_close(false);
+	player_sheet_close();
 	switch_screen(chapters_screen);
 	switcher_set_player_return(chapters_screen);
 }

@@ -99,7 +99,7 @@ static void apply_command(const dlna_command_t *cmd) {
 		// The track comes from outside and was not asked for here, so showing
 		// the player is the only way to signal that something is happening.
 		if (!player_sheet_is_open()) {
-			player_sheet_open(true);
+			player_sheet_open();
 		}
 		break;
 	}

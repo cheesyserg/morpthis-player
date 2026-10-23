@@ -622,7 +622,7 @@ static void open_queue_cb(void *user) {
 // podcast is playing, where the overflow button becomes the episodes button --
 // and a podcast's episodes are exactly the queue.
 void trackmenu_open_queue(void) {
-	player_sheet_close(false);
+	player_sheet_close();
 	switch_screen(queue_screen);
 	switcher_set_player_return(queue_screen);
 }
@@ -630,7 +630,7 @@ void trackmenu_open_queue(void) {
 static void open_details_cb(void *user) {
 	(void)user;
 	details_path[0] = '\0'; // the playing track
-	player_sheet_close(false);
+	player_sheet_close();
 	switch_screen(details_screen);
 	switcher_set_player_return(details_screen);
 }
@@ -644,7 +644,7 @@ static void add_to_playlist_cb(void *user) {
 	if (!state.current_file[0]) {
 		return;
 	}
-	player_sheet_close(false);
+	player_sheet_close();
 	playlistpage_add_track(state.current_file);
 	switcher_set_player_return(playlistpage_screen);
 }
@@ -668,7 +668,7 @@ static void open_album_cb(void *user) {
 	if (podcastcache_feed_id(state.current_file, &feed_id)) {
 		device_state_t now;
 		device_state_get(&now);
-		player_sheet_close(false);
+		player_sheet_close();
 		if (!podcastpage_open_feed(feed_id, now.metadata.album)) {
 			gui_notify_popup("trackmenu_podcast_failed");
 			return;
@@ -688,7 +688,7 @@ static void open_album_cb(void *user) {
 			device_state_get(&now);
 			snprintf(title, sizeof(title), "%s", now.metadata.album);
 		}
-		player_sheet_close(false);
+		player_sheet_close();
 		if (!qobuzpage_open_album(qobuz_album, title)) {
 			gui_notify_popup("trackmenu_qobuz_album_failed");
 			return;
@@ -707,7 +707,7 @@ static void open_album_cb(void *user) {
 			device_state_get(&now);
 			snprintf(title, sizeof(title), "%s", now.metadata.album);
 		}
-		player_sheet_close(false);
+		player_sheet_close();
 		if (!tidalpage_open_album(tidal_album, title)) {
 			gui_notify_popup("trackmenu_tidal_album_failed");
 			return;
@@ -722,14 +722,14 @@ static void open_album_cb(void *user) {
 		return;
 	}
 
-	player_sheet_close(false);
+	player_sheet_close();
 	medialist_open(album, LIBRARY_LIST_TRACKS, LIBRARY_FILTER_ALBUM, album);
 	switcher_set_player_return(medialist_tracks_screen);
 }
 
 static void open_settings_cb(void *user) {
 	(void)user;
-	player_sheet_close(false);
+	player_sheet_close();
 	switch_screen(musicsettings_screen);
 	switcher_set_player_return(musicsettings_screen);
 }

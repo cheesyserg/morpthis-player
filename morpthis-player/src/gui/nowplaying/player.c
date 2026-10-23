@@ -5241,7 +5241,13 @@ bool player_sheet_is_open(void) { return sheet_open; }
 
 bool player_sheet_drag_active(void) { return drag_committed; }
 
-void player_sheet_open(bool animate) {
+// The open, with or without the slide.
+//
+// Only the gesture passes `animate` true: it is finishing a motion the finger
+// started, and a cut there would read as the page jumping out from under it.
+// Every other route to the player arrives as a cut -- the reasons are on the
+// declaration in player.h.
+static void sheet_open_run(bool animate) {
 	// Nothing to show while another mode owns the sound: the sheet is about a
 	// track this player is playing, and in Bluetooth receiver mode the track is
 	// on somebody else's machine. Refusing to open is the honest answer -- an
@@ -5261,16 +5267,15 @@ void player_sheet_open(bool animate) {
 	back_btn_player_mode(true);
 	lyrics_screen_hold_update();
 
-		// Explicitly the bottom-most thing on the top layer: it covers the page it
+	// Explicitly the bottom-most thing on the top layer: it covers the page it
 	// slides over, while the status bar and the floating back button stay drawn
 	// above it, exactly where the page underneath put them. Nothing shared is
 	// moved or hidden, so nothing shared slides around during the drag.
 	lv_obj_set_hidden(player_screen, false);
 	lv_obj_move_background(player_screen);
 
-	// The first draw of a page pays for every label's text layout. Do it on the
-	// parked page, before it moves, so the bill is not one of the animation's
-	// frames.
+	// The first draw of a page pays for every label's text layout. Do it here,
+	// so the page's one frame is drawn settled rather than laid out and drawn.
 	lv_obj_update_layout(player_screen);
 	uint64_t layout_us = mono_us() - open_started;
 
@@ -5280,18 +5285,19 @@ void player_sheet_open(bool animate) {
 
 	sheet_move_to(0, animate);
 
-	if (animate) {
-		// What the open costs before a single frame of the animation is drawn.
-		// The pass this lands in always looks expensive and never says why; this
-		// splits off the part that is the player's own doing. If it is small and
-		// the pass is not, the cost is in the page being opened from.
-		uint64_t total = mono_us() - open_started;
-		fprintf(stderr, "player: open %llu ms (layout %llu)\n", (unsigned long long)(total / 1000),
-				(unsigned long long)(layout_us / 1000));
-	}
+	// What the open costs before anything is drawn. The pass this lands in
+	// always looks expensive and never says why; this splits off the part that
+	// is the player's own doing. If it is small and the pass is not, the cost is
+	// in the page being opened from.
+	uint64_t total = mono_us() - open_started;
+	fprintf(stderr, "player: open %llu ms (layout %llu)\n", (unsigned long long)(total / 1000),
+			(unsigned long long)(layout_us / 1000));
 }
 
-void player_sheet_close(bool animate) {
+void player_sheet_open(void) { sheet_open_run(false); }
+
+// The close, with or without the slide; see sheet_open_run().
+static void sheet_close_run(bool animate) {
 	bool was_open = sheet_open;
 	sheet_open = false;
 	back_btn_player_mode(false);
@@ -5325,6 +5331,8 @@ void player_sheet_close(bool animate) {
 	// hides the page at the end, because sheet_open is already false.
 	sheet_move_to(sheet_width, true);
 }
+
+void player_sheet_close(void) { sheet_close_run(false); }
 
 // Runs from lv_async_call, one tick after the gesture's own events (RELEASED,
 // then CLICKED) have all been delivered: the suppression the flag exists for
@@ -5405,10 +5413,12 @@ static void sheet_drag_cb(lv_event_t *e) {
 		int travelled = opening ? -dx : dx;
 		bool commit = travelled > (sheet_width / SHEET_COMMIT_FRACTION);
 
+		// A gesture that has travelled far enough finishes the motion it started;
+		// anything shorter snaps back to where it came from.
 		if (opening) {
-			commit ? player_sheet_open(true) : player_sheet_close(true);
+			commit ? sheet_open_run(true) : sheet_close_run(true);
 		} else {
-			commit ? player_sheet_close(true) : player_sheet_open(true);
+			commit ? sheet_close_run(true) : sheet_open_run(true);
 		}
 
 		// The flag must not outlive the gesture. Waiting for the next PRESSED on
