@@ -953,6 +953,10 @@ static void install_signal_guards(void) {
 // lv_timer_handler(). See the loop itself for why this cap exists.
 #define MAIN_LOOP_MAX_SLEEP_MS 250
 
+// A pass of lv_timer_handler() that runs past this is long enough to be seen as
+// a stall rather than a dropped frame. Reported by the loop below.
+#define UI_SLOW_PASS_MS 50
+
 // ---------------------------------------------------------------------------
 // Kinetic scroll tuning.
 //
@@ -2419,6 +2423,11 @@ int main(int argc, char **argv) {
 		} else if (swap_pending) {
 			swap_pending = false;
 			fprintf(stderr, "cover: artwork change cost %u ms (%u + %u)\n", swap_ms + pass_took, swap_ms, pass_took);
+		} else if (pass_took >= UI_SLOW_PASS_MS) {
+			// One pass that took this long is a stall somebody felt, and it is
+			// the only place it is visible: whatever caused it ran inside
+			// lv_timer_handler() and nothing else can say which.
+			fprintf(stderr, "ui: pass took %u ms\n", pass_took);
 		}
 
 		if (time_till_next > MAIN_LOOP_MAX_SLEEP_MS) {
