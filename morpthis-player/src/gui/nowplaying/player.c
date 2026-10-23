@@ -5134,6 +5134,16 @@ static int sheet_width;
 static lv_obj_t *sheet_under; // the page the sheet first slid over
 static uint32_t sheet_slide_started; // lv_tick_get() when the current slide began
 
+// How many frames the slide actually got, and where its last one put the page.
+//
+// LVGL steps an animation once per rendered frame and works the value out from
+// the time elapsed, so a slide that gets two frames jumps most of the way and
+// then jumps the rest: to the eye that is a snap, not a short animation, and it
+// looks exactly like an end-offset bug. The count is the difference between the
+// two, and this is the cheapest place to find out which it is.
+static int sheet_anim_steps;
+static int32_t sheet_anim_last_x;
+
 // Microseconds from an arbitrary origin. Only ever subtracted from itself.
 static uint64_t mono_us(void) {
 	struct timespec ts;
@@ -5152,6 +5162,8 @@ static bool dragging;
 static bool drag_committed;
 
 static void sheet_anim_x_cb(void *obj, int32_t value) {
+	sheet_anim_steps++;
+	sheet_anim_last_x = value;
 	lv_obj_set_x((lv_obj_t *)obj, (int)value);
 	// The chevron belongs to the sheet while it moves: ride its edge, and
 	// snap back into the page's corner once the sheet is fully away.
@@ -5178,7 +5190,8 @@ static void sheet_arrived_cb(lv_anim_t *a) {
 	if (progress_slider_timer) {
 		lv_timer_resume(progress_slider_timer);
 	}
-	fprintf(stderr, "player: sheet slide %u ms\n", (unsigned)took);
+	fprintf(stderr, "player: sheet slide %u ms, %d step(s), last x=%d, ends at x=%d\n", (unsigned)took, sheet_anim_steps,
+			(int)sheet_anim_last_x, (int)lv_obj_get_x(player_screen));
 }
 
 // Moves the sheet to `x` (0 = fully open, sheet_width = fully out of the way).
@@ -5210,6 +5223,8 @@ static void sheet_move_to(int x, bool animate) {
 	}
 
 	sheet_slide_started = lv_tick_get();
+	sheet_anim_steps = 0;
+	sheet_anim_last_x = lv_obj_get_x(player_screen);
 
 	lv_anim_t a;
 	lv_anim_init(&a);
