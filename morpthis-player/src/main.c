@@ -2418,7 +2418,7 @@ int main(int argc, char **argv) {
 			swap_pending = true;
 		} else if (swap_pending) {
 			swap_pending = false;
-			fprintf(stderr, "cover: artwork change cost %u ms\n", swap_ms + pass_took);
+			fprintf(stderr, "cover: artwork change cost %u ms (%u + %u)\n", swap_ms + pass_took, swap_ms, pass_took);
 		}
 
 		if (time_till_next > MAIN_LOOP_MAX_SLEEP_MS) {

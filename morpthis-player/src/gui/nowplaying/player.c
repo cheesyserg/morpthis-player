@@ -5555,6 +5555,15 @@ static void player_apply_geometry(bool force) {
 	cover_art_h = side;
 	backdrop_h = menu_height;
 
+	// What the scan's artwork pass renders the sleeve at, kept in step with the
+	// arrangement on show. player_init() sets it once, from the geometry the
+	// standard arrangement has before any of this has run; the alternative
+	// arrangement's deck is a different height, so it yields a different sleeve,
+	// and an entry the pass wrote at the other size is one the player will never
+	// ask for. Getting this wrong costs a full decode per album, so it is set
+	// here as well as there.
+	cover_set_player_cover_size(cover_art_w == cover_art_h ? cover_art_w : 0);
+
 	lv_obj_set_size(player_menu, cover_box_w, menu_height);
 	lv_obj_set_size(cover_panel, cover_box_w, cover_box_h);
 	lv_obj_set_size(cover_art_group, cover_art_w, cover_art_h);

@@ -1548,6 +1548,13 @@ bool cover_load_player_images(const char *filepath, int cover_w, int cover_h, co
 			}
 			return true;
 		}
+		// Said out loud because a miss here is the difference between a track
+		// change that costs a read and one that costs the decode logged below.
+		// The size is the key it looked for, which is what a scan that rendered
+		// at another size gets wrong.
+		fprintf(stderr, "cover: sleeve %dpx not in the cache, decoding\n", cover_w);
+	} else if (cover_out) {
+		fprintf(stderr, "cover: sleeve %dx%d is not square, so it is decoded every time\n", cover_w, cover_h);
 	}
 
 	// One decode feeds both images: the expensive part is the JPEG, not the
