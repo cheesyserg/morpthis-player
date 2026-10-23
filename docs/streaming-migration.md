@@ -100,16 +100,17 @@ The core touch points that must be removed in the same change as each service:
 
 ## Shared app layer
 
-Before the first port, add an app-side library under
-`morpthis-apps/lib/streaming/`:
+The shared layer is in place at `morpthis-apps/lib/streaming/`:
 
-- HTTP/TLS streaming client (reuse Subsonic's vendored `http.c`/`tls.c`).
-- MP3/FLAC/AAC decoders as needed, with the same raw-PCM contract as Subsonic.
-- A stream player with bounded buffering, reconnect and metadata callbacks.
-- Common Now Playing publishing and power holds (`AWAKE | NETWORK`).
-- No access to player-private symbols; only the public SDK.
+- HTTP/TLS streaming client (Subsonic's vendored `http.c`/`tls.c`).
+- HLS manifest and segment unwrapping, from the player's former `hls.c`.
+- dr_mp3 and ADTS AAC (the player's `aacdec.c`, opened through the device's
+  `libfdk-aac`), with the same raw-PCM contract as Subsonic.
+- Each app copies the sources into its own package; there is no shared
+  runtime to install.
 
-The player must not grow a second streaming stack to support the apps.
+The player must not grow a second streaming stack to support the apps. The
+one exception is the existing raw-PCM output, which stays the only audio door.
 
 ## Phases
 
@@ -160,13 +161,22 @@ is refreshed; the test skips the old Audiobooks native art for tile 3.
 
 ### Phase 4 — Radio app
 
-- [ ] Scaffold `morpthis-apps/apps/radio` (`app.json`, icon, Makefile).
-- [ ] Shared streaming library: HTTP/TLS + MP3.
-- [ ] Radio Browser directory search and favourites in app data.
-- [ ] Custom station URL.
-- [ ] Now Playing, background play, `AWAKE | NETWORK`, transport buttons.
-- [ ] Host integration test with a local HTTP stream.
-- [ ] Device test with a real station.
+- [x] Scaffold `morpthis-apps/apps/radio` (`app.json`, icon, Makefile).
+- [x] Shared streaming library under `morpthis-apps/lib/streaming/`:
+  HTTP/TLS, HLS, MP3 and ADTS AAC. HLS came back from the player's history
+  and was adapted to the app-side HTTP client; AAC reuses the player's
+  run-time `libfdk-aac` binding, which the device already carries.
+- [x] Radio Browser directory browse and search, with the three lists
+  (genres, countries, languages), a 100-station page and mirrors.
+- [x] Favourites, recents and hand-added stations in
+  `Apps/merp_data/radio/stations.txt`.
+- [x] Custom station name and address through the player's keyboard.
+- [x] Now Playing page, mini-player row, background play,
+  `AWAKE | NETWORK`, transport buttons and ICY titles.
+- [x] Host integration test (`tests/integration.py`) against a loopback
+  directory, an MP3 stream, an ICY-titled stream and an HLS manifest.
+- [ ] Device test with a real station, including an AAC one and a card
+  removal while playing.
 
 ### Phase 5 — Podcasts app
 
