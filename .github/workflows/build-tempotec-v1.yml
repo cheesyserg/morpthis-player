@@ -94,6 +94,14 @@ env:
   # The app API headers. The player implements the SDK; the checkout below puts
   # the sibling repository inside the workspace and this is its absolute path.
   MORPTHIS_SDK: ${{ github.workspace }}/morpthis-sdk
+  # The packages this job needs, named once: the dependency cache key and the
+  # install step both read this, so they cannot disagree about what is wanted.
+  BUILD_PACKAGES: >-
+    build-essential git pkg-config wget curl ca-certificates
+    texinfo bison flex gawk gperf patch xz-utils bzip2 gzip
+    autoconf automake libtool libtool-bin
+    libgmp-dev libmpfr-dev libmpc-dev
+    p7zip-full squashfs-tools genisoimage python3 python3-venv ccache
   # ccache for the target compile, restored and saved around the build. The
   # directory sits in the workspace so the cache steps can name it without a
   # step-local variable; .gitignore keeps it out of the tree.
@@ -172,20 +180,14 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Install build and firmware tools
+      # The image is provisioned, so this usually finds nothing to do. When it
+      # does, the list and the cache key below come from BUILD_PACKAGES.
+      - name: Find missing build tools
+        id: tools
         run: |
           set -euo pipefail
-          # The runner image already carries most of these. Install only what is
-          # missing and only then refresh the package lists: `apt-get update` is
-          # the expensive half of this step and it is pure waste when the tools
-          # are there.
-          packages="build-essential git pkg-config wget curl ca-certificates \
-            texinfo bison flex gawk gperf patch xz-utils bzip2 gzip \
-            autoconf automake libtool libtool-bin \
-            libgmp-dev libmpfr-dev libmpc-dev \
-            p7zip-full squashfs-tools genisoimage python3 python3-venv ccache"
           missing=""
-          for package in $packages; do
+          for package in $BUILD_PACKAGES; do
             status="$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)"
             case "$status" in
               *"install ok installed"*) ;;
@@ -194,11 +196,87 @@ jobs:
           done
           if [ -z "$missing" ]; then
             echo "All build and firmware tools are already on the runner image."
+            echo "needed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "Installing:$missing"
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends $missing
+          echo "Missing:$missing"
+          echo "needed=true" >> "$GITHUB_OUTPUT"
+          echo "missing=$missing" >> "$GITHUB_OUTPUT"
+
+      # apt's package lists and the .deb files it downloads, kept together so a
+      # run that has to install anything never goes to the network for them.
+      # The image name and version are part of the key because the lists only
+      # describe the image they were fetched on; a new image is a new key.
+      - name: Compute the dependency cache key
+        id: apt-key
+        if: steps.tools.outputs.needed == 'true'
+        run: |
+          set -euo pipefail
+          digest="$(printf '%s\n' "${ImageOS:-}" "${ImageVersion:-}" "$BUILD_PACKAGES" \
+            | sha256sum | cut -c1-16)"
+          echo "key=apt-${{ runner.os }}-${{ runner.arch }}-$digest" >> "$GITHUB_OUTPUT"
+          echo "Dependency cache key: apt-${{ runner.os }}-${{ runner.arch }}-$digest"
+
+      - name: Restore the dependency cache
+        id: apt-cache
+        if: steps.tools.outputs.needed == 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ${{ runner.temp }}/apt/lists
+            ${{ runner.temp }}/apt/archives
+          key: ${{ steps.apt-key.outputs.key }}
+
+      - name: Install build and firmware tools
+        id: apt-install
+        if: steps.tools.outputs.needed == 'true'
+        env:
+          MISSING: ${{ steps.tools.outputs.missing }}
+        run: |
+          set -euo pipefail
+          echo "Installing:$MISSING"
+
+          # apt downloads as the _apt user, so both directories have to be
+          # writable by it, whether they were just created or restored. They
+          # are handed back to the runner at the end so the save step can read
+          # them.
+          lists="$RUNNER_TEMP/apt/lists"
+          archives="$RUNNER_TEMP/apt/archives"
+          mkdir -p "$lists/partial" "$archives/partial"
+          sudo chown -R _apt:root "$lists" "$archives"
+          apt_opts=(-o "Dir::State::lists=$lists"
+                    -o "Dir::Cache::archives=$archives"
+                    -o "APT::Keep-Downloaded-Packages=true")
+
+          # A restored lists directory means the index is already there. The
+          # update is the slow half of apt and there is nothing left to fetch
+          # for it.
+          if ! find "$lists" -maxdepth 1 -name '*_Packages*' -print -quit 2>/dev/null \
+              | grep -q .; then
+            sudo apt-get "${apt_opts[@]}" update
+          fi
+          if ! sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends $MISSING; then
+            # A cached list can name a version the archive no longer carries.
+            # Refreshing costs one update; failing the job costs the run.
+            echo "::warning::Installing from the cached package lists failed; refreshing them."
+            sudo apt-get "${apt_opts[@]}" update
+            sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends $MISSING
+          fi
+
+          # The lock files are root-only and useless to the next run.
+          sudo rm -f "$lists/lock" "$archives/lock"
+          sudo chown -R "$(id -u):$(id -g)" "$lists" "$archives"
+          echo "installed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Save the dependency cache
+        if: steps.apt-install.outputs.installed == 'true' && steps.apt-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ${{ runner.temp }}/apt/lists
+            ${{ runner.temp }}/apt/archives
+          key: ${{ steps.apt-key.outputs.key }}
 
       # The stock image is the same file from run to run, and it is the slowest
       # network dependency here. The URL is what identifies it, so the download
