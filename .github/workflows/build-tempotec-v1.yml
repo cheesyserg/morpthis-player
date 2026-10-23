@@ -94,14 +94,18 @@ env:
   # The app API headers. The player implements the SDK; the checkout below puts
   # the sibling repository inside the workspace and this is its absolute path.
   MORPTHIS_SDK: ${{ github.workspace }}/morpthis-sdk
-  # The packages this job needs, named once: the dependency cache key and the
-  # install step both read this, so they cannot disagree about what is wanted.
-  BUILD_PACKAGES: >-
+  # The packages this job needs, split by when they are needed. The second list
+  # is consumed only by a toolchain build, which happens only on a cache miss,
+  # so a normal run installs nothing from it. Both are named here so the
+  # dependency cache key and the install step cannot disagree.
+  TOOL_PACKAGES: >-
     build-essential git pkg-config wget curl ca-certificates
-    texinfo bison flex gawk gperf patch xz-utils bzip2 gzip
-    autoconf automake libtool libtool-bin
+    patch xz-utils bzip2 gzip
+    p7zip-full squashfs-tools genisoimage
+    python3 python3-venv ccache
+  TOOLCHAIN_PACKAGES: >-
+    texinfo bison flex gawk gperf autoconf automake libtool libtool-bin
     libgmp-dev libmpfr-dev libmpc-dev
-    p7zip-full squashfs-tools genisoimage python3 python3-venv ccache
   # ccache for the target compile, restored and saved around the build. The
   # directory sits in the workspace so the cache steps can name it without a
   # step-local variable; .gitignore keeps it out of the tree.
@@ -180,14 +184,84 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # The image is provisioned, so this usually finds nothing to do. When it
-      # does, the list and the cache key below come from BUILD_PACKAGES.
-      - name: Find missing build tools
-        id: tools
+      # Restored before anything can use the compiler, so the install step below
+      # can tell whether the toolchain build dependencies are needed at all.
+      #
+      # The toolchain is cached apart from the libraries it was once bundled
+      # with. It is the expensive part (binutils, GCC and glibc take 20-35
+      # minutes), it changes only when rockboxdev does, and fresh_keep_toolchain
+      # has to be able to keep it while dropping everything else.
+      - name: Restore the MIPS toolchain
+        id: toolchain-cache
+        if: inputs.fresh_build != true
+        uses: actions/cache/restore@v5
+        with:
+          path: morpthis-player/rockbox-toolchain
+          # The directory name is part of the key on purpose. The cross
+          # compiler is configured with --with-sysroot pointing at an absolute
+          # path inside this tree, so a cache written for another directory
+          # name cannot be used from here.
+          key: v3-mips-toolchain-${{ runner.os }}-${{ hashFiles('morpthis-player/rockboxdev/**') }}${{ env.TOOLCHAIN_CACHE_SUFFIX }}
+          restore-keys: |
+            v3-mips-toolchain-${{ runner.os }}-
+
+      # The compiler answers for itself. One restored under another directory
+      # name finds no sysroot and would fail the build in a way that looks like
+      # a compiler problem, so it is checked before anything uses it.
+      - name: Check the restored toolchain
+        id: toolchain-check
+        if: inputs.fresh_build != true
         run: |
           set -euo pipefail
+          gcc="morpthis-player/rockbox-toolchain/bin/mipsel-rockbox-linux-gnu-gcc"
+          usable=false
+          if [ -x "$gcc" ]; then
+            sysroot="$("$gcc" -print-sysroot 2>/dev/null || true)"
+            case "$sysroot" in
+              "$GITHUB_WORKSPACE"/*) usable=true ;;
+              *)
+                echo "::warning::The cached toolchain expects ${sysroot:-an unknown sysroot}; discarding it."
+                rm -rf morpthis-player/rockbox-toolchain
+                ;;
+            esac
+          fi
+          echo "usable=$usable" >> "$GITHUB_OUTPUT"
+
+      # The Makefile clones LVGL (a 100 MB tree) while it is being parsed, every
+      # run. Caching the checkout skips that download; the Makefile's own version
+      # check still runs and rejects a tree that is not the pinned tag.
+      - name: Read the pinned LVGL version
+        id: lvgl-version
+        run: |
+          set -euo pipefail
+          ver="$(sed -n 's/^LVGL_VER *= *//p' morpthis-player/Makefile | head -n 1)"
+          test -n "$ver"
+          echo "value=$ver" >> "$GITHUB_OUTPUT"
+          echo "LVGL $ver"
+
+      - name: Restore the LVGL checkout
+        id: lvgl-checkout
+        if: inputs.fresh_build != true && inputs.fresh_keep_toolchain != true
+        uses: actions/cache/restore@v5
+        with:
+          path: morpthis-player/lvgl
+          key: lvgl-src-${{ runner.os }}-${{ steps.lvgl-version.outputs.value }}
+
+      # The image is provisioned, so this usually finds nothing to do. When it
+      # does, the list and the cache key below come from TOOL_PACKAGES, plus
+      # TOOLCHAIN_PACKAGES when no usable compiler came back.
+      - name: Find missing build tools
+        id: tools
+        env:
+          TOOLCHAIN_USABLE: ${{ steps.toolchain-check.outputs.usable }}
+        run: |
+          set -euo pipefail
+          packages="$TOOL_PACKAGES"
+          if [ "$TOOLCHAIN_USABLE" != "true" ]; then
+            packages="$packages $TOOLCHAIN_PACKAGES"
+          fi
           missing=""
-          for package in $BUILD_PACKAGES; do
+          for package in $packages; do
             status="$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)"
             case "$status" in
               *"install ok installed"*) ;;
@@ -212,7 +286,7 @@ jobs:
         if: steps.tools.outputs.needed == 'true'
         run: |
           set -euo pipefail
-          digest="$(printf '%s\n' "${ImageOS:-}" "${ImageVersion:-}" "$BUILD_PACKAGES" \
+          digest="$(printf '%s\n' "${ImageOS:-}" "${ImageVersion:-}" "$TOOL_PACKAGES" "$TOOLCHAIN_PACKAGES" \
             | sha256sum | cut -c1-16)"
           echo "key=apt-${{ runner.os }}-${{ runner.arch }}-$digest" >> "$GITHUB_OUTPUT"
           echo "Dependency cache key: apt-${{ runner.os }}-${{ runner.arch }}-$digest"
@@ -357,46 +431,6 @@ jobs:
           path: ${{ runner.temp }}/v1-stock-download
           key: v1-stock-${{ runner.os }}-${{ steps.stock-key.outputs.url_hash }}
 
-      # The toolchain is cached apart from the libraries it was once bundled
-      # with. It is the expensive part (binutils, GCC and glibc take 20-35
-      # minutes), it changes only when rockboxdev does, and fresh_keep_toolchain
-      # has to be able to keep it while dropping everything else.
-      - name: Restore the MIPS toolchain
-        id: toolchain-cache
-        if: inputs.fresh_build != true
-        uses: actions/cache/restore@v5
-        with:
-          path: morpthis-player/rockbox-toolchain
-          # The directory name is part of the key on purpose. The cross
-          # compiler is configured with --with-sysroot pointing at an absolute
-          # path inside this tree, so a cache written for another directory
-          # name cannot be used from here.
-          key: v3-mips-toolchain-${{ runner.os }}-${{ hashFiles('morpthis-player/rockboxdev/**') }}${{ env.TOOLCHAIN_CACHE_SUFFIX }}
-          restore-keys: |
-            v3-mips-toolchain-${{ runner.os }}-
-
-      # The compiler answers for itself. One restored under another directory
-      # name finds no sysroot and would fail the build in a way that looks like
-      # a compiler problem, so it is checked before anything uses it.
-      - name: Check the restored toolchain
-        id: toolchain-check
-        if: inputs.fresh_build != true
-        run: |
-          set -euo pipefail
-          gcc="morpthis-player/rockbox-toolchain/bin/mipsel-rockbox-linux-gnu-gcc"
-          usable=false
-          if [ -x "$gcc" ]; then
-            sysroot="$("$gcc" -print-sysroot 2>/dev/null || true)"
-            case "$sysroot" in
-              "$GITHUB_WORKSPACE"/*) usable=true ;;
-              *)
-                echo "::warning::The cached toolchain expects ${sysroot:-an unknown sysroot}; discarding it."
-                rm -rf morpthis-player/rockbox-toolchain
-                ;;
-            esac
-          fi
-          echo "usable=$usable" >> "$GITHUB_OUTPUT"
-
       # Before this cache was split, the toolchain and the libraries lived in
       # one entry, which has a different path list and therefore a different
       # cache version: the split restore above cannot see it. This picks it up
@@ -526,6 +560,14 @@ jobs:
             morpthis-player/*.tar.bz2
             morpthis-player/*.tar.xz
           key: v3-mips-libs-${{ runner.os }}-${{ hashFiles('morpthis-player/Makefile') }}${{ env.CACHE_SUFFIX }}
+
+      - name: Save the LVGL checkout
+        if: steps.lvgl-checkout.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: morpthis-player/lvgl
+          key: lvgl-src-${{ runner.os }}-${{ steps.lvgl-version.outputs.value }}
 
       - name: Save the LVGL archive
         if: steps.lvgl-cache.outputs.cache-hit != 'true'
