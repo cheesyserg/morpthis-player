@@ -3527,19 +3527,13 @@ static void reload_cover(const char *filepath) {
 		int cover_h = backdrop_is_studio ? cover_w : cover_art_h;
 		cover_set_player_cover_size(cover_w == cover_h ? cover_w : 0);
 
-		// The backdrop fills the screen and is blurred from a half-size copy, so
-		// asking for the screen's own size makes the decoder work at a
-		// resolution nothing ever shows: the sleeve is a fraction of it, and the
-		// blur throws away what is left. studio_bg is an lv_image sized to the
-		// panel with COVER align, so it stretches whatever it is given.
-		int backdrop_req_w = backdrop_w;
-		int backdrop_req_h = backdrop_is_full ? backdrop_studio_h : backdrop_h;
-		if (backdrop_is_full) {
-			backdrop_req_w /= 2;
-			backdrop_req_h /= 2;
-		}
-
-		coverloader_request_player(filepath, cover_w, cover_h, backdrop_req_w, backdrop_req_h);
+		// Asked for at the size it is drawn: studio_bg is the size of the panel
+		// and LVGL would otherwise rescale a smaller source on every frame the
+		// page repaints, which costs more than the decode it saved. The decoder
+		// no longer works at this size anyway (see build_images): a backdrop is
+		// only decoded to the half-size copy its blur is made from.
+		coverloader_request_player(filepath, cover_w, cover_h, backdrop_w,
+								   backdrop_is_full ? backdrop_studio_h : backdrop_h);
 		cover_request_outstanding = true;
 
 		// The collector rides on the progress timer; make sure it is ticking

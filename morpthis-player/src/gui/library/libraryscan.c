@@ -56,12 +56,6 @@ static lv_obj_t *scan_container;
 static lv_timer_t *poll_timer;
 static char shown_file[512];
 
-// "Artwork %d/%d" in the language in force when the page was opened. tr() is
-// not called from the scan thread: the table it reads is replaced wholesale on
-// a language change, and a reader in the middle of that would see a half-built
-// one.
-static char artwork_format[64] = "Artwork %d/%d";
-
 static const char *sd_root;
 
 static void show_finished(int found) {
@@ -78,33 +72,50 @@ static void show_finished(int found) {
 
 static void poll_cb(lv_timer_t *timer) {
 	int found = library_scan_found();
-	lv_label_set_text_fmt(count_label, "%d", found);
-	lv_label_set_text(status_label, found == 1 ? tr("libraryscan_track_found") : tr("libraryscan_tracks_found"));
 
-	if (library_scan_running()) {
-		char path[512];
-		library_scan_current_file(path, sizeof(path));
-		if (!path[0]) {
-			// Before the first file is opened, or while a directory is being
-			// walked, show where the scan is instead of leaving a blank line.
-			library_scan_current_folder(path, sizeof(path));
-		}
-		const char *item = strrchr(path, '/');
-		item = item ? item + 1 : path;
-		if (item[0]) {
-			if (strcmp(shown_file, item) != 0) {
-				snprintf(shown_file, sizeof(shown_file), "%s", item);
-				lv_label_set_text(progress_label, shown_file);
-			}
-			lv_obj_set_hidden(progress_label, false);
-		} else {
-			lv_obj_set_hidden(progress_label, true);
-		}
+	if (!library_scan_running()) {
+		lv_timer_pause(timer);
+		show_finished(found);
 		return;
 	}
 
-	lv_timer_pause(timer);
-	show_finished(found);
+	// The artwork pass has the page to itself while it runs. The track count is
+	// final by then, and a number that stops moving for minutes reads as a
+	// stuck scan -- so the pass drives the same counter the scan itself used,
+	// with its own total under it.
+	int art_done = 0, art_total = 0;
+	if (library_scan_artwork_state(&art_done, &art_total)) {
+		lv_label_set_text_fmt(count_label, "%d", art_done);
+		lv_label_set_text_fmt(status_label, tr("libraryscan_artwork_of"), art_total);
+
+		char line[64];
+		snprintf(line, sizeof(line), "%d%%", art_total ? art_done * 100 / art_total : 0);
+		lv_label_set_text(progress_label, line);
+		lv_obj_set_hidden(progress_label, false);
+		return;
+	}
+
+	lv_label_set_text_fmt(count_label, "%d", found);
+	lv_label_set_text(status_label, found == 1 ? tr("libraryscan_track_found") : tr("libraryscan_tracks_found"));
+
+	char path[512];
+	library_scan_current_file(path, sizeof(path));
+	if (!path[0]) {
+		// Before the first file is opened, or while a directory is being
+		// walked, show where the scan is instead of leaving a blank line.
+		library_scan_current_folder(path, sizeof(path));
+	}
+	const char *item = strrchr(path, '/');
+	item = item ? item + 1 : path;
+	if (item[0]) {
+		if (strcmp(shown_file, item) != 0) {
+			snprintf(shown_file, sizeof(shown_file), "%s", item);
+			lv_label_set_text(progress_label, shown_file);
+		}
+		lv_obj_set_hidden(progress_label, false);
+	} else {
+		lv_obj_set_hidden(progress_label, true);
+	}
 }
 
 // Back to the Music page, which now shows the library, with the menu as the
@@ -133,9 +144,8 @@ static void cancel_cb(lv_event_t *e) {
 }
 
 void libraryscan_begin(void) {
-	// Refreshed here, on the interface thread, so a scan started after a
-	// language change shows the new wording.
-	snprintf(artwork_format, sizeof(artwork_format), "%s", tr("libraryscan_artwork"));
+	// A pass from a previous run must not show through this one's counter.
+	library_scan_artwork_done();
 
 	lv_label_set_text(count_label, "0");
 	lv_label_set_text(status_label, tr("libraryscan_tracks_found"));
@@ -686,19 +696,22 @@ static void boot_check_cb(lv_timer_t *timer) {
 // between albums, so at worst one cover is finished before it winds up.
 static void precache_progress(int done, int total, void *user) {
 	(void)user;
-	char text[64];
-	snprintf(text, sizeof(text), artwork_format, done, total);
-	library_scan_note(text);
+	// Straight into the page's counter, read on the interface thread: tr() is
+	// not safe from this one, and a formatted string would be translated there
+	// anyway.
+	library_scan_artwork_progress(done, total);
 }
 
-static void precache_finish_hook(void) { cover_precache_albums(library_scan_stopping, precache_progress, NULL); }
+static void precache_finish_hook(void) {
+	cover_precache_albums(library_scan_stopping, precache_progress, NULL);
+	library_scan_artwork_done();
+}
 
 void libraryscan_init(gui_config_t *cfg) {
 	sd_root = cfg->sd_root_path;
 	pick_cfg = cfg;
 	library_set_update_listener(update_listener);
 	library_set_scan_finish_hook(precache_finish_hook);
-	snprintf(artwork_format, sizeof(artwork_format), "%s", tr("libraryscan_artwork"));
 
 	lv_obj_add_style(libraryscan_screen, &theme_style_screen, 0);
 

@@ -1160,12 +1160,23 @@ static bool build_images(const uint8_t *data, size_t size, const image_request_t
 
 	// The largest edge anybody asked for decides how much resolution the decode
 	// must keep; everything smaller is resampled from that.
+	//
+	// A backdrop is the exception. make_backdrop() reduces it to half before it
+	// blurs, so the decode only has to satisfy that half -- the rest is thrown
+	// away. Letting the backdrop's own size -- the screen -- decide the decode
+	// made the sleeve pay for it: a 1400-pixel cover was decoded at 350 to
+	// produce a 110-pixel sleeve and a 120x160 blur.
 	int max_box = 0;
 	for (int i = 0; i < n; i++) {
-		if (reqs[i].w > max_box)
-			max_box = reqs[i].w;
-		if (reqs[i].h > max_box)
-			max_box = reqs[i].h;
+		int need = reqs[i].w > reqs[i].h ? reqs[i].w : reqs[i].h;
+		if (reqs[i].backdrop) {
+			need /= BACKDROP_SCALE_DIVISOR;
+		}
+		if (need < 1) {
+			need = 1;
+		}
+		if (need > max_box)
+			max_box = need;
 	}
 
 	raw_image_t raw;

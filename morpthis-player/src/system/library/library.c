@@ -6036,14 +6036,29 @@ void library_set_scan_finish_hook(void (*hook)(void)) { scan_finish_hook = hook;
 
 bool library_scan_stopping(void) { return scan_cancel; }
 
-void library_scan_note(const char *text) {
-	// The page shows the current file while there is one and only falls back to
-	// the folder line when it is empty, so the note has to clear it as well or
-	// it would never be seen.
-	pthread_mutex_lock(&scan_progress_lock);
-	snprintf(scan_folder, sizeof(scan_folder), "%s", text ? text : "");
-	scan_file[0] = '\0';
-	pthread_mutex_unlock(&scan_progress_lock);
+// The artwork pass's counters. Zero total means "not in that pass".
+static atomic_int scan_art_done;
+static atomic_int scan_art_total;
+
+void library_scan_artwork_progress(int done, int total) {
+	atomic_store_explicit(&scan_art_done, done, memory_order_relaxed);
+	atomic_store_explicit(&scan_art_total, total > 0 ? total : 0, memory_order_relaxed);
+}
+
+void library_scan_artwork_done(void) { atomic_store_explicit(&scan_art_total, 0, memory_order_relaxed); }
+
+bool library_scan_artwork_state(int *done, int *total) {
+	int t = atomic_load_explicit(&scan_art_total, memory_order_relaxed);
+	if (t <= 0) {
+		return false;
+	}
+	if (done) {
+		*done = atomic_load_explicit(&scan_art_done, memory_order_relaxed);
+	}
+	if (total) {
+		*total = t;
+	}
+	return true;
 }
 
 int library_scan_found(void) { return atomic_load_explicit(&scan_found, memory_order_relaxed); }

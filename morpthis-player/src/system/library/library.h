@@ -216,10 +216,13 @@ void library_set_scan_finish_hook(void (*hook)(void));
 // a while polls this so Stop still works during it.
 bool library_scan_stopping(void);
 
-// Replaces the second line of the progress page -- normally the folder being
-// read -- for the duration of a finish hook, which uses it for its own count.
-// A copy, like library_scan_current_folder().
-void library_scan_note(const char *text);
+// The artwork pass a finish hook runs, for the progress page: how many albums
+// have been rendered and how many there are. Set on the scan thread, read on
+// the interface thread; the page shows it in place of the track count, which is
+// final by then and would sit still for the whole pass.
+void library_scan_artwork_progress(int done, int total);
+void library_scan_artwork_done(void);
+bool library_scan_artwork_state(int *done, int *total);
 
 // Whether the scan names every file in the log as it reads it.
 //
