@@ -131,7 +131,7 @@ uint8_t *art_shrink_to_jpeg(const uint8_t *data, size_t size, int max_side, int 
 			rgb = jpeg_planes_decode(data, size, max_side, PLANES_BUDGET_BYTES, &w, &h, NULL);
 		}
 	} else if (data[0] == 0x89 && data[1] == 'P') {
-		rgb = png_scaled_decode(data, size, max_side, &w, &h);
+		rgb = png_scaled_decode(data, size, max_side, &w, &h, NULL, NULL);
 	}
 	if (!rgb || w <= 0 || h <= 0) {
 		free(rgb);

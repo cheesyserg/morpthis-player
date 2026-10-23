@@ -55,51 +55,122 @@ typedef struct {
 } png_stream_t;
 
 // Turns one unfiltered scanline into RGB samples added to the accumulators.
+//
+// The source layout is fixed for the whole image, so the branch on colour type
+// is taken once per row rather than once per pixel. Each output cell is filled
+// by striding k pixels at a time, which replaces an integer division per source
+// pixel with one per output cell: on a 3000-pixel row at k=41 that is 73
+// divisions instead of 3000. Those two were most of the cost of a PNG cover
+// that has to be averaged down 40:1 for a 72-pixel thumbnail.
 static void accumulate_row(png_stream_t *s, const uint8_t *line) {
 	const png_info_t *in = &s->info;
-	int k = s->k;
+	const int k = s->k;
+	const int width = in->width;
+	const int out_w = s->out_w;
+	uint32_t *acc = s->acc;
 
-	for (int x = 0; x < in->width; x++) {
-		int ox = x / k;
-		if (ox >= s->out_w) {
-			break;
-		}
-
-		uint8_t r, g, b;
-		switch (in->color_type) {
-		case 0: // grayscale
-			r = g = b = line[x];
-			break;
-		case 2: // RGB
-			r = line[x * 3];
-			g = line[x * 3 + 1];
-			b = line[x * 3 + 2];
-			break;
-		case 3: { // palette
-			int idx = line[x];
-			if (idx >= in->palette_entries) {
-				idx = 0;
+	switch (in->color_type) {
+	case 0: // grayscale
+		for (int ox = 0; ox < out_w; ox++) {
+			int x = ox * k;
+			int end = x + k;
+			if (end > width) {
+				end = width;
 			}
-			r = in->palette[idx * 3];
-			g = in->palette[idx * 3 + 1];
-			b = in->palette[idx * 3 + 2];
-			break;
+			uint32_t sum = 0;
+			for (; x < end; x++) {
+				sum += line[x];
+			}
+			acc[ox * 3] += sum;
+			acc[ox * 3 + 1] += sum;
+			acc[ox * 3 + 2] += sum;
 		}
-		case 4: // gray + alpha (alpha dropped: covers are opaque)
-			r = g = b = line[x * 2];
-			break;
-		case 6: // RGBA
-		default:
-			r = line[x * 4];
-			g = line[x * 4 + 1];
-			b = line[x * 4 + 2];
-			break;
-		}
+		break;
 
-		uint32_t *a = &s->acc[(size_t)ox * 3];
-		a[0] += r;
-		a[1] += g;
-		a[2] += b;
+	case 2: // RGB
+		for (int ox = 0; ox < out_w; ox++) {
+			int x = ox * k;
+			int end = x + k;
+			if (end > width) {
+				end = width;
+			}
+			const uint8_t *p = line + (size_t)x * 3;
+			uint32_t r = 0, g = 0, b = 0;
+			for (; x < end; x++, p += 3) {
+				r += p[0];
+				g += p[1];
+				b += p[2];
+			}
+			acc[ox * 3] += r;
+			acc[ox * 3 + 1] += g;
+			acc[ox * 3 + 2] += b;
+		}
+		break;
+
+	case 3: { // palette
+		const uint8_t *pal = in->palette;
+		const int entries = in->palette_entries;
+		for (int ox = 0; ox < out_w; ox++) {
+			int x = ox * k;
+			int end = x + k;
+			if (end > width) {
+				end = width;
+			}
+			uint32_t r = 0, g = 0, b = 0;
+			for (; x < end; x++) {
+				int idx = line[x];
+				if (idx >= entries) {
+					idx = 0;
+				}
+				r += pal[idx * 3];
+				g += pal[idx * 3 + 1];
+				b += pal[idx * 3 + 2];
+			}
+			acc[ox * 3] += r;
+			acc[ox * 3 + 1] += g;
+			acc[ox * 3 + 2] += b;
+		}
+		break;
+	}
+
+	case 4: // gray + alpha (alpha dropped: covers are opaque)
+		for (int ox = 0; ox < out_w; ox++) {
+			int x = ox * k;
+			int end = x + k;
+			if (end > width) {
+				end = width;
+			}
+			const uint8_t *p = line + (size_t)x * 2;
+			uint32_t sum = 0;
+			for (; x < end; x++, p += 2) {
+				sum += p[0];
+			}
+			acc[ox * 3] += sum;
+			acc[ox * 3 + 1] += sum;
+			acc[ox * 3 + 2] += sum;
+		}
+		break;
+
+	case 6: // RGBA
+	default:
+		for (int ox = 0; ox < out_w; ox++) {
+			int x = ox * k;
+			int end = x + k;
+			if (end > width) {
+				end = width;
+			}
+			const uint8_t *p = line + (size_t)x * 4;
+			uint32_t r = 0, g = 0, b = 0;
+			for (; x < end; x++, p += 4) {
+				r += p[0];
+				g += p[1];
+				b += p[2];
+			}
+			acc[ox * 3] += r;
+			acc[ox * 3 + 1] += g;
+			acc[ox * 3 + 2] += b;
+		}
+		break;
 	}
 }
 
@@ -166,7 +237,13 @@ static void process_scanline(png_stream_t *s, uint8_t filter, uint8_t *data) {
 	}
 
 	accumulate_row(s, data);
-	memcpy(s->prev_row, data, n);
+
+	// The row just unfiltered is the reference for the next filter. Swapping the
+	// two buffers hands it over without copying a whole scanline -- on a
+	// 3000x3000 RGBA cover that is 36 MB of memcpy removed per decode.
+	uint8_t *done = s->prev_row;
+	s->prev_row = s->row;
+	s->row = done;
 
 	s->rows_in_acc++;
 	s->src_row++;
@@ -175,7 +252,8 @@ static void process_scanline(png_stream_t *s, uint8_t filter, uint8_t *data) {
 	}
 }
 
-uint8_t *png_scaled_decode(const uint8_t *data, size_t size, int min_box, int *out_w, int *out_h) {
+uint8_t *png_scaled_decode(const uint8_t *data, size_t size, int min_box, int *out_w, int *out_h, int *src_w,
+						   int *src_h) {
 	static const uint8_t magic[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
 	if (!data || size < 45 || memcmp(data, magic, 8) != 0 || !out_w || !out_h) {
 		return NULL;
@@ -222,6 +300,12 @@ uint8_t *png_scaled_decode(const uint8_t *data, size_t size, int min_box, int *o
 
 	if (!have_ihdr || !have_idat || info.width < 1 || info.height < 1) {
 		return NULL;
+	}
+	if (src_w) {
+		*src_w = info.width;
+	}
+	if (src_h) {
+		*src_h = info.height;
 	}
 	// 8-bit non-interlaced only; everything else is rare enough for stb.
 	if (info.bit_depth != 8 || info.interlace != 0) {

@@ -23,7 +23,9 @@
 // keeps the short side at or above min_box (factor 1 if it already is). A very
 // large source is reduced further, to a short side of about 1024, but never
 // below half of min_box. Returns a malloc'd w*h*3 buffer (caller frees) or NULL
-// when the file is not a PNG this decoder reads.
-uint8_t *png_scaled_decode(const uint8_t *data, size_t size, int min_box, int *out_w, int *out_h);
+// when the file is not a PNG this decoder reads. src_w/src_h, when not NULL,
+// receive the source dimensions, for logging the cost against what it decoded.
+uint8_t *png_scaled_decode(const uint8_t *data, size_t size, int min_box, int *out_w, int *out_h, int *src_w,
+						   int *src_h);
 
 #endif /* PNG_SCALED_H */

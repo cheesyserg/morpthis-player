@@ -9,6 +9,7 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "src/system/db/sqlite3.h"
@@ -171,6 +172,14 @@ static size_t decode_budget_bytes(void) {
 // works their peak out from the frame header and refuses on its own.
 #define PNG_DECODE_BYTES_PER_PIXEL 8
 
+// Milliseconds from an arbitrary origin, for the decode log. Only ever
+// subtracted from itself, so the origin does not matter.
+static uint64_t now_ms(void) {
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+}
+
 // Decodes compressed JPEG/PNG bytes to RGB888. Alpha is dropped rather than
 // composited: covers are opaque in practice, and three channels keep the
 // intermediate buffer smaller.
@@ -190,13 +199,16 @@ static bool decode_raw(const uint8_t *data, size_t size, int max_box, raw_image_
 
 	if (size >= 2 && data[0] == 0xFF && data[1] == 0xD8 && max_box > 0) {
 		int w = 0, h = 0, src_w = 0, src_h = 0;
+		uint64_t t0 = now_ms();
 		uint8_t *pixels = jpeg_scaled_decode(data, size, max_box, &w, &h, &src_w, &src_h);
 		if (pixels) {
 			// Both sizes, because the output on its own says nothing about what
 			// happened: TJpgDec only ever halves, and a picture already smaller
 			// than the box comes out untouched, so one number alone would make a
-			// 360x360 cover look like something that had been reduced.
-			fprintf(stderr, "cover: decoded jpeg %dx%d -> %dx%d\n", src_w, src_h, w, h);
+			// 360x360 cover look like something that had been reduced. The time
+			// is what says whether a slow cover is a big one or a stuck one.
+			fprintf(stderr, "cover: decoded jpeg %dx%d -> %dx%d in %llu ms\n", src_w, src_h, w, h,
+					(unsigned long long)(now_ms() - t0));
 			out->pixels = pixels;
 			out->w = w;
 			out->h = h;
@@ -216,10 +228,11 @@ static bool decode_raw(const uint8_t *data, size_t size, int max_box, raw_image_
 		// 2x margin is the same one the TJpgDec path leaves for the resampler
 		// below.
 		size_t peak = 0;
+		uint64_t t1 = now_ms();
 		pixels = jpeg_planes_decode(data, size, max_box * 2, decode_budget_bytes(), &w, &h, &peak);
 		if (pixels) {
-			fprintf(stderr, "cover: decoded progressive jpeg to %dx%d (planes, peak about %zu KB)\n", w, h,
-					peak / 1024);
+			fprintf(stderr, "cover: decoded progressive jpeg to %dx%d (planes, peak about %zu KB) in %llu ms\n", w, h,
+					peak / 1024, (unsigned long long)(now_ms() - t1));
 			out->pixels = pixels;
 			out->w = w;
 			out->h = h;
@@ -238,10 +251,12 @@ static bool decode_raw(const uint8_t *data, size_t size, int max_box, raw_image_
 		// This one works scanline by scanline and downsamples as it goes, so the
 		// source size stops mattering. The 2x margin gives the final resampler
 		// enough to average over, as on the JPEG path.
-		int w = 0, h = 0;
-		uint8_t *pixels = png_scaled_decode(data, size, max_box * 2, &w, &h);
+		int w = 0, h = 0, src_w = 0, src_h = 0;
+		uint64_t t0 = now_ms();
+		uint8_t *pixels = png_scaled_decode(data, size, max_box * 2, &w, &h, &src_w, &src_h);
 		if (pixels) {
-			fprintf(stderr, "cover: decoded png to %dx%d (scaled)\n", w, h);
+			fprintf(stderr, "cover: decoded png %dx%d -> %dx%d in %llu ms\n", src_w, src_h, w, h,
+					(unsigned long long)(now_ms() - t0));
 			out->pixels = pixels;
 			out->w = w;
 			out->h = h;
