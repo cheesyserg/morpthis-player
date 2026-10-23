@@ -2396,9 +2396,31 @@ int main(int argc, char **argv) {
 	watchdog_start();
 
 	printf("Entering main event loop...\n");
+	// What a change of artwork cost is only visible from here. The swap happens
+	// inside one of the timers lv_timer_handler() runs, and the frame it dirties
+	// is drawn by the display's own timer -- which may run before or after that
+	// one in the same pass, or first thing in the next. So the pass that carries
+	// the change is timed, and the pass after it, and the sum is reported once:
+	// one line per track, and none when nothing moves.
+	uint32_t shown_serial = player_cover_serial();
+	uint32_t swap_ms = 0;
+	bool swap_pending = false;
 	while (running) {
 		ui_heartbeat++;
+		uint32_t pass_started = custom_tick_get();
 		uint32_t time_till_next = lv_timer_handler();
+		uint32_t pass_took = custom_tick_get() - pass_started;
+
+		uint32_t serial = player_cover_serial();
+		if (serial != shown_serial) {
+			shown_serial = serial;
+			swap_ms = pass_took;
+			swap_pending = true;
+		} else if (swap_pending) {
+			swap_pending = false;
+			fprintf(stderr, "cover: artwork change cost %u ms\n", swap_ms + pass_took);
+		}
+
 		if (time_till_next > MAIN_LOOP_MAX_SLEEP_MS) {
 			time_till_next = MAIN_LOOP_MAX_SLEEP_MS; // also catches LV_NO_TIMER_READY
 		}

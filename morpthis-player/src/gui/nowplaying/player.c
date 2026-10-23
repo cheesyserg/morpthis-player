@@ -3742,8 +3742,12 @@ static void apply_cover_result(void) {
 		// The words' background, ready before they are pulled in.
 		lyrics_bg_prepare();
 
-		lv_obj_invalidate(cover_panel);
-		lv_obj_invalidate(player_menu);
+		// Nothing is invalidated here by hand. Every widget that changed has
+		// already invalidated itself -- the sleeve with its source and its size,
+		// the backdrop (which is the size of the screen) with its own, the chrome
+		// with each style property -- and LVGL unions the dirty areas before it
+		// draws, so asking for the two containers as well adds no pixels and only
+		// hides which change caused the repaint.
 
 		coverloader_retire(old_cover, old_backdrop);
 		cover_serial++;
