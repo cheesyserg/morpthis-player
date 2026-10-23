@@ -15,7 +15,7 @@
 #include "src/gui/library/audiobooks.h"
 #include "src/gui/nowplaying/player.h"
 #include "src/gui/shell/scrolltext.h"
-#include "src/gui/streaming/podcastpage.h"
+
 #include "src/gui/wireless/dlna.h"
 #include "src/gui/wireless/sonixlink.h"
 #include "src/gui/wireless/wifitransfer.h"
@@ -112,7 +112,6 @@ static lv_obj_t *peq_btn;
 static lv_obj_t *dlna_btn;
 static lv_obj_t *sleep_music_btn;
 static lv_obj_t *sleep_audiobook_btn;
-static lv_obj_t *sleep_podcast_btn;
 static lv_obj_t *wifi_transfer_btn;
 static lv_obj_t *gapless_btn;
 
@@ -146,7 +145,6 @@ static const char *const button_key[QP_BTN_COUNT] = {
 	[QP_BTN_DLNA] = "dlna",
 	[QP_BTN_SLEEP_MUSIC] = "sleep_music",
 	[QP_BTN_SLEEP_AUDIOBOOK] = "sleep_audiobook",
-	[QP_BTN_SLEEP_PODCAST] = "sleep_podcast",
 	[QP_BTN_WIFI_TRANSFER] = "wifi_transfer",
 	[QP_BTN_GAPLESS] = "gapless",
 };
@@ -165,7 +163,6 @@ static const char *const button_tag[QP_BTN_COUNT] = {
 	[QP_BTN_DLNA] = "dlna",
 	[QP_BTN_SLEEP_MUSIC] = "quickpanel_sleep_music",
 	[QP_BTN_SLEEP_AUDIOBOOK] = "quickpanel_sleep_audiobook",
-	[QP_BTN_SLEEP_PODCAST] = "quickpanel_sleep_podcast",
 	[QP_BTN_WIFI_TRANSFER] = "wifitransfer_title",
 	[QP_BTN_GAPLESS] = "musicsettings_gapless_playback",
 };
@@ -1134,12 +1131,12 @@ static void order_load(void) {
 			continue;
 		}
 		// Crossfade, which the migration below is taking out on purpose, and the
-		// buttons that arrive into a panel already holding eight: DLNA, the three
+		// buttons that arrive into a panel already holding eight: DLNA, the two
 		// sleep timers, Wi-Fi transfer and gapless. Appending them would change a
 		// panel nobody asked to change, so they wait among the unused ones, where
 		// the settings page shows them.
 		bool waits = i == QP_BTN_DLNA || i == QP_BTN_SLEEP_MUSIC || i == QP_BTN_SLEEP_AUDIOBOOK ||
-					 i == QP_BTN_SLEEP_PODCAST || i == QP_BTN_WIFI_TRANSFER || i == QP_BTN_GAPLESS;
+					 i == QP_BTN_WIFI_TRANSFER || i == QP_BTN_GAPLESS;
 		if ((saved_version < 2 && i == QP_BTN_FADE) || waits) {
 			hidden[hidden_n++] = (uint8_t)i;
 		} else {
@@ -1252,8 +1249,6 @@ static lv_obj_t *button_widget(quickpanel_button_t which) {
 		return sleep_music_btn;
 	case QP_BTN_SLEEP_AUDIOBOOK:
 		return sleep_audiobook_btn;
-	case QP_BTN_SLEEP_PODCAST:
-		return sleep_podcast_btn;
 	case QP_BTN_WIFI_TRANSFER:
 		return wifi_transfer_btn;
 	case QP_BTN_GAPLESS:
@@ -1466,8 +1461,6 @@ const lv_image_dsc_t *quickpanel_button_icon(quickpanel_button_t button) {
 		return &icon_sleep_music_quick;
 	case QP_BTN_SLEEP_AUDIOBOOK:
 		return &icon_sleep_audiobook_quick;
-	case QP_BTN_SLEEP_PODCAST:
-		return &icon_sleep_podcast_quick;
 	case QP_BTN_WIFI_TRANSFER:
 		return &icon_wifi_transfer_quick;
 	case QP_BTN_GAPLESS:
@@ -1563,7 +1556,6 @@ static void refresh_audio_buttons(void) {
 	circle_button_set_on(peq_btn, peq_get_enabled());
 	circle_button_set_on(sleep_music_btn, sleep_timer_armed(SLEEPTIMER_MUSIC));
 	circle_button_set_on(sleep_audiobook_btn, sleep_timer_armed(SLEEPTIMER_AUDIOBOOK));
-	circle_button_set_on(sleep_podcast_btn, sleep_timer_armed(SLEEPTIMER_PODCAST));
 	circle_button_set_on(wifi_transfer_btn, wifitransfer_get_enabled());
 
 	bool high = musicsettings_high_gain();
@@ -1822,10 +1814,6 @@ static void sleep_audiobook_clicked_cb(lv_event_t *e) {
 	sleep_timer_clicked(SLEEPTIMER_AUDIOBOOK);
 }
 
-static void sleep_podcast_clicked_cb(lv_event_t *e) {
-	(void)e;
-	sleep_timer_clicked(SLEEPTIMER_PODCAST);
-}
 
 static void open_page(lv_obj_t *screen);
 
@@ -1835,9 +1823,7 @@ static void open_page(lv_obj_t *screen);
 // by then.
 static void sleep_page_cb(lv_event_t *e) {
 	sleeptimer_kind_t kind = (sleeptimer_kind_t)(intptr_t)lv_event_get_user_data(e);
-	lv_obj_t *screen = kind == SLEEPTIMER_MUSIC		 ? musicsettings_playback_screen()
-					   : kind == SLEEPTIMER_AUDIOBOOK ? audiobooksettings_screen
-													  : podcastpage_settings_screen();
+	lv_obj_t *screen = kind == SLEEPTIMER_MUSIC ? musicsettings_playback_screen() : audiobooksettings_screen;
 	open_page(screen);
 }
 
@@ -2164,8 +2150,8 @@ void quickpanel_init(gui_config_t *cfg) {
 	lv_obj_add_event_cb(dlna_btn, dlna_clicked_cb, LV_EVENT_CLICKED, NULL);
 	lv_obj_add_event_cb(dlna_btn, open_page_cb, LV_EVENT_LONG_PRESSED, dlna_screen);
 
-	// Each of the three opens, on a long press, the page of its own kind of
-	// listening, where its length is chosen.
+	// Each opens, on a long press, the page of its own kind of listening,
+	// where its length is chosen.
 	sleep_music_btn = make_circle_button(row, &icon_sleep_music_quick);
 	lv_obj_add_event_cb(sleep_music_btn, sleep_music_clicked_cb, LV_EVENT_CLICKED, NULL);
 	lv_obj_add_event_cb(sleep_music_btn, sleep_page_cb, LV_EVENT_LONG_PRESSED, (void *)(intptr_t)SLEEPTIMER_MUSIC);
@@ -2175,10 +2161,6 @@ void quickpanel_init(gui_config_t *cfg) {
 	lv_obj_add_event_cb(sleep_audiobook_btn, sleep_page_cb, LV_EVENT_LONG_PRESSED,
 						(void *)(intptr_t)SLEEPTIMER_AUDIOBOOK);
 
-	sleep_podcast_btn = make_circle_button(row, &icon_sleep_podcast_quick);
-	lv_obj_add_event_cb(sleep_podcast_btn, sleep_podcast_clicked_cb, LV_EVENT_CLICKED, NULL);
-	lv_obj_add_event_cb(sleep_podcast_btn, sleep_page_cb, LV_EVENT_LONG_PRESSED,
-						(void *)(intptr_t)SLEEPTIMER_PODCAST);
 
 	// A tap opens the page with the server starting; a hold opens it as it is.
 	wifi_transfer_btn = make_circle_button(row, &icon_wifi_transfer_quick);

@@ -5,9 +5,9 @@
 
 #include "lvgl/lvgl.h"
 
+#include "src/gui/apps/appspage.h"
 #include "src/gui/board_profile.h"
 #include "src/gui/fonts/fonts.h"
-#include "src/gui/library/audiobooks.h"
 #include "src/gui/library/browser.h"
 #include "src/gui/library/music.h"
 #include "src/gui/nowplaying/coverflow.h"
@@ -20,7 +20,6 @@
 #include "src/gui/settings/settings.h"
 #include "src/gui/shell/switcher.h"
 #include "src/gui/shell/theme.h"
-#include "src/gui/streaming/streaming.h"
 #include "src/gui/wireless/wireless.h"
 #include "src/system/core/config.h"
 #include "src/system/core/lang.h"
@@ -70,43 +69,29 @@ static void mini_player_clear_edge(void) {
 	}
 }
 
-static const lv_image_dsc_t *const NORMAL_MENU_ICONS[6] = {
+static const lv_image_dsc_t *const NORMAL_MENU_ICONS[5] = {
 	&icon_menu_music,
-	&icon_menu_streaming,
 	&icon_menu_wireless,
-	&icon_menu_audiobooks,
+	&icon_files_game, // Apps
 	&icon_menu_more,
 	&icon_menu_settings,
 };
 
-static const lv_image_dsc_t *const TOKYO_MENU_ICONS[6] = {
-	&icon_music2,           // Music
-	&icon_radio_player,     // Streaming
-	&icon_wifi_high,        // Wireless
-	&icon_files_audiobook,  // Audiobooks
+static const lv_image_dsc_t *const TOKYO_MENU_ICONS[5] = {
+	&icon_music2,            // Music
+	&icon_wifi_high,         // Wireless
+	&icon_files_game,        // Apps
 	&icon_ellipsis_vertical, // More
-	&icon_music_settings,   // Settings
+	&icon_music_settings,    // Settings
 };
 
-static const theme_semantic_t TOKYO_MENU_TONES[6] = {
+static const theme_semantic_t TOKYO_MENU_TONES[5] = {
 	THEME_SEMANTIC_CYAN,
-	THEME_SEMANTIC_PURPLE,
 	THEME_SEMANTIC_BLUE,
-	THEME_SEMANTIC_AMBER,
 	THEME_SEMANTIC_GREEN,
+	THEME_SEMANTIC_PURPLE,
 	THEME_SEMANTIC_MUTED,
 };
-
-// Audiobooks reads its library straight off the card, so it is the one tile
-// that opens onto nothing when the card is out or at a computer. Music has the
-// same rule a level deeper, where a list is asked for.
-static void open_audiobooks(void) {
-	if (!gui_card_available()) {
-		gui_notify_no_card();
-		return;
-	}
-	switch_screen(audiobooks_screen);
-}
 
 static void fit_menu_icon(lv_obj_t *image, const lv_image_dsc_t *source, int size) {
 	if (!image || !source) {
@@ -136,7 +121,7 @@ static void set_label_if_changed(lv_obj_t *label, const char *text) {
 }
 
 // The V1 home's title and tagline. OLED leaves both out: its grid starts right
-// under the status bar, and the six cards share the height the header took.
+// under the status bar, and the five cards share the height the header took.
 #define HOME_HEADER_HEIGHT 62
 
 static bool home_header_shown(void) { return !theme_is_oled(); }
@@ -178,11 +163,12 @@ static void main_menu_refresh_tiles(void) {
 	bool icons_only = main_menu_icons_only();
 	bool browse = main_menu_browse();
 	gridpage_set_tile(menu_grid, 0, browse ? &icon_menu_explorer : &icon_menu_music,
-					 browse ? "music_browse" : "music");
+						 browse ? "music_browse" : "music");
 	bool horizontal = compact && tokyo && !icons_only;
-	for (int i = 0; i < 6; i++) {
+	for (int i = 0; i < 5; i++) {
 		lv_obj_t *tile = lv_obj_get_child(menu_grid, i);
-		int icon_size = tokyo ? (compact ? 22 : 46) : (compact ? 46 : 0);
+		// The wide Music row gets a little more art than the four square tiles.
+		int icon_size = tokyo ? (compact ? (i == 0 ? 34 : 22) : 46) : (compact ? 46 : 0);
 		if (icons_only) {
 			// Leave breathing room inside the tile. Size both the image's
 			// drawing and its flex layout box.
@@ -205,7 +191,10 @@ static void main_menu_refresh_tiles(void) {
 			// Matching source/layout sizes also avoids LVGL's fractional image
 			// transform and its extra edge interpolation. Other menus and the
 			// labeled layout continue to use their original sources and sizes.
-			const lv_image_dsc_t *native = main_menu_icon_native(i, tokyo, icon_size);
+			// Tile 3 is Apps now. The native lookup still carries the old
+			// Audiobooks art, so leave this one on the gamepad glyph until the
+			// generated menu art is refreshed.
+			const lv_image_dsc_t *native = i == 3 ? NULL : main_menu_icon_native(i, tokyo, icon_size);
 			if (native) {
 				source = native;
 			}
@@ -351,9 +340,10 @@ static void main_menu_refresh_theme(void) {
 		lv_obj_set_hidden(mini_player, false);
 
 		// Status bar: y=0..24. The bold 36 px title row and single-line note
-		// lead into six horizontal icon-and-label cards; the mini-player sits below.
-		// OLED has no title row or note: the cards start under the status bar.
-		// The six existing tile objects are simply reflowed, not duplicated.
+		// lead into five cards; Music takes the full first row and the
+		// mini-player sits below. OLED has no title row or note: the cards start
+		// under the status bar. The five existing tile objects are simply
+		// reflowed, not duplicated.
 		// The title rests directly on the Tokyo Night background; the tagline
 		// stays below it with a clear gap, and there is no divider.
 		lv_obj_set_style_bg_opa(home_header, LV_OPA_TRANSP, 0);
@@ -398,17 +388,18 @@ void main_menu_init(gui_config_t *cfg) {
 
 	const grid_entry_t entries[] = {
 		{"music", &icon_menu_music, NULL, open_home_music},
-		{"streaming", &icon_menu_streaming, &streaming_screen, NULL},
 		{"wireless", &icon_menu_wireless, &wireless_screen, NULL},
-		{"audiobooks", &icon_menu_audiobooks, NULL, open_audiobooks},
+		// The old Audiobooks slot. Audiobooks now lives inside Music.
+		{"apps", &icon_files_game, &appspage_screen, NULL},
 		// The door to the More page, which holds the DAC and anything else
-		// that does not fit. The main menu has exactly six tiles, and one of
-		// them has to be able to keep growing.
+		// that does not fit.
 		{"more", &icon_menu_more, &morepage_screen, NULL},
 		{"settings", &icon_menu_settings, &settings_screen, NULL},
 	};
 
 	menu_grid = gridpage_build(main_menu_screen, cfg, entries, (int)(sizeof(entries) / sizeof(entries[0])), 2, 3, false);
+	// Music takes the width the removed Streaming tile used to occupy.
+	gridpage_set_wide_first(menu_grid, true);
 	// Cover Flow is a main-menu destination: pull up from the bottom edge,
 	// just as the music grid used to, without entering Music first.
 	coverflow_attach_edge(menu_grid, cfg);

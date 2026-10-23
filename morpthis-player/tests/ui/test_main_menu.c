@@ -29,7 +29,6 @@
 #include "src/gui/shell/theme.h"
 #include "src/gui/shell/toast.h"
 #include "src/gui/shell/topbar.h"
-#include "src/gui/streaming/streaming.h"
 #include "src/gui/wireless/wireless.h"
 #include "src/system/core/config.h"
 #include "src/system/core/lang.h"
@@ -39,7 +38,7 @@
 #include "src/system/playback/device_state.h"
 #include "src/system/playback/playlist.h"
 
-lv_obj_t *streaming_screen, *wireless_screen;
+lv_obj_t *appspage_screen, *wireless_screen;
 lv_obj_t *audiobooks_screen, *morepage_screen, *settings_screen, *player_screen;
 lv_obj_t *browser_screen, *musicsettings_screen;
 
@@ -136,7 +135,8 @@ bool musicsettings_playlists_first(void) { return false; }
 static music_tile_id_t test_active_tiles[MUSIC_TILE_COUNT] = {
 	MUSIC_TILE_ALL_TRACKS, MUSIC_TILE_ALBUMS, MUSIC_TILE_ARTISTS,
 	MUSIC_TILE_ALBUM_ARTISTS, MUSIC_TILE_GENRES, MUSIC_TILE_YEARS,
-	MUSIC_TILE_PLAYLISTS, MUSIC_TILE_MOST_PLAYED, MUSIC_TILE_BROWSE,
+	MUSIC_TILE_PLAYLISTS, MUSIC_TILE_MOST_PLAYED, MUSIC_TILE_AUDIOBOOKS,
+	MUSIC_TILE_BROWSE,
 };
 static int test_active_tile_count = MUSIC_TILE_COUNT;
 
@@ -313,7 +313,11 @@ static void check_grid(lv_obj_t *grid, bool icons_only) {
 		int previous_size = theme_is_oled() ? LV_MAX(1, available * 80 / 100) : available;
 		int expected_size = LV_MAX(1, (previous_size * 95 + 50) / 100);
 		assert(long_side == expected_size);
-		check_native_icon(icon, (int)i, expected_size);
+		// Tile 3 is Apps; its gamepad glyph is deliberately not in the
+		// native Audiobooks art table yet.
+		if ((int)i != 3) {
+			check_native_icon(icon, (int)i, expected_size);
+		}
 		lv_area_t t, image;
 		lv_obj_get_coords(tile, &t);
 		lv_obj_get_coords(icon, &image);
@@ -368,7 +372,7 @@ int main(int argc, char **argv) {
 	lv_display_create(cfg.screen_width, cfg.screen_height);
 	theme_init();
 	music_screen = lv_obj_create(NULL);
-	streaming_screen = lv_obj_create(NULL);
+	appspage_screen = lv_obj_create(NULL);
 	wireless_screen = lv_obj_create(NULL);
 	audiobooks_screen = lv_obj_create(NULL);
 	browser_screen = lv_obj_create(NULL);
@@ -388,7 +392,13 @@ int main(int argc, char **argv) {
 	menu_toggle = child_of_type(lv_obj_get_parent(toggle_label), &lv_switch_class);
 	assert(lv_obj_has_state(menu_toggle, LV_STATE_CHECKED) == saved_icons_only);
 
-	assert(find_label(lv_obj_get_child(grid, 3), tr("audiobooks")));
+	assert(find_label(lv_obj_get_child(grid, 2), tr("apps")));
+	assert(!find_label(grid, tr("streaming")));
+	assert(!find_label(grid, tr("audiobooks")));
+	// Music took the full first row; the other four tiles share the two below.
+	lv_obj_update_layout(grid);
+	assert(lv_obj_get_width(lv_obj_get_child(grid, 0)) > lv_obj_get_width(lv_obj_get_child(grid, 1)));
+	assert(lv_obj_get_width(lv_obj_get_child(grid, 0)) > lv_obj_get_width(lv_obj_get_child(grid, 2)));
 
 	assert(!main_menu_browse());
 	assert(find_label(lv_obj_get_child(grid, 0), tr("music")));
@@ -432,6 +442,7 @@ int main(int argc, char **argv) {
 	assert(lv_obj_get_child_count(music_tile_grid) == MUSIC_TILE_COUNT);
 	assert(find_label(music_tile_grid, tr("music_years")));
 	assert(find_label(music_tile_grid, tr("music_most_played")));
+	assert(find_label(music_tile_grid, tr("audiobooks")));
 	if (bp_is_tempotec_v1()) {
 		lv_obj_t *tokyo_panel = lv_obj_get_child(music_screen, lv_obj_get_child_count(music_screen) - 1);
 		assert(find_label(tokyo_panel, tr("music_years")));
@@ -467,7 +478,7 @@ int main(int argc, char **argv) {
 		{"music_most_played", &icon_menu_most_played, &music_screen, NULL},
 		{"playlists", &icon_menu_playlist, &music_screen, NULL},
 	};
-	lv_obj_t *section_grid = gridpage_build(streaming_screen, &cfg, entries, 5, 2, 3, true);
+	lv_obj_t *section_grid = gridpage_build(appspage_screen, &cfg, entries, 5, 2, 3, true);
 	gridpage_set_tile_label_hidden(NULL, 0, true);
 	gridpage_set_tile_label_hidden(section_grid, -1, true);
 	gridpage_set_tile_label_hidden(section_grid, 99, true);
@@ -487,8 +498,8 @@ int main(int argc, char **argv) {
 			assert(most_tile.source == &icon_menu_most_played);
 			assert(play_tile.source == &icon_menu_playlist);
 		}
-		tile_metrics_t baseline[6];
-		for (int i = 0; i < 6; i++) {
+		tile_metrics_t baseline[5];
+		for (int i = 0; i < 5; i++) {
 			baseline[i] = tile_metrics(lv_obj_get_child(grid, i));
 		}
 		tile_metrics_t section_before = tile_metrics(lv_obj_get_child(section_grid, 0));
@@ -529,7 +540,7 @@ int main(int argc, char **argv) {
 		assert(config_init(config));
 		assert(!main_menu_icons_only());
 		check_grid(grid, false);
-		for (int i = 0; i < 6; i++) {
+		for (int i = 0; i < 5; i++) {
 			check_metrics(lv_obj_get_child(grid, i), baseline[i]);
 		}
 		/* Refresh callbacks must not undo the preference on a theme change. */
@@ -539,16 +550,16 @@ int main(int argc, char **argv) {
 		check_grid(section_grid, false);
 	}
 
-	/* Hidden labels still translate, and all six destinations remain clickable. */
+	/* Hidden labels still translate, and all five destinations remain clickable. */
 	assert(lang_set("Français"));
 	check_grid(grid, true);
 	lv_obj_t *music_label = child_of_type(lv_obj_get_child(grid, 0), &lv_label_class);
 	assert(strcmp(lv_label_get_text(music_label), tr("music")) == 0);
 	assert(lang_set("English"));
 	assert(strcmp(lv_label_get_text(music_label), tr("music")) == 0);
-	lv_obj_t *destinations[] = {music_screen, streaming_screen, wireless_screen,
-		audiobooks_screen, morepage_screen, settings_screen};
-	for (int i = 0; i < 6; i++) {
+	lv_obj_t *destinations[] = {music_screen, wireless_screen, appspage_screen,
+		morepage_screen, settings_screen};
+	for (int i = 0; i < 5; i++) {
 		lv_obj_send_event(lv_obj_get_child(grid, i), LV_EVENT_CLICKED, NULL);
 		assert(lv_screen_active() == destinations[i]);
 		lv_screen_load(main_menu_screen);

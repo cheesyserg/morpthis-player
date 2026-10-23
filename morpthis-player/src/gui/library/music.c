@@ -9,6 +9,7 @@
 
 #include "src/gui/board_profile.h"
 #include "src/gui/fonts/fonts.h"
+#include "src/gui/library/audiobooks.h"
 #include "src/gui/library/browser.h"
 #include "src/gui/library/libraryscan.h"
 #include "src/gui/library/medialist.h"
@@ -90,6 +91,13 @@ static void open_years(void) { medialist_open_years(); }
 static void open_playlists(void) { playlistpage_open(); }
 static void open_most_played(void) { medialist_open_most_played(); }
 static void open_browse(void) { switch_screen(browser_screen); }
+static void open_audiobooks(void) {
+	if (!gui_card_available()) {
+		gui_notify_no_card();
+		return;
+	}
+	switch_screen(audiobooks_screen);
+}
 
 static grid_entry_t entry_for_tile(music_tile_id_t id) {
 	switch (id) {
@@ -109,6 +117,8 @@ static grid_entry_t entry_for_tile(music_tile_id_t id) {
 		return (grid_entry_t){"playlists", &icon_menu_playlist, NULL, open_playlists};
 	case MUSIC_TILE_MOST_PLAYED:
 		return (grid_entry_t){"music_most_played", &icon_menu_most_played, NULL, open_most_played};
+	case MUSIC_TILE_AUDIOBOOKS:
+		return (grid_entry_t){"audiobooks", &icon_menu_audiobooks, NULL, open_audiobooks};
 	case MUSIC_TILE_BROWSE:
 	default:
 		return (grid_entry_t){"music_browse", &icon_menu_explorer, NULL, open_browse};
@@ -325,6 +335,7 @@ static void browse_albums_cb(lv_event_t *e) { (void)e; open_albums(); }
 static void browse_album_artists_cb(lv_event_t *e) { (void)e; open_album_artists(); }
 static void browse_music_cb(lv_event_t *e) { (void)e; switch_screen(browser_screen); }
 static void browse_search_cb(lv_event_t *e) { (void)e; search_cb(NULL); }
+static void browse_audiobooks_cb(lv_event_t *e) { (void)e; open_audiobooks(); }
 static void shortcut_all_tracks_cb(lv_event_t *e) { (void)e; open_all_tracks(); }
 static void shortcut_genres_cb(lv_event_t *e) { (void)e; open_genres(); }
 static void shortcut_years_cb(lv_event_t *e) { (void)e; open_years(); }
@@ -375,6 +386,9 @@ static tokyo_tile_spec_t tokyo_spec_for_tile(music_tile_id_t id) {
 	case MUSIC_TILE_MOST_PLAYED:
 		return (tokyo_tile_spec_t){"music_most_played", &icon_most_played, THEME_SEMANTIC_PURPLE, false,
 								   shortcut_most_played_cb};
+	case MUSIC_TILE_AUDIOBOOKS:
+		return (tokyo_tile_spec_t){"audiobooks", &icon_files_audiobook, THEME_SEMANTIC_AMBER, false,
+								   browse_audiobooks_cb};
 	case MUSIC_TILE_BROWSE:
 	default:
 		return (tokyo_tile_spec_t){"music_browse", &icon_folder, THEME_SEMANTIC_GREEN, false, browse_music_cb};
@@ -455,18 +469,41 @@ static void tokyo_music_populate(void) {
 
 	music_tile_id_t active[MUSIC_TILE_COUNT];
 	int count = musicsettings_main_tiles(active, MUSIC_TILE_COUNT);
-	int browse_n = count < 3 ? count : 3;
+	int first_browse_n = count < 3 ? count : 3;
+	int browse_n = first_browse_n;
+	bool audiobooks_active = false;
+	bool audiobooks_in_browse = false;
+	for (int i = 0; i < count; i++) {
+		if (active[i] == MUSIC_TILE_AUDIOBOOKS) {
+			audiobooks_active = true;
+		}
+		if (i < first_browse_n && active[i] == MUSIC_TILE_AUDIOBOOKS) {
+			audiobooks_in_browse = true;
+		}
+	}
 
-	for (int i = 0; i < browse_n; i++) {
+	for (int i = 0; i < first_browse_n; i++) {
 		tokyo_tile_spec_t spec = tokyo_spec_for_tile(active[i]);
 		bool two_lines = strchr(tr(spec.label), ' ') != NULL;
 		make_browse_button(tokyo_browse_grid, spec.label, spec.icon, spec.tone, two_lines, spec.callback, i);
 	}
-	make_browse_button(tokyo_browse_grid, "search", &icon_search, THEME_SEMANTIC_AMBER, false, browse_search_cb,
-					   browse_n);
+	// Audiobooks is a Music destination now: keep it in the Browse card, next
+	// to the other ways into the library, even if the user saved it below them.
+	if (audiobooks_active && !audiobooks_in_browse && browse_n < TOKYO_BROWSE_COUNT) {
+		make_browse_button(tokyo_browse_grid, "audiobooks", &icon_files_audiobook, THEME_SEMANTIC_AMBER, false,
+						   browse_audiobooks_cb, browse_n++);
+		audiobooks_in_browse = true;
+	}
+	if (browse_n < TOKYO_BROWSE_COUNT) {
+		make_browse_button(tokyo_browse_grid, "search", &icon_search, THEME_SEMANTIC_AMBER, false,
+						   browse_search_cb, browse_n);
+	}
 
 	int row_idx = 0;
-	for (int i = browse_n; i < count; i++) {
+	for (int i = first_browse_n; i < count; i++) {
+		if (active[i] == MUSIC_TILE_AUDIOBOOKS && audiobooks_in_browse) {
+			continue;
+		}
 		tokyo_tile_spec_t spec = tokyo_spec_for_tile(active[i]);
 		add_shortcut_row(tokyo_shortcut_card, spec.label, spec.icon, spec.tone, spec.wrap_shortcut, spec.callback,
 						 row_idx++);

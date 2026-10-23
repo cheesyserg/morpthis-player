@@ -39,6 +39,7 @@ typedef struct {
 	// A tile whose icon is a colour drawing (an app's own icon) keeps it in
 	// every layout: no recolour, no Tokyo Night replacement.
 	bool keep_color[GRIDPAGE_THEME_TILE_MAX];
+	bool wide_first;
 } gridpage_theme_page_t;
 
 static gridpage_theme_page_t theme_pages[GRIDPAGE_THEME_PAGE_MAX];
@@ -438,6 +439,13 @@ void gridpage_set_tile_label_lines(lv_obj_t *grid, int index, int lines) {
 	}
 }
 
+void gridpage_set_wide_first(lv_obj_t *grid, bool wide) {
+	gridpage_theme_page_t *page = gridpage_theme_page_for(grid);
+	if (page) {
+		page->wide_first = wide;
+	}
+}
+
 void gridpage_set_layout(lv_obj_t *grid, gui_config_t *cfg, int top, int bottom, int padding, int gap, int columns,
 						 int rows) {
 	if (!grid || !cfg || columns < 1 || rows < 1 || top < 0 || bottom < 0 || top + bottom >= (int)cfg->screen_height) {
@@ -461,11 +469,14 @@ void gridpage_set_layout(lv_obj_t *grid, gui_config_t *cfg, int top, int bottom,
 		return;
 	}
 
+	gridpage_theme_page_t *page = gridpage_theme_page_for(grid);
+	bool wide_first = page && page->wide_first;
 	int count = (int)lv_obj_get_child_count(grid);
 	for (int i = 0; i < count; i++) {
 		lv_obj_t *tile = lv_obj_get_child(grid, i);
-		bool lone_last = count == columns * rows - 1 && i == count - 1;
-		lv_obj_set_size(tile, lone_last ? usable_w : tile_w, tile_h);
+		bool lone_last = !wide_first && count == columns * rows - 1 && i == count - 1;
+		bool wide = (wide_first && i == 0) || lone_last;
+		lv_obj_set_size(tile, wide ? usable_w : tile_w, tile_h);
 	}
 	lv_obj_update_layout(grid);
 
@@ -635,10 +646,14 @@ void gridpage_replace_entries(lv_obj_t *grid, gui_config_t *cfg, const grid_entr
 		lv_obj_scroll_to_y(grid, 0, LV_ANIM_OFF);
 	}
 
+	gridpage_theme_page_t *page = gridpage_theme_page_for(grid);
+	bool wide_first = page && page->wide_first;
 	for (int i = 0; i < count; i++) {
-		bool lone_last = (count == columns * rows - 1 || (count > columns * rows && count % columns == 1)) &&
+		bool lone_last = !wide_first &&
+						 (count == columns * rows - 1 || (count > columns * rows && count % columns == 1)) &&
 						 i == count - 1;
-		add_tile(grid, &entries[i], lone_last ? usable_w : tile_w, tile_h);
+		bool wide = (wide_first && i == 0) || lone_last;
+		add_tile(grid, &entries[i], wide ? usable_w : tile_w, tile_h);
 	}
 	gridpage_register_theme_page(grid, entries, count);
 	lv_obj_update_layout(grid);

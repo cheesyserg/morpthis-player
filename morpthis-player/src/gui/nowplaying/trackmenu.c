@@ -10,8 +10,6 @@
 #include "src/gui/library/medialist.h"
 #include "src/gui/nowplaying/player.h"
 #include "src/gui/library/playlistpage.h"
-#include "src/gui/streaming/qobuzpage.h"
-#include "src/gui/streaming/tidalpage.h"
 #include "src/gui/shell/popover.h"
 #include "src/gui/settings/musicsettings.h"
 #include "src/gui/shell/settingsrow.h"
@@ -24,7 +22,6 @@
 #include "src/system/library/metadata.h"
 #include "src/system/playback/device_state.h"
 #include "src/system/core/lang.h"
-#include "src/gui/streaming/podcastpage.h"
 #include "src/system/streaming/podcastcache.h"
 #include "src/system/streaming/qobuzcache.h"
 #include "src/system/streaming/tidalcache.h"
@@ -618,9 +615,7 @@ static void open_queue_cb(void *user) {
 	trackmenu_open_queue();
 }
 
-// The same page without going through the menu: the player calls this when a
-// podcast is playing, where the overflow button becomes the episodes button --
-// and a podcast's episodes are exactly the queue.
+// The same page without going through the menu.
 void trackmenu_open_queue(void) {
 	player_sheet_close();
 	switch_screen(queue_screen);
@@ -657,62 +652,6 @@ static void open_album_cb(void *user) {
 	device_state_t state;
 	device_state_get(&state);
 	if (!state.current_file[0]) {
-		return;
-	}
-
-	// Podcasts come first, because there is no album to show: the other episodes
-	// are what is wanted. The feed id was kept by the sidecar file when the
-	// episode was downloaded; the "album" title alone would not do, because two
-	// podcasts can share a name and the catalogue is queried by id.
-	long long feed_id = 0;
-	if (podcastcache_feed_id(state.current_file, &feed_id)) {
-		device_state_t now;
-		device_state_get(&now);
-		player_sheet_close();
-		if (!podcastpage_open_feed(feed_id, now.metadata.album)) {
-			gui_notify_popup("trackmenu_podcast_failed");
-			return;
-		}
-		switcher_set_player_return(podcast_list_screen);
-		return;
-	}
-
-	// A Qobuz track is not in the local library, so its album is not looked up
-	// in the database: it is reopened on Qobuz, using the id the sidecar file
-	// kept when the track was downloaded.
-	char qobuz_album[40];
-	if (qobuzcache_album_id(state.current_file, qobuz_album, sizeof(qobuz_album))) {
-		char title[256];
-		if (!library_track_album(state.current_file, title, sizeof(title)) || !title[0]) {
-			device_state_t now;
-			device_state_get(&now);
-			snprintf(title, sizeof(title), "%s", now.metadata.album);
-		}
-		player_sheet_close();
-		if (!qobuzpage_open_album(qobuz_album, title)) {
-			gui_notify_popup("trackmenu_qobuz_album_failed");
-			return;
-		}
-		switcher_set_player_return(qobuz_list_screen);
-		return;
-	}
-
-	// Same for Tidal, for the same reason: a streamed track's album is reopened
-	// on the service it came from, not in the local database, where it is not.
-	char tidal_album[40];
-	if (tidalcache_album_id(state.current_file, tidal_album, sizeof(tidal_album))) {
-		char title[256];
-		if (!library_track_album(state.current_file, title, sizeof(title)) || !title[0]) {
-			device_state_t now;
-			device_state_get(&now);
-			snprintf(title, sizeof(title), "%s", now.metadata.album);
-		}
-		player_sheet_close();
-		if (!tidalpage_open_album(tidal_album, title)) {
-			gui_notify_popup("trackmenu_tidal_album_failed");
-			return;
-		}
-		switcher_set_player_return(tidal_list_screen);
 		return;
 	}
 

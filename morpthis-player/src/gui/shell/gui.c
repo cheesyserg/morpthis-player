@@ -56,13 +56,10 @@
 #include "src/system/bluetooth/btreceiver.h"
 #include "src/system/audio/usbdac.h"
 #include "src/system/net/wifitransfer.h"
-#include "src/system/streaming/radio.h"
-#include "src/gui/streaming/radiopage.h"
 #include "src/gui/library/search.h"
 #include "src/gui/settings/settings.h"
 #include "src/gui/settings/systempage.h"
 #include "src/gui/shell/welcome.h"
-#include "src/gui/streaming/streaming.h"
 #include "src/gui/shell/switcher.h"
 #include "src/gui/settings/timeset.h"
 #include "src/gui/fonts/fonts.h"
@@ -647,11 +644,7 @@ void gui_init(gui_config_t *cfg) {
 	queue_screen = lv_obj_create(NULL);
 	details_screen = lv_obj_create(NULL);
 	wireless_screen = lv_obj_create(NULL);
-	streaming_screen = lv_obj_create(NULL);
-	radiopage_screen = lv_obj_create(NULL);
 	dacpage_screen = lv_obj_create(NULL);
-	radiolist_screen = lv_obj_create(NULL);
-	radiosearch_screen = lv_obj_create(NULL);
 	wifisettings_screen = lv_obj_create(NULL);
 	btsettings_screen = lv_obj_create(NULL);
 	btaudio_screen = lv_obj_create(NULL);
@@ -698,10 +691,6 @@ void gui_init(gui_config_t *cfg) {
 	btsettings_init(cfg);
 	wireless_init(cfg);
 
-	// streaming section: three services that are not implemented yet, so the
-	// page exists and is walkable but its tiles say so when tapped.
-	// radio before the section, so its tile has somewhere to point.
-	radiopage_init(cfg);
 	dacpage_init(cfg);
 	// After dacpage: the More section points at its pages.
 	morepage_init(cfg);
@@ -709,7 +698,6 @@ void gui_init(gui_config_t *cfg) {
 	textview_init(cfg); // before filespage: a text file tapped there opens here
 	pictureview_init(cfg); // likewise, for JPEG and PNG pictures
 	filespage_init(cfg);
-	streaming_init(cfg);
 
 	player_init(cfg);
 
@@ -754,7 +742,6 @@ void gui_init(gui_config_t *cfg) {
 		// one gesture doing two contradictory things. The back swipe is the
 		// only way out of it.
 		medialist_tracks_screen, medialist_albums_screen, audiobooks_screen, wireless_screen,
-		streaming_screen,		 radiopage_screen,	radiolist_screen,	radiosearch_screen,
 		morepage_screen,
 	};
 	for (size_t i = 0; i < sizeof(player_swipe_screens) / sizeof(player_swipe_screens[0]); i++) {
@@ -773,8 +760,7 @@ void gui_init(gui_config_t *cfg) {
 		queue_screen,	  chapters_screen,		 details_screen,   audiobookcontrols_screen,
 		wireless_screen,
 		wifisettings_screen,
-		btsettings_screen, btaudio_screen,	 airpodspage_screen, airplay_screen,   streaming_screen,
-		radiopage_screen,  radiolist_screen, radiosearch_screen,
+		btsettings_screen, btaudio_screen,	 airpodspage_screen, airplay_screen,
 		dlna_screen,	   sonixlink_screen,	 morepage_screen,
 		appspage_screen,
 	};

@@ -1648,6 +1648,7 @@ static const struct {
 	[MUSIC_TILE_YEARS] = {"years", "music_years", &icon_year},
 	[MUSIC_TILE_PLAYLISTS] = {"playlists", "playlists", &icon_list_music},
 	[MUSIC_TILE_MOST_PLAYED] = {"most_played", "music_most_played", &icon_most_played},
+	[MUSIC_TILE_AUDIOBOOKS] = {"audiobooks", "audiobooks", &icon_menu_audiobooks},
 	[MUSIC_TILE_BROWSE] = {"browse", "music_browse", &icon_folder},
 };
 

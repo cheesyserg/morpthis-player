@@ -73,6 +73,11 @@ void gridpage_set_tile_label_lines(lv_obj_t *grid, int index, int lines);
 void gridpage_set_layout(lv_obj_t *grid, gui_config_t *cfg, int top, int bottom, int padding, int gap, int columns,
 						 int rows);
 
+// Makes the first tile span the full grid width. Used by the home screen, where
+// Music takes the row left by the removed Streaming tile. The flag survives
+// reflows and entry replacement; call before the next gridpage_set_layout().
+void gridpage_set_wide_first(lv_obj_t *grid, bool wide);
+
 lv_obj_t *gridpage_build(lv_obj_t *screen, gui_config_t *cfg, const grid_entry_t *entries, int count, int columns, int rows,
 					bool clear_corner_buttons);
 void gridpage_replace_entries(lv_obj_t *grid, gui_config_t *cfg, const grid_entry_t *entries, int count, int columns,
