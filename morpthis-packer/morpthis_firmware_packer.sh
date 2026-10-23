@@ -277,6 +277,25 @@ build_one() {
 	say ""
 
 	# ==========================================================================
+	# 2b. The AirPlay receiver
+	# ==========================================================================
+	# Optional: without it the stock shairport stays, and the patched
+	# shairport_on.sh falls back to it. With it, the player prefers
+	# shairport-sync, which writes PCM to a pipe instead of the stock "ot"
+	# socket.
+	SYNC_BIN="$SCRIPT_DIR/shairport-sync"
+	if [ -f "$SYNC_BIN" ]; then
+		step "[$MODEL_NAME] installing shairport-sync"
+		cp -f "$SYNC_BIN" "$SQUASH_DIR/usr/bin/shairport-sync"
+		chmod 755 "$SQUASH_DIR/usr/bin/shairport-sync"
+		say "    usr/bin/shairport-sync installed"
+	else
+		step "[$MODEL_NAME] no shairport-sync"
+		warn "$SYNC_BIN is not there; the stock shairport stays in the image"
+	fi
+	say ""
+
+	# ==========================================================================
 	# 3. The launcher script
 	# ==========================================================================
 	step "[$MODEL_NAME] renaming the launcher"

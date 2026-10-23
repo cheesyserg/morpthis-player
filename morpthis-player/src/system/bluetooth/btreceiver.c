@@ -281,6 +281,8 @@ static session_t capture_session(const char *mac, const char *name, bool may_gue
 	// 32 is the path the hardware is known to take.
 	bool widen = false;
 	bool opened = false;
+	bool lost = false;
+	unsigned out_id = 0;
 	int buffer_ms = output_ms();
 	if (in_bits == 16) {
 		opened = audio_external_begin_latency((int)rate, (int)channels, 32, buffer_ms);
@@ -295,6 +297,7 @@ static session_t capture_session(const char *mac, const char *name, bool may_gue
 		snd_pcm_close(pcm);
 		return SESSION_OVER;
 	}
+	out_id = audio_external_id();
 
 	size_t in_frame = (size_t)channels * (in_bits / 8);
 	void *chunk = malloc(CHUNK_FRAMES * in_frame);
@@ -325,6 +328,16 @@ static session_t capture_session(const char *mac, const char *name, bool may_gue
 		bool go = running && session == session_id;
 		pthread_mutex_unlock(&lock);
 		if (!go) {
+			break;
+		}
+
+		if (audio_external_id() != out_id) {
+			// Another source took the DAC (AirPlay, an app). Stop here without
+			// closing the PCM: it is no longer ours, and audio_external_end()
+			// would close that source's stream instead. The session is rebuilt
+			// when the phone plays again.
+			fprintf(stderr, "btreceiver: another source took the output\n");
+			lost = true;
 			break;
 		}
 
@@ -410,7 +423,9 @@ static session_t capture_session(const char *mac, const char *name, bool may_gue
 
 	free(chunk);
 	free(wide);
-	audio_external_end();
+	if (!lost) {
+		audio_external_end();
+	}
 	snd_pcm_close(pcm);
 	*heard_out = heard;
 	return again ? SESSION_AGAIN : SESSION_OVER;

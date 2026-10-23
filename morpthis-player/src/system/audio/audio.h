@@ -238,6 +238,18 @@ bool audio_external_begin(int sample_rate, int channels, int bits);
 // keep the pace of 59.73 frames per second.
 bool audio_external_begin_latency(int sample_rate, int channels, int bits, int buffer_ms);
 int audio_external_write(const void *frames, int count);
+
+// Identifies the external stream that is open now. Every successful open bumps
+// it, and so does a takeover on different terms. A source records the id it was
+// given and compares before writing: a different id means the PCM now belongs
+// to somebody else, and writing into it would interleave two streams -- heard
+// as a quiet, distorted mix rather than as an error.
+//
+// Comparing the id is not enough on its own: the source must also not call
+// audio_external_end() once it has lost the output, or it would close the new
+// owner's PCM.
+unsigned audio_external_id(void);
+
 void audio_external_end(void);
 
 // Whether the external source is producing sound right now, as opposed to

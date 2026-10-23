@@ -4,6 +4,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -17,15 +18,22 @@
 #include <unistd.h>
 
 #include "src/system/audio/audio.h"
+#include "src/system/core/base64.h"
 #include "src/system/core/config.h"
 #include "src/system/core/utils.h"
 #include "src/system/device/sysserver.h"
 
 // ---------------------------------------------------------------------------
-// The two sockets, and what the firmware puts on them
+// The two transports
 //
-// Almost none of this is what a stock shairport build does; it is the layout of
-// /usr/bin/shairport and /usr/bin/hiby_player as they ship.
+// shairport-sync (the default when the image carries it) writes raw S16_LE
+// 44100 stereo into /tmp/shairport-sync-audio and XML metadata into
+// /tmp/shairport-sync-metadata. Both are FIFOs, read by fifo_worker() and
+// sync_meta_worker() below.
+//
+// The stock daemon is kept as a fallback, and what follows is its transport --
+// almost none of which is what a stock shairport build does; it is the layout
+// of /usr/bin/shairport and /usr/bin/hiby_player as they ship.
 //
 //   PCM  -> /var/run/airplay_socket_server
 //           AF_UNIX SOCK_STREAM. Raw interleaved S16_LE, 44100 Hz, stereo, no
@@ -93,6 +101,15 @@
 #define SHAIRPORT_BIN "/usr/bin/shairport"
 #define SHAIRPORT_ON "/usr/bin/shairport_on.sh"
 #define SHAIRPORT_OFF "/usr/bin/shairport_off.sh"
+
+// The maintained daemon, when the image carries it. Its two back ends are
+// configured in /etc/shairport-sync.conf: the audio is written to a FIFO as raw
+// S16_LE 44100 stereo, and the metadata to a second FIFO as a stream of XML
+// items. Both are the shairport-sync defaults; the names here have to match the
+// configuration file.
+#define SHAIRPORT_SYNC_BIN "/usr/bin/shairport-sync"
+#define SYNC_AUDIO_PIPE "/tmp/shairport-sync-audio"
+#define SYNC_META_PIPE "/tmp/shairport-sync-metadata"
 
 // Where the firmware keeps the name the device calls itself -- one line,
 // "HiBy R3PROII". It is the Bluetooth name and the AirPlay name both; the
@@ -174,6 +191,13 @@ static bool play_thread_live;
 static bool meta_thread_live;
 static int pcm_listen_fd = -1;
 static int meta_listen_fd = -1;
+
+// Which receiver this service is running: the stock `ot` one, or
+// shairport-sync. Decided once, at start, from [airplay] backend or from the
+// binary being in the image.
+static bool sync_mode;
+static int sync_audio_fd = -1;
+static int sync_meta_fd = -1;
 
 // True between accepting the audio socket and losing it. Which, because
 // shairport connects once and keeps the socket for its whole life, means "the
@@ -335,8 +359,28 @@ static void name_for_wire(char *out, size_t out_size) {
 	}
 }
 
+// Which receiver to use. "stock" and "sync" force one; anything else -- the
+// usual case -- picks shairport-sync when the image carries it and falls back to
+// the stock binary otherwise, so a player binary can be moved between images
+// without a config edit.
+static bool backend_is_sync(void) {
+	static int cached = -1;
+	if (cached < 0) {
+		const char *want = config_get("airplay", "backend", "");
+		if (strcmp(want, "stock") == 0) {
+			cached = 0;
+		} else if (strcmp(want, "sync") == 0) {
+			cached = 1;
+		} else {
+			cached = access(SHAIRPORT_SYNC_BIN, X_OK) == 0;
+		}
+	}
+	return cached == 1;
+}
+
 bool airplay_available(void) {
-	return access(SHAIRPORT_BIN, X_OK) == 0 && access(SHAIRPORT_ON, X_OK) == 0 && access(SHAIRPORT_OFF, X_OK) == 0;
+	const char *bin = backend_is_sync() ? SHAIRPORT_SYNC_BIN : SHAIRPORT_BIN;
+	return access(bin, X_OK) == 0 && access(SHAIRPORT_ON, X_OK) == 0 && access(SHAIRPORT_OFF, X_OK) == 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -407,8 +451,25 @@ static int recv_poll(int fd, void *buf, size_t size) {
 	return (int)n;
 }
 
+// A FIFO shairport-sync writes into. Opening the read end must not block, and it
+// must succeed before the daemon starts: the writer opens the pipe after this
+// and a reader that arrived late would have missed its first frames. Creating
+// it here means the open succeeds even before the daemon has run once.
+static int fifo_open_reader(const char *path) {
+	if (mkfifo(path, 0666) < 0 && errno != EEXIST) {
+		fprintf(stderr, "airplay: mkfifo(%s): %s\n", path, strerror(errno));
+		return -1;
+	}
+
+	int fd = open(path, O_RDONLY | O_NONBLOCK);
+	if (fd < 0) {
+		fprintf(stderr, "airplay: open(%s): %s\n", path, strerror(errno));
+	}
+	return fd;
+}
+
 // ---------------------------------------------------------------------------
-// the ring between the socket and the DAC
+// the ring between the receiver and the DAC
 // ---------------------------------------------------------------------------
 
 static uint8_t ring[RING_BYTES];
@@ -577,6 +638,37 @@ static void *pcm_worker(void *unused) {
 	return NULL;
 }
 
+// The shairport-sync variant: raw S16_LE 44100 stereo from a FIFO, no framing
+// and no connection to accept. A read of 0 means every writer has gone (the
+// daemon exited or restarted), which is not fatal: the read end stays open and
+// the next daemon process starts writing to it again.
+static void *fifo_worker(void *unused) {
+	(void)unused;
+
+	uint8_t buf[CHUNK_BYTES];
+	while (!stopping) {
+		struct pollfd p = {.fd = sync_audio_fd, .events = POLLIN};
+		if (poll(&p, 1, POLL_MS) <= 0) {
+			continue;
+		}
+
+		ssize_t n = read(sync_audio_fd, buf, sizeof(buf));
+		if (n > 0) {
+			ring_push(buf, (size_t)n);
+			state_set_playing(true);
+		} else if (n == 0) {
+			// All writers closed. shairport-sync closed the pipe (it is
+			// shutting down); a new process reopens it. Sleep so a closed
+			// pipe does not spin the poll.
+			usleep(POLL_MS * 1000);
+		} else if (errno != EAGAIN && errno != EINTR) {
+			fprintf(stderr, "airplay: reading the audio pipe: %s\n", strerror(errno));
+			usleep(POLL_MS * 1000);
+		}
+	}
+	return NULL;
+}
+
 // ---------------------------------------------------------------------------
 // the thread that feeds the DAC
 // ---------------------------------------------------------------------------
@@ -605,6 +697,8 @@ static void *play_worker(void *unused) {
 	int32_t wide[CHUNK_BYTES / 2];
 	bool device_open = false;
 	bool widen = true;
+	bool yielded = false;
+	unsigned out_id = 0;
 
 	while (!stopping) {
 		size_t n = ring_pop(chunk, sizeof(chunk));
@@ -615,6 +709,11 @@ static void *play_worker(void *unused) {
 			// arrived for long enough that no sender can be mid-song -- but
 			// not merely because a track ended, which would pop the amplifier
 			// between every song.
+			//
+			// A gap also ends a yield: whatever took the output may have
+			// finished, and a sender pausing is the next fair moment to ask for
+			// the device again.
+			yielded = false;
 			int silent = airplay_silent_ms();
 			bool idle = silent >= AIRPLAY_IDLE_HANDBACK_MS;
 			if (device_open && (!stream_live || release_output || idle)) {
@@ -630,6 +729,13 @@ static void *play_worker(void *unused) {
 		// Audio again: whoever asked for the device has had their answer, and
 		// a request left standing would drop the stream at the next gap.
 		release_output = false;
+
+		if (yielded) {
+			// Another source took the PCM. Stay out of its way until the ring
+			// runs dry; writing now would only be dropped, and re-opening at
+			// once would take the device from each other once per packet.
+			continue;
+		}
 
 		if (!device_open) {
 			// One PCM, one writer. The receiver now runs whether or not its
@@ -655,11 +761,23 @@ static void *play_worker(void *unused) {
 				continue; // the socket carries on being drained regardless
 			}
 			device_open = true;
+			out_id = audio_external_id();
 			state_set_connected(true);
+		}
+
+		if (audio_external_id() != out_id) {
+			// The PCM this was opened on belongs to somebody else now: an app
+			// took the output, or a re-open after the route moved failed and
+			// another source claimed it. Do not write into it. No
+			// audio_external_end() here -- that would close their stream.
+			device_open = false;
+			yielded = true;
+			continue;
 		}
 
 		int frames = (int)(n / AIRPLAY_FRAME_BYTES);
 
+		int wrote;
 		if (widen) {
 			const int16_t *src = (const int16_t *)(const void *)chunk;
 			for (int i = 0; i < frames * AIRPLAY_CHANNELS; i++) {
@@ -668,9 +786,14 @@ static void *play_worker(void *unused) {
 				// bottom half is zero.
 				wide[i] = (int32_t)((uint32_t)(uint16_t)src[i] << 16);
 			}
-			audio_external_write(wide, frames);
+			wrote = audio_external_write(wide, frames);
 		} else {
-			audio_external_write(chunk, frames);
+			wrote = audio_external_write(chunk, frames);
+		}
+		if (wrote <= 0) {
+			// The PCM closed under us (the route moved and the re-open failed,
+			// or a takeover). The next chunk opens it again.
+			device_open = false;
 		}
 	}
 
@@ -770,6 +893,237 @@ static void handle_meta(const char *msg, size_t msg_len) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// shairport-sync metadata
+//
+// Its metadata pipe carries a stream of items, not one message per connection:
+//
+//   <item><type>73736e63</type><code>6d696e6d</code><length>5</length>
+//   <data encoding="base64">
+//   VGl0bGU=</data></item>
+//
+// `type` and `code` are hex numbers naming a four-character code, and the value
+// is base64. The item's own length is the decoded size, which is how a cover
+// picture is recognised and skipped before any of it is kept.
+//
+// A byte-at-a-time state machine rather than a whole-item buffer: the pipe may
+// split the stream anywhere, the audio thread must keep running, and a cover
+// picture is far too large to hold on this device.
+// ---------------------------------------------------------------------------
+
+#define META_CODE(a, b, c, d)                                                                                        \
+	(((uint32_t)(a) << 24) | ((uint32_t)(b) << 16) | ((uint32_t)(c) << 8) | (uint32_t)(d))
+#define META_TEXT_MAX 512
+
+typedef enum {
+	META_IDLE,      // between items
+	META_HEADER,    // accumulating the <item>... line
+	META_DATA_OPEN, // skipping the <data ...> tag
+	META_DATA,      // accumulating base64
+	META_SKIP,      // discarding a value we do not use (cover art)
+	META_DATA_END,  // checking the </data> that ends a value
+	META_END,       // waiting for </item>
+} meta_state_t;
+
+static struct {
+	meta_state_t state;
+	char line[256];
+	size_t line_len;
+	uint32_t code;
+	unsigned long length;
+	bool want;
+	char tag[8];
+	size_t tag_len;
+	char b64[META_TEXT_MAX * 2];
+	size_t b64_len;
+} meta;
+
+static void meta_sync_reset(void) {
+	memset(&meta, 0, sizeof(meta));
+	meta.state = META_IDLE;
+}
+
+static void meta_apply_event(void) {
+	if (meta.code == META_CODE('p', 'b', 'e', 'g')) {
+		state_set_connected(true);
+		state_set_playing(true);
+	} else if (meta.code == META_CODE('p', 'e', 'n', 'd')) {
+		state_set_playing(false);
+	} else if (meta.code == META_CODE('p', 'f', 'l', 's')) {
+		// The sender flushed: what is still in the ring belongs to a position
+		// that no longer exists, and playing it would put the sound behind the
+		// phone by however much was buffered.
+		state_set_playing(false);
+		ring_reset();
+	} else if (meta.code == META_CODE('a', 'b', 'e', 'g')) {
+		state_set_connected(true);
+	} else if (meta.code == META_CODE('a', 'e', 'n', 'd') || meta.code == META_CODE('d', 'i', 's', 'c')) {
+		// The daemon outlives the sender: unlike the stock backend, closing the
+		// phone's connection does not close the audio socket. Ask the playback
+		// thread for the DAC back, or it would stay held for as long as the
+		// receiver is switched on.
+		pthread_mutex_lock(&ring_lock);
+		release_output = true;
+		pthread_cond_broadcast(&ring_data);
+		pthread_mutex_unlock(&ring_lock);
+		state_set_connected(false);
+		session_clear();
+	}
+}
+
+static void meta_apply_text(void) {
+	if (!meta.want || meta.b64_len == 0) {
+		return;
+	}
+
+	size_t size = 0;
+	uint8_t *decoded = base64_decode(meta.b64, meta.b64_len, META_TEXT_MAX - 1, &size);
+	if (!decoded) {
+		return;
+	}
+	decoded[size] = '\0';
+
+	if (meta.code == META_CODE('m', 'i', 'n', 'm')) {
+		state_set_text(state.title, sizeof(state.title), (const char *)decoded);
+	} else if (meta.code == META_CODE('a', 's', 'a', 'r')) {
+		state_set_text(state.artist, sizeof(state.artist), (const char *)decoded);
+	} else if (meta.code == META_CODE('a', 's', 'a', 'l')) {
+		state_set_text(state.album, sizeof(state.album), (const char *)decoded);
+	} else if (meta.code == META_CODE('a', 's', 'g', 'n')) {
+		state_set_text(state.genre, sizeof(state.genre), (const char *)decoded);
+	}
+	free(decoded);
+}
+
+static void meta_header(void) {
+	meta.want = false;
+	meta.code = 0;
+	meta.length = 0;
+
+	const char *code_at = strstr(meta.line, "<code>");
+	const char *length_at = strstr(meta.line, "<length>");
+	if (!code_at || !length_at) {
+		meta.state = META_IDLE;
+		return;
+	}
+
+	meta.code = (uint32_t)strtoul(code_at + 6, NULL, 16);
+	meta.length = strtoul(length_at + 8, NULL, 10);
+	meta.want = meta.code == META_CODE('m', 'i', 'n', 'm') || meta.code == META_CODE('a', 's', 'a', 'r') ||
+				meta.code == META_CODE('a', 's', 'a', 'l') || meta.code == META_CODE('a', 's', 'g', 'n');
+
+	meta.b64_len = 0;
+	meta.tag_len = 0;
+	meta.line_len = 0;
+
+	if (meta.length == 0) {
+		// Session and transport events carry no value, so there is nothing to
+		// wait for: apply them now and consume the closing tag that follows.
+		meta_apply_event();
+		meta.state = META_END;
+	} else {
+		meta.state = META_DATA_OPEN;
+	}
+}
+
+static void meta_sync_feed(const char *data, size_t len) {
+	for (size_t i = 0; i < len; i++) {
+		char ch = data[i];
+		switch (meta.state) {
+		case META_IDLE:
+			if (ch == '<') {
+				meta.state = META_HEADER;
+				meta.line_len = 0;
+				meta.line[meta.line_len++] = ch;
+				meta.line[meta.line_len] = '\0';
+			}
+			break;
+
+		case META_HEADER:
+			if (meta.line_len + 1 < sizeof(meta.line)) {
+				meta.line[meta.line_len++] = ch;
+				meta.line[meta.line_len] = '\0';
+			}
+			// The header ends at </length>, which is a complete tag. Waiting for
+			// a newline instead would swallow the </item> of a zero-length item:
+			// the writer puts the header and that closing tag on one line.
+			if (strstr(meta.line, "</length>")) {
+				meta_header();
+			} else if (meta.line_len + 1 >= sizeof(meta.line)) {
+				meta.line_len = 0; // malformed or not an item; resync
+				meta.state = META_IDLE;
+			}
+			break;
+
+		case META_DATA_OPEN:
+			if (ch == '>') {
+				meta.state = meta.want ? META_DATA : META_SKIP;
+				meta.b64_len = 0;
+			}
+			break;
+
+		case META_DATA:
+			if (ch == '<') {
+				meta.tag_len = 0;
+				meta.state = META_DATA_END;
+			} else if (!isspace((unsigned char)ch) && meta.b64_len + 1 < sizeof(meta.b64)) {
+				meta.b64[meta.b64_len++] = ch;
+			}
+			break;
+
+		case META_SKIP:
+			if (ch == '<') {
+				meta.tag_len = 0;
+				meta.state = META_DATA_END;
+			}
+			break;
+
+		case META_DATA_END:
+			// "</data>": six characters after the '<'.
+			meta.tag[meta.tag_len++] = ch;
+			if (meta.tag_len >= 6) {
+				if (meta.want) {
+					meta_apply_text();
+				}
+				meta.tag_len = 0;
+				meta.state = META_END;
+			}
+			break;
+
+		case META_END:
+			// "</item>": seven characters including the '<'.
+			meta.tag[meta.tag_len++] = ch;
+			if (meta.tag_len >= 7) {
+				meta.state = META_IDLE;
+			}
+			break;
+		}
+	}
+}
+
+static void *sync_meta_worker(void *unused) {
+	(void)unused;
+
+	char buf[512];
+	while (!stopping) {
+		struct pollfd p = {.fd = sync_meta_fd, .events = POLLIN};
+		if (poll(&p, 1, POLL_MS) <= 0) {
+			continue;
+		}
+
+		ssize_t n = read(sync_meta_fd, buf, sizeof(buf));
+		if (n > 0) {
+			meta_sync_feed(buf, (size_t)n);
+		} else if (n == 0) {
+			// shairport-sync closed the pipe; the next process reopens it.
+			usleep(POLL_MS * 1000);
+		} else if (errno != EAGAIN && errno != EINTR) {
+			usleep(POLL_MS * 1000);
+		}
+	}
+	return NULL;
+}
+
 static void *meta_worker(void *unused) {
 	(void)unused;
 
@@ -806,33 +1160,61 @@ static void *meta_worker(void *unused) {
 static void service_start(void) {
 	session_clear();
 	ring_reset();
+	meta_sync_reset();
 	stream_live = false;
 	stopping = false;
+	sync_mode = backend_is_sync();
 
-	// Bound and listening BEFORE sys_server hears about it. shairport connects
-	// once in its init() and never tries again, so losing that race means an
-	// AirPlay session that pairs, plays, and is silent.
-	pcm_listen_fd = make_server(PCM_SOCKET);
-	meta_listen_fd = make_server(META_SOCKET);
-	if (pcm_listen_fd < 0 || meta_listen_fd < 0) {
-		fprintf(stderr, "airplay: could not open the servers; not starting shairport\n");
-		if (pcm_listen_fd >= 0) {
-			close(pcm_listen_fd);
-			pcm_listen_fd = -1;
-			unlink(PCM_SOCKET);
+	if (sync_mode) {
+		// The daemon creates and opens both pipes itself, but the reader has to
+		// exist first: the writer opens non-blocking and drops its audio if no
+		// reader is attached. Opening here, before the request that starts it,
+		// is the same ordering the sockets below have always needed.
+		sync_audio_fd = fifo_open_reader(SYNC_AUDIO_PIPE);
+		sync_meta_fd = fifo_open_reader(SYNC_META_PIPE);
+		if (sync_audio_fd < 0 || sync_meta_fd < 0) {
+			fprintf(stderr, "airplay: could not open the shairport-sync pipes; not starting it\n");
+			if (sync_audio_fd >= 0) {
+				close(sync_audio_fd);
+				sync_audio_fd = -1;
+			}
+			if (sync_meta_fd >= 0) {
+				close(sync_meta_fd);
+				sync_meta_fd = -1;
+			}
+			stopping = true;
+			return;
 		}
-		if (meta_listen_fd >= 0) {
-			close(meta_listen_fd);
-			meta_listen_fd = -1;
-			unlink(META_SOCKET);
+		// The daemon is alive for as long as the receiver is switched on, so
+		// "live" means "the service is up", exactly as it did with the stock
+		// daemon's one long-lived socket connection.
+		stream_live = true;
+	} else {
+		// Bound and listening BEFORE sys_server hears about it. shairport connects
+		// once in its init() and never tries again, so losing that race means an
+		// AirPlay session that pairs, plays, and is silent.
+		pcm_listen_fd = make_server(PCM_SOCKET);
+		meta_listen_fd = make_server(META_SOCKET);
+		if (pcm_listen_fd < 0 || meta_listen_fd < 0) {
+			fprintf(stderr, "airplay: could not open the servers; not starting shairport\n");
+			if (pcm_listen_fd >= 0) {
+				close(pcm_listen_fd);
+				pcm_listen_fd = -1;
+				unlink(PCM_SOCKET);
+			}
+			if (meta_listen_fd >= 0) {
+				close(meta_listen_fd);
+				meta_listen_fd = -1;
+				unlink(META_SOCKET);
+			}
+			stopping = true;
+			return;
 		}
-		stopping = true;
-		return;
 	}
 
-	pcm_thread_live = pthread_create(&pcm_thread, NULL, pcm_worker, NULL) == 0;
+	pcm_thread_live = pthread_create(&pcm_thread, NULL, sync_mode ? fifo_worker : pcm_worker, NULL) == 0;
 	play_thread_live = pthread_create(&play_thread, NULL, play_worker, NULL) == 0;
-	meta_thread_live = pthread_create(&meta_thread, NULL, meta_worker, NULL) == 0;
+	meta_thread_live = pthread_create(&meta_thread, NULL, sync_mode ? sync_meta_worker : meta_worker, NULL) == 0;
 
 	char wire[96];
 	name_for_wire(wire, sizeof(wire));
@@ -846,10 +1228,10 @@ static void service_start(void) {
 }
 
 static void service_stop(void) {
-	// Ask first, then tear down. shairport_off.sh sends a plain SIGTERM,
-	// which shairport turns into a clean shutdown: its deinit sends
-	// AIRPLAY:SERVER_CLOSE and closes the audio socket, so by the time the
-	// threads are joined they have usually already noticed.
+	// Ask first, then tear down. The off script kills whichever daemon this
+	// image carries; the stock one turns SIGTERM into a clean shutdown (its
+	// deinit sends AIRPLAY:SERVER_CLOSE and closes the audio socket), so by the
+	// time the threads are joined they have usually already noticed.
 	char reply[64] = {0};
 	sysserver_request("SHAIRPORT:TURN_OFF", reply, sizeof(reply));
 	printf("airplay: turn off -> %s\n", reply[0] ? reply : "(no reply)");
@@ -884,6 +1266,23 @@ static void service_stop(void) {
 	}
 	unlink(PCM_SOCKET);
 	unlink(META_SOCKET);
+
+	if (sync_mode) {
+		if (sync_audio_fd >= 0) {
+			close(sync_audio_fd);
+			sync_audio_fd = -1;
+		}
+		if (sync_meta_fd >= 0) {
+			close(sync_meta_fd);
+			sync_meta_fd = -1;
+		}
+		// The daemon creates both again on the next start; leaving a FIFO
+		// behind would hand its stale contents to the new reader.
+		unlink(SYNC_AUDIO_PIPE);
+		unlink(SYNC_META_PIPE);
+		sync_mode = false;
+	}
+	stream_live = false;
 
 	// Belt and braces: the playback thread hands it back on the way out, but a
 	// thread that never started would leave the DAC held open.

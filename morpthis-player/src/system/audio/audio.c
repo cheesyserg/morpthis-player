@@ -4627,6 +4627,10 @@ void audio_get_output_device(char *out, size_t out_size) {
 static int external_frame_bytes = 4;
 static pthread_mutex_t external_lock = PTHREAD_MUTEX_INITIALIZER;
 
+// Which open this is. Bumped under external_lock by every successful open, so a
+// source can tell that the PCM it opened has since been given to another one.
+static unsigned external_id;
+
 // What the open was made on, so a change can be noticed.
 //
 // Local playback reads alsa_output_key() every chunk and re-routes when it
@@ -4696,6 +4700,12 @@ static bool external_open_locked(void) {
 	pcm_device_open = true;
 	external_route = alsa_output_key();
 	audio_get_output_device(external_device, sizeof(external_device));
+
+	// A fresh PCM: everything that opened before this no longer owns it. Zero is
+	// never handed out, so a caller's initialised-to-zero id never matches.
+	if (++external_id == 0) {
+		external_id = 1;
+	}
 	return true;
 }
 
@@ -4716,8 +4726,29 @@ bool audio_external_begin_latency(int sample_rate, int channels, int bits, int b
 	pthread_mutex_lock(&external_lock);
 
 	if (external_pcm) {
-		pthread_mutex_unlock(&external_lock);
-		return true; // already open, and on the same terms
+		// The same stream asked for again: a caller that re-opens on every write
+		// or every track must not cost a close and an open.
+		if (external_rate == sample_rate && external_channels == channels && external_bits == bits &&
+			external_buffer_ms == buffer_ms) {
+			pthread_mutex_unlock(&external_lock);
+			return true;
+		}
+
+		// A different stream has the device. It used to be handed to the new
+		// caller as if the open had succeeded, which is how 32-bit AirPlay frames
+		// ended up written into a 16-bit PCM an app had left paused: quiet,
+		// distorted, and at the app's rate. Take the device instead, and say so --
+		// the previous owner learns from the id that it is no longer the writer.
+		fprintf(stderr, "audio: external source at %d Hz, %d ch, %d bits takes over from %d Hz, %d ch, %d bits\n",
+				sample_rate, channels, bits, external_rate, external_channels, external_bits);
+		snd_pcm_drop(external_pcm);
+		snd_pcm_close(external_pcm);
+		external_pcm = NULL;
+		pcm_device_open = false;
+		external_route = -1;
+		external_device[0] = '\0';
+		external_playing = false;
+		external_last_write_ms = 0;
 	}
 
 	// One frame is one sample per channel. 24-bit is the odd one out -- ALSA's
@@ -4745,6 +4776,13 @@ bool audio_external_begin_latency(int sample_rate, int channels, int bits, int b
 
 	pthread_mutex_unlock(&external_lock);
 	return ok;
+}
+
+unsigned audio_external_id(void) {
+	pthread_mutex_lock(&external_lock);
+	unsigned id = external_id;
+	pthread_mutex_unlock(&external_lock);
+	return id;
 }
 
 // Under external_lock. Re-opens when the headphones have moved, and says

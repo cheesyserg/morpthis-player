@@ -143,6 +143,10 @@ static volatile int external_bits = 16;
 static volatile int external_rate;
 static int external_channels;
 static int external_buffer_ms;
+// The open this app made, as audio.c numbered it. Another source taking the DAC
+// (AirPlay, the Bluetooth receiver) bumps that number, and this app must then
+// stop writing rather than push its frames into the new owner's PCM.
+static unsigned external_id;
 static volatile bool app_output_active;
 static volatile bool app_output_playing;
 // The output was handed back for suspend while the app was not playing. The
@@ -170,12 +174,30 @@ static void refresh_playback_cb(void *user) {
 
 static void request_playback_refresh(void) { morpthis_app_post(refresh_playback_cb, NULL); }
 
+// Whether the PCM this app opened is still the one audio.c has open.
+static bool owns_output(void) { return external_open && audio_external_id() == external_id; }
+
+// The output went to another source. Forget it without touching the PCM, which
+// now belongs to that source: calling audio_external_end() here would close the
+// AirPlay stream instead of this app's. The app keeps running silently, and its
+// next explicit open or play takes the device back.
+static void yield_output(void) {
+	if (external_open) {
+		external_open = false;
+		app_output_playing = false;
+		request_playback_refresh();
+	}
+}
+
 // Reopens the terms a suspend released. The caller is the app's mixer or the
 // GUI thread; audio_external_begin_latency() is already safe against both
 // reaching it with the same terms. `playing` is the app's explicit intent,
 // not an inference from the write: a game mixer that was feeding silence
 // reopens for its sound effects without taking the power hold.
 static bool reopen_output(bool playing) {
+	if (external_open && !owns_output()) {
+		external_open = false; // the core gave the PCM to another source
+	}
 	if (external_open || external_suspended || !app_output_active || external_rate <= 0) {
 		return false;
 	}
@@ -190,6 +212,7 @@ static bool reopen_output(bool playing) {
 	if (!external_open) {
 		return false;
 	}
+	external_id = audio_external_id();
 	app_output_playing = playing;
 	if (playing) {
 		audio_external_set_playing(true);
@@ -205,6 +228,12 @@ static bool reopen_output(bool playing) {
 // sound; a live source never reaches this call.
 void sdk_audio_suspend_prepare(void) {
 	if (!external_open || !app_output_active || app_output_playing) {
+		return;
+	}
+	if (!owns_output()) {
+		// Somebody else has the device now. Forget this app's output, but do not
+		// close the PCM: it is no longer ours.
+		external_open = false;
 		return;
 	}
 	pthread_mutex_lock(&suspend_lock);
@@ -282,8 +311,9 @@ bool sdk_audio_app_track(morpthis_track_t *out) {
 // the output; a force-closed app may still think it owns it, so release the DAC
 // and clear the flags the status bar reads. Runs on the GUI thread.
 void sdk_audio_app_reset(void) {
+	bool owned = owns_output();
 	app_output_active = false; // a parked writer must not try to reopen
-	if (external_open) {
+	if (owned) {
 		audio_external_end();
 	}
 	external_open = false;
@@ -294,7 +324,9 @@ void sdk_audio_app_reset(void) {
 	external_buffer_ms = 0;
 	app_output_active = false;
 	app_output_playing = false;
-	audio_external_set_playing(false);
+	if (owned) {
+		audio_external_set_playing(false);
+	}
 	pthread_mutex_lock(&track_lock);
 	memset(&app_track, 0, sizeof(app_track));
 	app_track_valid = false;
@@ -304,6 +336,11 @@ void sdk_audio_app_reset(void) {
 }
 
 bool morpthis_audio_open_ex(int rate, int channels, int bits, int buffer_ms) {
+	if (external_open && !owns_output()) {
+		// Another source has the PCM; forget this app's, without closing theirs.
+		external_open = false;
+		app_output_playing = false;
+	}
 	if (external_open) {
 		if (external_rate == rate && external_channels == channels && external_bits == bits &&
 			external_buffer_ms == buffer_ms) {
@@ -324,6 +361,7 @@ bool morpthis_audio_open_ex(int rate, int channels, int bits, int buffer_ms) {
 
 	external_open = audio_external_begin_latency(rate, channels, bits, buffer_ms);
 	if (external_open) {
+		external_id = audio_external_id();
 		external_bits = bits;
 		external_rate = rate;
 		external_channels = channels;
@@ -353,16 +391,17 @@ size_t morpthis_audio_write_pcm(const void *pcm, size_t frames) {
 		if (external_suspended && !wait_out_suspend()) {
 			return 0;
 		}
-		if (external_open || reopen_output(false)) {
+		if (owns_output() || reopen_output(false)) {
 			break;
 		}
 		// reopen_output() refuses while a new suspend is being set up. Wait
 		// for that handoff rather than failing the app's mixer.
 		if (!external_suspended) {
-			return 0;
+			break;
 		}
 	}
-	if (!external_open) {
+	if (!owns_output()) {
+		yield_output();
 		return 0;
 	}
 	if (frames > (size_t)INT_MAX) {
@@ -389,12 +428,14 @@ size_t morpthis_audio_write(const int16_t *pcm, size_t frames) {
 }
 
 void morpthis_audio_set_playing(bool playing) {
-	if (playing && !external_open && !reopen_output(true)) {
+	if (playing && !owns_output() && !reopen_output(true)) {
 		return;
 	}
-	if (!external_open) {
+	if (!owns_output()) {
 		// A pause while the suspend handoff owns the output still has to clear
-		// the flag the status bar and the power manager read.
+		// the flag the status bar and the power manager read. A lost output does
+		// the same, without touching the PCM another source holds now.
+		external_open = false;
 		app_output_playing = false;
 		request_playback_refresh();
 		return;
@@ -415,10 +456,10 @@ void morpthis_audio_set_track(const morpthis_track_t *track, bool playing) {
 	}
 	pthread_mutex_unlock(&track_lock);
 
-	if (playing && !external_open) {
+	if (playing && !owns_output()) {
 		reopen_output(playing);
 	}
-	if (external_open) {
+	if (owns_output()) {
 		app_output_playing = playing;
 		audio_external_set_playing(playing);
 		request_playback_refresh();
@@ -432,8 +473,9 @@ void morpthis_audio_close(void) {
 	if (!external_open && !external_suspended) {
 		return;
 	}
+	bool owned = owns_output();
 	app_output_active = false; // a parked writer must not reopen
-	if (external_open) {
+	if (owned) {
 		audio_external_end();
 	}
 	external_open = false;
@@ -444,7 +486,9 @@ void morpthis_audio_close(void) {
 	external_buffer_ms = 0;
 	app_output_active = false;
 	app_output_playing = false;
-	audio_external_set_playing(false);
+	if (owned) {
+		audio_external_set_playing(false);
+	}
 	pthread_mutex_lock(&track_lock);
 	memset(&app_track, 0, sizeof(app_track));
 	app_track_valid = false;
