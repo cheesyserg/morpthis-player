@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #include "src/gui/library/browser.h"
 #include "src/gui/library/audiobookextras.h"
@@ -5131,39 +5132,14 @@ void player_refresh_now_playing(void) {
 
 static int sheet_width;
 static lv_obj_t *sheet_under; // the page the sheet first slid over
+static uint32_t sheet_slide_started; // lv_tick_get() when the current slide began
 
-// Where the slide in progress is going to land, so the page can be put there
-// when it arrives (it does not travel itself; see sheet_move_to).
-static int32_t sheet_landing_x;
-
-// The page, drawn once, and the picture of it that moves in its place.
-//
-// A composite of this page is twenty-nine milliseconds and the display
-// refreshes every thirty-three, so moving the live page puts every frame on
-// the wire and the slide has no headroom left for anything else. Rendered once
-// into a draw buffer, a frame costs a blit of the part of that buffer that is
-// on screen -- the same picture for a fraction of the work. It is the trick the
-// back-drag in switcher.c already uses for the page underneath; this is the
-// same thing pointed at the sheet.
-static lv_draw_buf_t *sheet_snapshot; // owned, freed with sheet_snapshot_drop()
-static lv_obj_t *sheet_snapshot_img;  // on the top layer, moving in its place
-static uint32_t sheet_slide_started;  // lv_tick_get() when the current slide began
-
-// The page the sheet is sliding over, taken out of the way for the duration.
-//
-// This is the other half of the same problem the page snapshot solves. LVGL
-// draws every object that meets the dirty area, and a slide dirties the whole
-// screen: so each frame recomposites the entire library list the sheet is
-// covering, whether or not any of it is still visible. Measured at sixty to
-// ninety milliseconds a frame against the twenty-nine the page itself costs,
-// which is why the slide only ever managed one or two frames.
-//
-// Hidden, it is drawn not at all. A picture of it stands in its place on the
-// top layer, under the moving one, so the eye sees exactly the same thing --
-// the same trick the back-drag uses in switcher.c for the page it returns to.
-static lv_draw_buf_t *sheet_under_snapshot;
-static lv_obj_t *sheet_under_img;
-static lv_obj_t *sheet_under_screen; // hidden while it slides; shown again after
+// Microseconds from an arbitrary origin. Only ever subtracted from itself.
+static uint64_t mono_us(void) {
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (uint64_t)ts.tv_sec * 1000000u + (uint64_t)ts.tv_nsec / 1000u;
+}
 
 // Where the sheet was when the finger went down, and where the finger was.
 static int drag_origin_x;
@@ -5175,126 +5151,22 @@ static bool dragging;
 // does not also select it.
 static bool drag_committed;
 
-// Throws away the stand-in picture, if there is one. The page is what is left.
-static void sheet_snapshot_drop(void) {
-	if (sheet_snapshot_img) {
-		lv_obj_delete(sheet_snapshot_img);
-		sheet_snapshot_img = NULL;
-	}
-	if (sheet_snapshot) {
-		lv_draw_buf_destroy(sheet_snapshot);
-		sheet_snapshot = NULL;
-	}
-}
-
-// Puts the page underneath back the way it was found. Safe to call at any time:
-// with nothing hidden it does nothing.
-static void sheet_under_drop(void) {
-	if (sheet_under_img) {
-		lv_obj_delete(sheet_under_img);
-		sheet_under_img = NULL;
-	}
-	if (sheet_under_snapshot) {
-		lv_draw_buf_destroy(sheet_under_snapshot);
-		sheet_under_snapshot = NULL;
-	}
-	if (sheet_under_screen) {
-		lv_obj_set_hidden(sheet_under_screen, false);
-		sheet_under_screen = NULL;
-	}
-}
-
-// Renders the page into a buffer and puts a picture of it on the top layer,
-// where the page stands, ready to be moved instead of the page.
-//
-// It is taken where the page happens to be, which while the sheet is closed is
-// off the right edge: lv_snapshot_take() draws the object rather than the
-// screen, which is why the back-drag can snapshot a parked page the same way.
-static void sheet_snapshot_take(void) {
-	sheet_snapshot_drop();
-	if (!player_screen) {
-		return;
-	}
-
-	bool was_hidden = lv_obj_is_hidden(player_screen);
-	if (was_hidden) {
-		lv_obj_set_hidden(player_screen, false);
-	}
-	sheet_snapshot = lv_snapshot_take(player_screen, LV_COLOR_FORMAT_RGB565);
-	if (was_hidden) {
-		lv_obj_set_hidden(player_screen, true);
-	}
-	if (!sheet_snapshot) {
-		return; // no memory for it: the slide falls back to moving the page
-	}
-
-	sheet_snapshot_img = lv_image_create(lv_layer_top());
-	lv_image_set_src(sheet_snapshot_img, sheet_snapshot);
-	lv_obj_set_pos(sheet_snapshot_img, lv_obj_get_x(player_screen), lv_obj_get_y(player_screen));
-	lv_obj_set_clickable(sheet_snapshot_img, false);
-	// Behind the chevron and anything else that floats over the page.
-	lv_obj_move_background(sheet_snapshot_img);
-}
-
-// Takes the page the sheet slides over out of the drawing, and stands a picture
-// of it in its place on the top layer, under the moving one.
-//
-// Only done when the page snapshot above succeeded: if anything here fails the
-// screen is left alone and the slide simply costs what it used to.
-static void sheet_under_take(void) {
-	sheet_under_drop();
-	if (!sheet_snapshot_img) {
-		return; // the fallback belongs to the live page; do not take it away
-	}
-
-	lv_obj_t *frame = lv_screen_active();
-	if (!frame) {
-		return;
-	}
-
-	sheet_under_snapshot = lv_snapshot_take(frame, LV_COLOR_FORMAT_RGB565);
-	if (!sheet_under_snapshot) {
-		return;
-	}
-
-	sheet_under_img = lv_image_create(lv_layer_top());
-	lv_image_set_src(sheet_under_img, sheet_under_snapshot);
-	lv_obj_set_pos(sheet_under_img, 0, 0);
-	lv_obj_set_clickable(sheet_under_img, false);
-	// Underneath the moving picture, above nothing else.
-	lv_obj_move_to_index(sheet_under_img, 0);
-	lv_obj_move_to_index(sheet_snapshot_img, 1);
-
-	sheet_under_screen = frame;
-	lv_obj_set_hidden(sheet_under_screen, true);
-}
-
 static void sheet_anim_x_cb(void *obj, int32_t value) {
-	// The picture moves when there is one; the page itself otherwise.
-	lv_obj_t *mover = sheet_snapshot_img ? sheet_snapshot_img : (lv_obj_t *)obj;
-	lv_obj_set_x(mover, (int)value);
+	lv_obj_set_x((lv_obj_t *)obj, (int)value);
 	// The chevron belongs to the sheet while it moves: ride its edge, and
 	// snap back into the page's corner once the sheet is fully away.
 	back_btn_translate(value >= sheet_width ? 0 : value);
 }
 
-// The slide has stopped, in either direction: the page takes the picture's
-// place, at the position the slide landed on.
+// The slide has stopped, in either direction.
 static void sheet_arrived_cb(lv_anim_t *a) {
 	(void)a;
-	// Said out loud because it is the one number that says whether the slide
-	// itself is the problem, and whether the stand-in was used at all.
-	bool had_snapshot = sheet_snapshot_img != NULL;
+	// Said out loud because it is the number that says whether the slide itself
+	// is still a problem: the animation is 165 ms by design, and anything much
+	// past that is frames that could not be drawn in time.
 	uint32_t took = (uint32_t)(lv_tick_get() - sheet_slide_started);
-	sheet_snapshot_drop();
-	// The page was hidden for the length of the slide; open, it takes the
-	// stand-in's place, closed, it stays away.
-	lv_obj_set_x(player_screen, sheet_landing_x);
-	lv_obj_set_hidden(player_screen, !sheet_open);
-	// And the page that was stood aside comes back, in the same pass, so the
-	// eye never sees the difference.
-	sheet_under_drop();
 	if (!sheet_open) {
+		lv_obj_set_hidden(player_screen, true);
 		// Whatever page the close landed on, the chevron's visibility is settled
 		// once more now that the last animation frame has run -- the fix for the
 		// chevron flashing on the main menu for a frame on the way back to it.
@@ -5306,7 +5178,7 @@ static void sheet_arrived_cb(lv_anim_t *a) {
 	if (progress_slider_timer) {
 		lv_timer_resume(progress_slider_timer);
 	}
-	fprintf(stderr, "player: sheet slide %u ms (%s)\n", (unsigned)took, had_snapshot ? "snapshot" : "live page");
+	fprintf(stderr, "player: sheet slide %u ms\n", (unsigned)took);
 }
 
 // Moves the sheet to `x` (0 = fully open, sheet_width = fully out of the way).
@@ -5324,12 +5196,9 @@ static void sheet_move_to(int x, bool animate) {
 	// way back to the player.
 	lv_anim_delete(player_screen, sheet_anim_x_cb);
 
-	// A slide cancelled mid-flight leaves its stand-in on the top layer; the
-	// one below replaces it.
-	sheet_snapshot_drop();
-	sheet_under_drop();
+	// A slide cancelled mid-flight leaves the next one to start from where this
+	// one had got to.
 	sheet_travelling = animate;
-	sheet_landing_x = x;
 
 	if (!animate) {
 		// The page is the one that moves here -- by a finger, or not at all -- so
@@ -5340,19 +5209,6 @@ static void sheet_move_to(int x, bool animate) {
 		return;
 	}
 
-	// What travels is a picture of the page, not the page. The page is hidden
-	// for the length of the slide and put back the moment it lands -- one
-	// composite here, one there, and a blit for every frame in between.
-	sheet_snapshot_take();
-	if (sheet_snapshot_img) {
-		lv_obj_set_hidden(player_screen, true);
-		// ... and the page it is sliding over comes out of the drawing too, or
-		// every frame recomposites it for nothing. LVGL draws whatever meets the
-		// dirty area, hidden or not, and a slide meets all of it.
-		sheet_under_take();
-	} else {
-		fprintf(stderr, "player: no snapshot for the slide, the page moves itself\n");
-	}
 	sheet_slide_started = lv_tick_get();
 
 	lv_anim_t a;
@@ -5385,6 +5241,7 @@ void player_sheet_open(bool animate) {
 		// whatever the pages under the sheet did in the meantime.
 		sheet_under = lv_screen_active();
 	}
+	uint64_t open_started = mono_us();
 	sheet_open = true;
 	back_btn_player_mode(true);
 	lyrics_screen_hold_update();
@@ -5398,15 +5255,25 @@ void player_sheet_open(bool animate) {
 
 	// The first draw of a page pays for every label's text layout. Do it on the
 	// parked page, before it moves, so the bill is not one of the animation's
-	// frames -- and so the picture taken below is of the settled page rather
-	// than one whose title is still where it was a moment ago.
+	// frames.
 	lv_obj_update_layout(player_screen);
+	uint64_t layout_us = mono_us() - open_started;
 
 	// Artwork runs to the top edge here, so the bar steps aside. It is hidden
 	// rather than moved, which is why nothing slides during the drag.
 	topbar_set_hidden(true);
 
 	sheet_move_to(0, animate);
+
+	if (animate) {
+		// What the open costs before a single frame of the animation is drawn.
+		// The pass this lands in always looks expensive and never says why; this
+		// splits off the part that is the player's own doing. If it is small and
+		// the pass is not, the cost is in the page being opened from.
+		uint64_t total = mono_us() - open_started;
+		fprintf(stderr, "player: open %llu ms (layout %llu)\n", (unsigned long long)(total / 1000),
+				(unsigned long long)(layout_us / 1000));
+	}
 }
 
 void player_sheet_close(bool animate) {
@@ -5428,11 +5295,9 @@ void player_sheet_close(bool animate) {
 	medialist_refresh_visible();
 
 	if (!animate) {
-		// A slide may have been in the air: its stand-in goes and the page ends
-		// up where a closed sheet belongs, in the same pass.
+		// A slide may have been in the air: it stops here and the page ends up
+		// where a closed sheet belongs, in the same pass.
 		lv_anim_delete(player_screen, sheet_anim_x_cb);
-		sheet_snapshot_drop();
-		sheet_under_drop();
 		sheet_travelling = false;
 		lv_obj_set_x(player_screen, sheet_width);
 		back_btn_translate(0);
