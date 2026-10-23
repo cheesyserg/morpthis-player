@@ -162,11 +162,27 @@ void cover_set_backdrop_band_brightness(int pct);
 // Returns false when there is no artwork for this path.
 bool cover_thumb_load(const char *path, bool is_dir, int size, cover_image_t *out);
 
+// The same, with the fit the caller draws with. `fit_cover` crops the picture
+// to fill the square, which is what the player's sleeve does; false fits the
+// whole picture inside it, which is what the lists do. The two are cached
+// separately, because they are different pictures for a non-square source.
+bool cover_thumb_load_fit(const char *path, bool is_dir, int size, bool fit_cover, cover_image_t *out);
+
 // Like cover_thumb_load, but only looks in the cache -- the RAM copies first,
 // then the card -- and never decodes. For pages that want covers instantly or
 // not at all: the queue list builds a hundred rows in one go, where a hundred
 // cache reads are affordable and a hundred decodes are not.
 bool cover_thumb_cached(const char *path, int size, cover_image_t *out);
+
+// The fit-aware form of the above, for a worker-side caller that has a track
+// path rather than an album row's. Resolves the path to its album first, so it
+// finds what the scan pass wrote.
+bool cover_thumb_cached_fit(const char *path, int size, bool fit_cover, cover_image_t *out);
+
+// The square the player draws its sleeve in, or 0 when it is not square. The
+// scan's artwork pass renders one cover-fit entry at this size per album, so a
+// track change is a read instead of a decode.
+void cover_set_player_cover_size(int size);
 
 // The square the list rows draw their thumbnails in. The rows and the
 // pre-render below both ask this, so they cannot end up at different sizes --

@@ -3525,8 +3525,21 @@ static void reload_cover(const char *filepath) {
 		// pixel to one, held at the top of the panel.
 		int cover_w = backdrop_is_studio ? studio_cover_geometry(NULL) : cover_art_w;
 		int cover_h = backdrop_is_studio ? cover_w : cover_art_h;
-		coverloader_request_player(filepath, cover_w, cover_h, backdrop_w,
-								   backdrop_is_full ? backdrop_studio_h : backdrop_h);
+		cover_set_player_cover_size(cover_w == cover_h ? cover_w : 0);
+
+		// The backdrop fills the screen and is blurred from a half-size copy, so
+		// asking for the screen's own size makes the decoder work at a
+		// resolution nothing ever shows: the sleeve is a fraction of it, and the
+		// blur throws away what is left. studio_bg is an lv_image sized to the
+		// panel with COVER align, so it stretches whatever it is given.
+		int backdrop_req_w = backdrop_w;
+		int backdrop_req_h = backdrop_is_full ? backdrop_studio_h : backdrop_h;
+		if (backdrop_is_full) {
+			backdrop_req_w /= 2;
+			backdrop_req_h /= 2;
+		}
+
+		coverloader_request_player(filepath, cover_w, cover_h, backdrop_req_w, backdrop_req_h);
 		cover_request_outstanding = true;
 
 		// The collector rides on the progress timer; make sure it is ticking
@@ -5596,6 +5609,11 @@ void player_init(gui_config_t *cfg) {
 	backdrop_w = (int)cfg->screen_width;
 	backdrop_h = menu_height;
 	backdrop_studio_h = (int)cfg->screen_height;
+
+	// What the scan's artwork pass renders the sleeve at. Square only: every
+	// arrangement but Immersive draws it in a square box, and Immersive's
+	// full-panel crop has no cached size of its own.
+	cover_set_player_cover_size(cover_art_w == cover_art_h ? cover_art_w : 0);
 
 	// The two surfaces the V1's screen-sized blur shows through. A style
 	// rather than local properties, so the words' look and Studio can set and

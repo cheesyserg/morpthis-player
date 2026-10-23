@@ -44,6 +44,11 @@
 #define BACKDROP_BAND_BLUR_RADIUS 4
 #define BACKDROP_BAND_BLUR_PASSES 2
 
+// The width the blur radii were chosen against: a 240-pixel backdrop, whose
+// half-size copy (BACKDROP_SCALE_DIVISOR) is this across. The radii are scaled
+// by it, so they stay a fraction of the picture when the box changes size.
+#define BACKDROP_BLUR_REF_W 120
+
 // How far the band pulls each channel away from the pixel's own grey, in per
 // cent of that distance added on top: the tint that keeps a frosted sleeve a
 // colour and not a wash, after the dim has taken its light (see make_backdrop).
@@ -834,7 +839,23 @@ static bool make_backdrop(const raw_image_t *src, int box_w, int box_h, bool fro
 
 	uint8_t *scratch = malloc((size_t)small_w * small_h * 3);
 	if (scratch) {
+		// A blur is a fraction of the picture, not a fixed number of pixels.
+		// Keeping the radius absolute would double the softness as soon as the
+		// box was halved -- which is exactly what asking for a half-screen
+		// backdrop does.
 		int radius = band ? BACKDROP_BAND_BLUR_RADIUS : BACKDROP_BLUR_RADIUS;
+		radius = (radius * small_w + BACKDROP_BLUR_REF_W / 2) / BACKDROP_BLUR_REF_W;
+		int limit = small_w / 2;
+		if (limit < 1) {
+			limit = 1;
+		}
+		if (radius < 1) {
+			radius = 1;
+		}
+		if (radius > limit) {
+			radius = limit;
+		}
+
 		int passes = band ? BACKDROP_BAND_BLUR_PASSES : BACKDROP_BLUR_PASSES;
 		for (int i = 0; i < passes; i++) {
 			box_blur_pass(small, scratch, small_w, small_h, radius);
@@ -1486,12 +1507,37 @@ uint64_t cover_source_id(const char *filepath) {
 	return 0;
 }
 
+// Stored under the same key the scan's artwork pass writes (defined with the
+// cache below).
+static void thumb_store_player(const char *path, int size, const cover_image_t *img);
+
 bool cover_load_player_images(const char *filepath, int cover_w, int cover_h, cover_image_t *cover_out,
 							  int backdrop_w, int backdrop_h, cover_image_t *backdrop_out) {
 	if (cover_out)
 		memset(cover_out, 0, sizeof(*cover_out));
 	if (backdrop_out)
 		memset(backdrop_out, 0, sizeof(*backdrop_out));
+
+	// A square sleeve is one of the entries the scan pass rendered: same file,
+	// same size, same crop. Reading it costs one small blob, and the backdrop can
+	// be made from the picture itself, so a track change needs no decoder at all.
+	//
+	// Skipped when the backdrop is a band (it is cut from the foot of the source
+	// and tinted, which cover_blur_fill() does not do) and when the backdrop is
+	// meant to be a flipped reflection (make_backdrop() flips it, the blur copy
+	// does not).
+	bool square = cover_out && cover_w > 0 && cover_w == cover_h;
+	bool plain_backdrop = !backdrop_out || (backdrop_upright && !backdrop_from_bottom);
+	if (square && plain_backdrop) {
+		cover_image_t cached;
+		if (cover_thumb_cached_fit(filepath, cover_w, true, &cached)) {
+			*cover_out = cached;
+			if (backdrop_out) {
+				cover_blur_fill(&cached, backdrop_w, backdrop_h, backdrop_out);
+			}
+			return true;
+		}
+	}
 
 	// One decode feeds both images: the expensive part is the JPEG, not the
 	// scaling, so a track change decodes once rather than twice.
@@ -1529,6 +1575,13 @@ bool cover_load_player_images(const char *filepath, int cover_w, int cover_h, co
 	}
 	bool ok = (built == COVER_BUILD_OK);
 
+	// A sleeve decoded here is the same picture the scan pass would have written,
+	// so keep it: the next track of this album costs a read, and a scan that has
+	// already run and skipped this one is filled in.
+	if (ok && square && cover_index >= 0 && results[cover_index].pixels) {
+		thumb_store_player(filepath, cover_w, &results[cover_index]);
+	}
+
 	// A missing backdrop is survivable; the controls just stay plain.
 	if (cover_index >= 0)
 		*cover_out = results[cover_index];
@@ -1564,14 +1617,13 @@ void cover_free(cover_image_t *img) {
 // meaning nothing was found there.
 // ---------------------------------------------------------------------------
 
-// Only thumbnails are worth keeping on disk. The player's full-size cover is
-// decoded once per track change, which is not worth a megabyte of cache.
+// Only thumbnails are worth keeping on disk. The player's sleeve is one of
+// them now: at 110-240 pixels it is 24-115 KB, and rendering it once per album
+// is what makes a track change a read instead of a decode.
 //
-// The album carousel sets the ceiling: it decodes at 210, and a carousel that
-// re-decoded every cover on every visit would be the one page that never got
-// cheaper the second time. An entry at that size is worth keeping for the few
-// hundred albums a card holds, but not for anything larger.
-#define THUMB_DISK_MAX_SIZE 216
+// The largest arrangement sets the ceiling: the sleeve at the full width of a
+// 240-pixel panel. Anything larger is decoded per track, not cached.
+#define THUMB_DISK_MAX_SIZE 240
 #define THUMB_WAV_EPOCH "|w2"
 
 static sqlite3 *thumb_db;
@@ -1753,7 +1805,7 @@ void cover_set_cache_dir(const char *sd_root) {
 // FNV-1a. The cache key has to change when the source does, so the file's size
 // and timestamp go into it: replacing a cover.jpg invalidates the thumbnail
 // without anybody having to clear the cache.
-static uint64_t thumb_hash(const char *path, int box, bool is_dir) {
+static uint64_t thumb_hash(const char *path, int box, bool is_dir, bool fit_cover) {
 	struct stat st;
 	uint64_t h = 1469598103934665603ULL;
 
@@ -1763,11 +1815,16 @@ static uint64_t thumb_hash(const char *path, int box, bool is_dir) {
 	const char *epoch = (is_dir || has_extension(path, ".wav")) ? THUMB_WAV_EPOCH : "";
 
 	char material[700];
+	// The fit is part of the key only when it is the player's crop-to-fill: a
+	// list thumbnail fits the whole picture inside its square, a sleeve crops it.
+	// Leaving the contain form's material exactly as it was keeps every entry
+	// already on the card valid.
+	const char *fit = fit_cover ? "|c" : "";
 	if (stat(path, &st) == 0) {
-		snprintf(material, sizeof(material), "%s|%d|%c|%lld|%lld%s", path, box, is_dir ? 'd' : 'f',
-				 (long long)st.st_mtime, (long long)st.st_size, epoch);
+		snprintf(material, sizeof(material), "%s|%d|%c|%lld|%lld%s%s", path, box, is_dir ? 'd' : 'f',
+				 (long long)st.st_mtime, (long long)st.st_size, epoch, fit);
 	} else {
-		snprintf(material, sizeof(material), "%s|%d|%c|?%s", path, box, is_dir ? 'd' : 'f', epoch);
+		snprintf(material, sizeof(material), "%s|%d|%c|?%s%s", path, box, is_dir ? 'd' : 'f', epoch, fit);
 	}
 
 	for (const char *p = material; *p; p++) {
@@ -1781,11 +1838,12 @@ static uint64_t thumb_hash(const char *path, int box, bool is_dir) {
 // database is open at all is decided under the lock, in load and store.
 // `value_out`, when not NULL, receives the same key as a number, which is what
 // the RAM cache compares (a string compare per slot would not be worth it).
-static bool thumb_key(char *out, size_t out_size, uint64_t *value_out, const char *path, int box, bool is_dir) {
+static bool thumb_key(char *out, size_t out_size, uint64_t *value_out, const char *path, int box, bool is_dir,
+					  bool fit_cover) {
 	if (box > THUMB_DISK_MAX_SIZE) {
 		return false;
 	}
-	uint64_t h = thumb_hash(path, box, is_dir);
+	uint64_t h = thumb_hash(path, box, is_dir, fit_cover);
 	snprintf(out, out_size, "%016llx", (unsigned long long)h);
 	if (value_out) {
 		*value_out = h;
@@ -1905,7 +1963,9 @@ static void thumb_db_batch(bool begin) {
 // thumbnails.
 #define THUMB_RAM_BYTES (384 * 1024)
 #define THUMB_RAM_ENTRIES 192
-#define THUMB_RAM_MAX_ENTRY (16 * 1024)
+// Large enough for the player's sleeve at the compact layout's size (about
+// 24 KB), so replaying an album does not go to the card at all.
+#define THUMB_RAM_MAX_ENTRY (32 * 1024)
 
 typedef struct {
 	uint64_t key;
@@ -2072,8 +2132,11 @@ static void ram_clear(void) {
 // browser thumbnails
 // ---------------------------------------------------------------------------
 
-static cover_build_t thumb_load_uncached(const char *path, bool is_dir, int size, cover_image_t *out) {
-	image_request_t req = {.w = size, .h = size, .fit = COVER_FIT_CONTAIN, .backdrop = false};
+static cover_build_t thumb_load_uncached(const char *path, bool is_dir, int size, bool fit_cover, cover_image_t *out) {
+	image_request_t req = {.w = size,
+					   .h = size,
+					   .fit = fit_cover ? COVER_FIT_COVER : COVER_FIT_CONTAIN,
+					   .backdrop = false};
 	return build_from_sources(path, is_dir, &req, 1, out);
 }
 
@@ -2087,6 +2150,26 @@ static const char *thumb_source_path(const char *path, bool is_dir, char *buf, s
 	return path;
 }
 
+bool cover_thumb_cached_fit(const char *path, int size, bool fit_cover, cover_image_t *out) {
+	memset(out, 0, sizeof(*out));
+
+	// Resolved like every other worker-side request, so a track asks for its
+	// album's entry and not for one no scan pass ever wrote.
+	char source[1024];
+	const char *from = thumb_source_path(path, false, source, sizeof(source));
+
+	char key[32];
+	if (!thumb_key(key, sizeof(key), NULL, from, size, false, fit_cover)) {
+		return false;
+	}
+
+	bool has_image = false;
+	if (thumb_db_load(key, out, &has_image)) {
+		return has_image;
+	}
+	return false;
+}
+
 bool cover_thumb_cached(const char *path, int size, cover_image_t *out) {
 	memset(out, 0, sizeof(*out));
 
@@ -2096,7 +2179,7 @@ bool cover_thumb_cached(const char *path, int size, cover_image_t *out) {
 	// an extra query is the last thing to add.
 	char key[32];
 	uint64_t value = 0;
-	if (!thumb_key(key, sizeof(key), &value, path, size, false)) {
+	if (!thumb_key(key, sizeof(key), &value, path, size, false, false)) {
 		return false;
 	}
 
@@ -2114,7 +2197,7 @@ bool cover_thumb_cached(const char *path, int size, cover_image_t *out) {
 	return false;
 }
 
-bool cover_thumb_load(const char *path, bool is_dir, int size, cover_image_t *out) {
+bool cover_thumb_load_fit(const char *path, bool is_dir, int size, bool fit_cover, cover_image_t *out) {
 	memset(out, 0, sizeof(*out));
 
 	// A track is resolved to the first track of its *album* -- the same file an
@@ -2129,12 +2212,15 @@ bool cover_thumb_load(const char *path, bool is_dir, int size, cover_image_t *ou
 
 	char key[32];
 	uint64_t value = 0;
-	bool cacheable = thumb_key(key, sizeof(key), &value, from, size, is_dir);
+	bool cacheable = thumb_key(key, sizeof(key), &value, from, size, is_dir, fit_cover);
 
 	// RAM first: an entry already served costs a memcpy instead of a card read.
 	// This is what makes scrolling back over a screen, and reopening a page,
-	// look instant rather than merely quick.
-	if (cacheable && ram_get(value, out)) {
+	// look instant rather than merely quick. Only the list thumbnails are kept
+	// in RAM: a sleeve is 24 KB against a list row's 2.6, and the player asks
+	// for one of them per album, so keeping sleeves there would evict a
+	// screenful of thumbnails to save a single read.
+	if (cacheable && !fit_cover && ram_get(value, out)) {
 		return true;
 	}
 
@@ -2143,14 +2229,14 @@ bool cover_thumb_load(const char *path, bool is_dir, int size, cover_image_t *ou
 	if (cacheable) {
 		bool has_image = false;
 		if (thumb_db_load(key, out, &has_image)) {
-			if (has_image) {
+			if (has_image && !fit_cover) {
 				ram_put(value, out);
 			}
 			return has_image;
 		}
 	}
 
-	cover_build_t built = thumb_load_uncached(from, is_dir, size, out);
+	cover_build_t built = thumb_load_uncached(from, is_dir, size, fit_cover, out);
 
 	// "There is no artwork here" is worth storing too: a folder without any is
 	// otherwise rescanned from scratch every time it scrolls past.
@@ -2162,7 +2248,7 @@ bool cover_thumb_load(const char *path, bool is_dir, int size, cover_image_t *ou
 	// failure would leave that track without a cover for good.
 	if (cacheable && built != COVER_BUILD_FAILED) {
 		thumb_db_store(key, out, built == COVER_BUILD_OK);
-		if (built == COVER_BUILD_OK) {
+		if (built == COVER_BUILD_OK && !fit_cover) {
 			ram_put(value, out);
 		}
 	}
@@ -2170,11 +2256,35 @@ bool cover_thumb_load(const char *path, bool is_dir, int size, cover_image_t *ou
 	return built == COVER_BUILD_OK;
 }
 
+bool cover_thumb_load(const char *path, bool is_dir, int size, cover_image_t *out) {
+	return cover_thumb_load_fit(path, is_dir, size, false, out);
+}
+
+// Stores the player's sleeve under the key cover_thumb_cached_fit() will look
+// for later: the album's own file, the sleeve's size, and the crop-to-fill fit.
+static void thumb_store_player(const char *path, int size, const cover_image_t *img) {
+	char source[1024];
+	const char *from = thumb_source_path(path, false, source, sizeof(source));
+
+	char key[32];
+	if (!thumb_key(key, sizeof(key), NULL, from, size, false, true)) {
+		return; // too large to keep, or the path is not one we can key
+	}
+
+	thumb_db_store(key, img, true);
+}
+
 // ---------------------------------------------------------------------------
 // Pre-rendering the album list
 // ---------------------------------------------------------------------------
 
 int cover_thumb_size(void) { return bp_pick(36, 72); }
+
+// The square the player draws its sleeve in. Zero until the player has been
+// laid out, or when the arrangement draws a rectangle.
+static int player_cover_size;
+
+void cover_set_player_cover_size(int size) { player_cover_size = size > 0 ? size : 0; }
 
 // How many album paths are held at once while walking the index. Only the
 // working set of one query, not of the library.
@@ -2236,6 +2346,7 @@ int cover_precache_albums(bool (*stop)(void), void (*progress)(int done, int tot
 
 	int done = 0;
 	int made = 0;
+	int sleeves = 0;
 	int offset = 0;
 	uint64_t started = now_ms();
 
@@ -2279,6 +2390,18 @@ int cover_precache_albums(bool (*stop)(void), void (*progress)(int done, int tot
 			}
 			cover_free(&image);
 
+			// The player's sleeve, so a track change reads instead of decoding.
+			// A second picture rather than a free one: the two sizes can land on
+			// different JPEG scales, so neither can be derived from the other by
+			// the cache.
+			if (player_cover_size > 0) {
+				cover_image_t art;
+				if (cover_thumb_load_fit(batch.paths[i], false, player_cover_size, true, &art)) {
+					sleeves++;
+				}
+				cover_free(&art);
+			}
+
 			done++;
 			if (progress) {
 				progress(done, total, user);
@@ -2302,7 +2425,7 @@ int cover_precache_albums(bool (*stop)(void), void (*progress)(int done, int tot
 
 	// The measurement that matters for deciding whether this stays in the scan:
 	// what it cost, and how much of it was work at all rather than cache hits.
-	fprintf(stderr, "cover: album artwork pass: %d rendered, %d albums in %llu ms\n", made, done,
+	fprintf(stderr, "cover: album artwork pass: %d rendered, %d sleeves, %d albums in %llu ms\n", made, sleeves, done,
 			(unsigned long long)(now_ms() - started));
 	return made;
 }
