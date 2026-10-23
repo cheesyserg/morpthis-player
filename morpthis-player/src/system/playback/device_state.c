@@ -9,11 +9,6 @@
 #include "src/system/library/library.h"
 #include "src/system/library/metadata.h"
 #include "src/system/playback/playlist.h"
-#include "src/system/streaming/podcast.h"
-#include "src/system/streaming/podcastcache.h"
-#include "src/system/streaming/qobuzcache.h"
-#include "src/system/streaming/tidalcache.h"
-#include "src/system/streaming/radio.h"
 #include "src/system/audio/replaygain.h"
 #include "src/system/device/system.h"
 
@@ -137,11 +132,10 @@ static uint32_t mono_ms(void) {
 
 static bool remember_enabled(void) { return config_get_int("player", "remember_track", 0) != 0; }
 
-// A track this player must not offer to come back to: a live stream has no
-// position, and a streaming cache file will not exist at the next boot.
+// A track this player must not offer to come back to: it needs a file that
+// will still exist at the next boot.
 static bool remember_worth_saving(const device_state_t *state) {
-	return !state->live && state->current_file[0] && !qobuzcache_owns(state->current_file) &&
-		   !tidalcache_owns(state->current_file);
+	return !state->live && state->current_file[0];
 }
 
 // True when the current track was restored paused at boot and has not yet
@@ -201,8 +195,7 @@ static void device_state_bookkeeping_flush(void);
 // track starts inside the delay -- which is there to keep the array from
 // growing rather than as a path anyone takes.
 static void record_current_track_play(void) {
-	if (!current_metadata_file[0] || audiobook_is_playing() || podcastcache_is_episode(current_metadata_file) ||
-		qobuzcache_owns(current_metadata_file) || tidalcache_owns(current_metadata_file)) {
+	if (!current_metadata_file[0] || audiobook_is_playing()) {
 		return;
 	}
 	if (pending_play_count >= PENDING_PLAYS_MAX) {
@@ -289,73 +282,29 @@ void device_state_get(device_state_t *out) {
 	if (!out)
 		return;
 
-	// A radio has the DAC through audio_external_*, which audio.c's own
-	// status does not know about -- so the live source is asked first and
-	// answers for the whole now-playing picture when it is on.
+	// The old live-stream marker is kept at false for the UI code that still
+	// has a branch for it; nothing in this build produces a live source.
 	out->live = false;
 	out->live_cover[0] = '\0';
 
-	if (radio_is_active()) {
-		radio_now_t now;
-		radio_get_now(&now);
+	out->status = audio_get_status();
+	audio_get_current_file(out->current_file, sizeof(out->current_file));
+	audio_get_progress(&out->progress_current_secs, &out->progress_total_secs);
 
-		out->live = true;
-		// Connecting counts as playing: it is on, and the button that would
-		// stop it should say so. A station that has been stopped reads as
-		// stopped, and its button goes back to play.
-		out->status = (now.playing || now.connecting) ? AUDIO_STATUS_PLAYING : AUDIO_STATUS_STOPPED;
-		out->current_file[0] = '\0';
-		out->progress_current_secs = 0;
-		out->progress_total_secs = 0;
-		out->stream_sample_rate = now.sample_rate;
-		out->stream_channels = now.channels;
-		snprintf(out->live_cover, sizeof(out->live_cover), "%s", now.cover_path);
-
-		memset(&out->metadata, 0, sizeof(out->metadata));
-		snprintf(out->metadata.title, sizeof(out->metadata.title), "%s", now.station);
-
-		// The second line: what the stream says is on air, or -- before the
-		// first frame has come out of it -- what the player is busy doing.
-		// Opening a connection to a radio server takes a moment, and a blank
-		// line for that moment reads as a station that does not work.
-		if (now.error[0]) {
-			// Whatever went wrong goes where the on-air title would be: it is
-			// the line the user is already reading, and a station that simply
-			// sits there silent is the worst way to say "this one does not
-			// work here".
-			snprintf(out->metadata.artist, sizeof(out->metadata.artist), "%s", now.error);
-		} else if (now.title[0]) {
-			snprintf(out->metadata.artist, sizeof(out->metadata.artist), "%s", now.title);
-		} else if (now.connecting) {
-			snprintf(out->metadata.artist, sizeof(out->metadata.artist), "%s", tr("connecting"));
-		}
-		out->metadata.has_tags = true;
-	} else {
-		out->status = audio_get_status();
-		audio_get_current_file(out->current_file, sizeof(out->current_file));
-		audio_get_progress(&out->progress_current_secs, &out->progress_total_secs);
-
-		// While a skip button is held the position shown is the one the thumb
-		// has run to, not the one the decoder is at: the seek itself happens
-		// when the button comes up (see the scrub section below).
-		double scrub = 0;
-		if (out->progress_total_secs > 0 && device_state_scrub_active(&scrub)) {
-			out->progress_current_secs = scrub;
-		}
-		audio_get_stream_info(&out->stream_sample_rate, &out->stream_channels);
-
-		// Starting a radio stops local playback, which leaves audio.c with no
-		// file at all -- so when the radio is switched off the player would
-		// come back to a blank screen instead of to the track it was on.
-		// The loaded track is still known here; report it, stopped. Pressing
-		// play then restarts it, which is what the button already does from a
-		// stopped state.
-		if (!out->current_file[0] && current_metadata_file[0]) {
-			snprintf(out->current_file, sizeof(out->current_file), "%s", current_metadata_file);
-		}
-
-		out->metadata = current_metadata;
+	// While a skip button is held the position shown is the one the thumb has
+	// run to, not the one the decoder is at: the seek itself happens when the
+	// button comes up (see the scrub section below).
+	double scrub = 0;
+	if (out->progress_total_secs > 0 && device_state_scrub_active(&scrub)) {
+		out->progress_current_secs = scrub;
 	}
+	audio_get_stream_info(&out->stream_sample_rate, &out->stream_channels);
+
+	if (!out->current_file[0] && current_metadata_file[0]) {
+		snprintf(out->current_file, sizeof(out->current_file), "%s", current_metadata_file);
+	}
+
+	out->metadata = current_metadata;
 
 	char *battery = read_battery_percent();
 	strncpy(out->battery_percent, battery ? battery : "!!", sizeof(out->battery_percent) - 1);
@@ -468,19 +417,10 @@ static void queue_save_now(void) {
 	}
 
 	int filled = 0;
-	bool from_stream = false;
 	for (int i = 0; i < count; i++) {
 		char path[512];
 		if (!playlist_path_at(i, path, sizeof(path))) {
 			continue;
-		}
-		// A streaming queue is not saved: the files are transient (the caches
-		// empty themselves) and the next boot would restore a queue of paths
-		// that no longer exist, mixed in with the user's own tracks. The RAM
-		// bridge's source IDs are transient for the same reason.
-		if (qobuzcache_owns(path) || tidalcache_owns(path)) {
-			from_stream = true;
-			break;
 		}
 		list[filled] = strdup(path);
 		if (!list[filled]) {
@@ -489,7 +429,7 @@ static void queue_save_now(void) {
 		filled++;
 	}
 
-	if (filled > 0 && !from_stream) {
+	if (filled > 0) {
 		library_queue_save((const char *const *)list, filled, current, playlist_is_custom());
 		saved_queue_revision = revision;
 		queue_ever_saved = true;
@@ -548,24 +488,6 @@ void device_state_queue_changed(void) {
 	queue_save_now();
 }
 
-// Four streaming preparations: Qobuz, Tidal, podcasts and Subsonic.
-#define PREPARE_CB_MAX 4
-static device_state_prepare_cb prepare_cbs[PREPARE_CB_MAX];
-static int prepare_cb_count;
-
-void device_state_add_prepare_cb(device_state_prepare_cb cb) {
-	if (!cb || prepare_cb_count >= PREPARE_CB_MAX) {
-		return;
-	}
-	// Registering twice would mean preparing the same track twice. The cost is
-	// one walk over four entries, once at start-up.
-	for (int i = 0; i < prepare_cb_count; i++) {
-		if (prepare_cbs[i] == cb) {
-			return;
-		}
-	}
-	prepare_cbs[prepare_cb_count++] = cb;
-}
 
 // Defined with the rest of the scrub state further down.
 static void scrub_cancel(void);
@@ -595,14 +517,12 @@ void device_state_note_storage_gone(void) {
 	interrupted_pos = state.progress_current_secs;
 }
 
-// A book plays at the audiobook speed, an episode at the podcast speed, and
-// anything else at 1.0. Set at every track change and not only from the
-// pop-over, so a song that follows a book at 1.5x is not also played at 1.5x.
+// A book plays at the audiobook speed, anything else at 1.0. Set at every
+// track change and not only from the pop-over, so a song that follows a book at
+// 1.5x is not also played at 1.5x.
 static void apply_track_speed(void) {
 	if (audiobook_is_playing()) {
 		audio_set_speed(audiobook_speed());
-	} else if (podcastcache_is_episode(current_metadata_file)) {
-		audio_set_speed(podcast_speed());
 	} else {
 		audio_set_speed(1.0);
 	}
@@ -631,13 +551,10 @@ static void load_and_play_at(const char *filepath, double position) {
 	// own when the outgoing one ends.
 	scrub_cancel();
 
-	// A file and a stream cannot both have the output. Starting a track ends
-	// the radio outright -- not merely stops it -- because from here on the
-	// player belongs to the track. The same applies to an app left playing in
-	// the background: its raw output is closed before the local decoder opens
-	// the DAC, or the open would sit in the busy-retry loop and fail.
+	// A file cannot share the output with an app left playing in the
+	// background: its raw output is closed before the local decoder opens the
+	// DAC, or the open would sit in the busy-retry loop and fail.
 	apphost_release_audio();
-	radio_clear();
 
 	// Callers may replay the already-loaded track by passing current_metadata_file
 	// itself, so guard against copying a buffer onto itself.
@@ -668,16 +585,6 @@ static void load_and_play_at(const char *filepath, double position) {
 	apply_track_speed();
 	tags_ms = mono_ms() - started;
 
-	// The file may not be there yet: with Qobuz and Tidal the queue holds the
-	// whole album and playback can reach a track before its download does. The
-	// registered callback takes over and restarts this once the file is ready;
-	// stop here rather than hand the decoder a path to nothing.
-	for (int i = 0; i < prepare_cb_count; i++) {
-		if (!prepare_cbs[i](current_metadata_file)) {
-			queue_persist();
-			return;
-		}
-	}
 
 	if (position > 0) {
 		audio_play_at(current_metadata_file, position);
@@ -708,7 +615,6 @@ static void load_and_play(const char *filepath) { load_and_play_at(filepath, -1.
 // play starts it. The queue is left as it is.
 static void load_paused(const char *filepath) {
 	scrub_cancel();
-	radio_clear();
 
 	if (filepath != current_metadata_file) {
 		snprintf(current_metadata_file, sizeof(current_metadata_file), "%s", filepath);
@@ -916,7 +822,6 @@ void device_state_play_file_at(const char *filepath, double position) {
 
 	playlist_load_folder(folder, filename);
 
-	radio_clear();
 	if (filepath != current_metadata_file) {
 		strncpy(current_metadata_file, filepath, sizeof(current_metadata_file) - 1);
 		current_metadata_file[sizeof(current_metadata_file) - 1] = '\0';
@@ -978,8 +883,8 @@ void device_state_play_list(const char *const *list, int count, int start_index)
 	}
 }
 
-// The same for a queue that already carries its own order: a podcast's
-// episodes. See playlist_load_paths_ordered().
+// The same for a queue that already carries its own order: an audiobook's
+// parts. See playlist_load_paths_ordered().
 void device_state_play_list_ordered(const char *const *list, int count, int start_index) { device_state_play_list_ordered_at(list, count, start_index, -1.0); }
 
 void device_state_play_list_ordered_at(const char *const *list, int count, int start_index, double position) {
@@ -1226,10 +1131,6 @@ static bool chain_beside(bool forward) {
 }
 
 bool device_state_advance_auto(char *out_path, size_t out_size) {
-	if (radio_is_active()) {
-		return false; // a stream never finishes, so there is nothing to advance to
-	}
-
 	// A book ends where it ends. The queue behind a book in one file is its
 	// folder, and on a card that folder is a shelf of other books -- rolling
 	// straight into somebody else's novel at the end of this one is not what
@@ -1384,27 +1285,6 @@ bool device_state_prev(char *out_path, size_t out_size) {
 bool device_state_take_completion(void) { return audio_take_completion(); }
 
 audio_status_t device_state_toggle_play_pause(void) {
-	// A live stream cannot be paused: there is no position to come back to,
-	// and starting again means reconnecting. Whoever pressed play/pause --
-	// the player's button, the control centre, the physical key -- means
-	// "stop this". Without this, the paused track underneath would resume on
-	// top of the stream and both would be writing to one output.
-	if (radio_is_active()) {
-		// While it is still connecting the key does nothing: stopping a
-		// connection halfway only makes the wait for the next one longer.
-		if (radio_is_connecting()) {
-			return AUDIO_STATUS_PLAYING;
-		}
-		if (radio_is_playing()) {
-			radio_stop();
-			return AUDIO_STATUS_STOPPED;
-		}
-		// Stopped on a station: play means reconnect to it, not go back to
-		// whatever track was loaded before.
-		radio_resume();
-		return AUDIO_STATUS_PLAYING;
-	}
-
 	switch (audio_get_status()) {
 	case AUDIO_STATUS_PLAYING:
 		audio_pause();

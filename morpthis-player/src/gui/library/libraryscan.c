@@ -23,7 +23,7 @@
 #include "src/gui/shell/toast.h"
 #include "src/system/library/audiobookdb.h"
 #include "src/system/playback/playlist.h"
-#include "src/system/streaming/podcastdl.h"
+
 #include "src/system/core/lang.h"
 #include "src/system/library/library.h"
 #include "src/system/device/power.h"
@@ -239,8 +239,8 @@ static bool pick_add(const char *name) {
 }
 
 // The folders at the root of the card, alphabetically: not the hidden ones,
-// not the ones a desktop leaves behind, and not Audiobooks or Podcast, which
-// the music scan never reads.
+// not the ones a desktop leaves behind, and not Audiobooks or the Podcast
+// folder older builds left behind, which the music scan never reads.
 static void pick_read_folders(void) {
 	pick_clear();
 	DIR *dir = sd_root ? opendir(sd_root) : NULL;
@@ -249,7 +249,7 @@ static void pick_read_folders(void) {
 	}
 	struct dirent *de;
 	while ((de = readdir(dir)) != NULL) {
-		if (de->d_name[0] == '.' || playlist_is_junk_name(de->d_name) || strcasecmp(de->d_name, AUDIOBOOKDB_FOLDER) == 0 || strcasecmp(de->d_name, PODCASTDL_FOLDER) == 0) {
+		if (de->d_name[0] == '.' || playlist_is_junk_name(de->d_name) || strcasecmp(de->d_name, AUDIOBOOKDB_FOLDER) == 0 || strcasecmp(de->d_name, LIBRARY_LEGACY_PODCAST_FOLDER) == 0) {
 			continue;
 		}
 		char path[768];

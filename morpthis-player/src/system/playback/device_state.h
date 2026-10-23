@@ -19,15 +19,8 @@ typedef struct {
 
 	song_metadata_t metadata; // metadata of current_file; has_tags=false if none loaded
 
-	// A live stream (internet radio) rather than a file. Everything about it
-	// comes from radio.c: `metadata.title` is the station, `metadata.artist`
-	// is whatever the stream says is on air, `current_file` is empty (there is
-	// no file), and the two progress figures are zero because a live stream
-	// has neither a position nor a length. `live_cover` is the station icon on
-	// disk when one was downloaded.
-	//
-	// Anything that draws now-playing has to look at this: without it a radio
-	// reads as a track that has lost its file.
+	// Retained at false for the now-playing branches that predate the removal
+	// of the built-in live sources. Nothing in this build sets it true.
 	bool live;
 	char live_cover[256];
 
@@ -96,41 +89,18 @@ void device_state_restore_list(const char *const *list, int count, int start_ind
 // started, and then nothing has changed.
 bool device_state_play_index(library_index_t *ix, int start_index);
 
-// Play from an explicit list of full paths: a playlist file, a streaming album,
+// Play from an explicit list of full paths: a playlist file, an album,
 // anything with no query behind it. The queue is the list itself, so next/prev
 // follow it instead of the file's folder.
 void device_state_play_list(const char *const *list, int count, int start_index);
 
-// For a queue whose order is its content (a podcast's episodes): neither
+// For a queue whose order is its content (an audiobook's parts): neither
 // shuffle nor repeat touch it. See playlist_load_paths_ordered().
 void device_state_play_list_ordered(const char *const *list, int count, int start_index);
 // The same, starting `position` seconds into the first track: a folder book
 // resumed where it was left. Below zero means its beginning.
 void device_state_play_list_ordered_at(const char *const *list, int count, int start_index, double position);
 
-// Before a file starts, someone can say "not yet".
-//
-// This exists for the streaming services. Since the queue holds the whole album
-// rather than only the tracks already downloaded, playback can reach a file
-// that is not there yet. A registered callback receives the path and:
-//
-//   * returns true if it can be played (the file exists, or it is not theirs);
-//   * returns false after taking responsibility for preparing it and restarting
-//     playback once it is ready.
-//
-// Called on the GUI thread and must not block.
-//
-// Several can be registered, which is why this adds rather than sets. With a
-// single slot the second registration would silently displace the first, and a
-// queue would stop waiting for its downloads and skip tracks that have not
-// arrived.
-//
-// All of them are called, in registration order, and the track starts only if
-// all say yes. The first to say no takes charge and the walk stops there: the
-// others have nothing to say about a file that is not theirs, and asking anyway
-// would mean two preparations in flight on the same path.
-typedef bool (*device_state_prepare_cb)(const char *path);
-void device_state_add_prepare_cb(device_state_prepare_cb cb);
 
 // Jump to entry `index` of the current queue.
 bool device_state_play_queue_index(int index);

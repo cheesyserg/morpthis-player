@@ -17,8 +17,7 @@
 #include "src/system/net/wifi.h"
 #include "src/system/playback/audiobook.h"
 #include "src/system/playback/device_state.h"
-#include "src/system/streaming/podcastcache.h"
-#include "src/system/streaming/radio.h"
+
 
 #define TICK_MS 1000
 
@@ -328,7 +327,7 @@ static void tick_cb(lv_timer_t *t) {
 		now.title = tags ? m->title : "";
 		now.album = tags ? m->album : "";
 
-		now.skip = radio_is_active() || audiobook_is_playing() || podcastcache_is_episode(file);
+		now.skip = audiobook_is_playing();
 		lastfm_note_playback(&now);
 	}
 

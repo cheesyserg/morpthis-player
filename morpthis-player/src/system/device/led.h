@@ -89,9 +89,8 @@ void led_set_on_charger(bool present);
 // `lossy` is audio_stream_is_lossy(), `bits` the source depth (0 while unknown)
 // and `dsd` true for a DSD source. A DSD file goes to the DAC over DoP, at a
 // PCM carrier rate of 176.4 kHz and up that would otherwise read as hi-res PCM.
-// `podcast` true paints the purple instead. Cheap to call repeatedly: only
-// writes on change.
-void led_update_playback(bool playing, int sample_rate, bool lossy, int bits, bool podcast, bool dsd);
+// Cheap to call repeatedly: only writes on change.
+void led_update_playback(bool playing, int sample_rate, bool lossy, int bits, bool dsd);
 
 // Wi-Fi transfer active: a blinking blue. Stays lit with the screen off, since
 // it indicates the server is running, and overrides the darken-in-standby

@@ -34,10 +34,10 @@ void playlist_load_folder(const char *folder, const char *selected_filename);
 // *custom* queue: it is never replaced behind the user's back.
 void playlist_load_paths(const char *const *list, int count, int start_index);
 
-// The same, for a queue whose order is part of its meaning: podcast episodes,
-// newest first going back in time. Neither shuffle nor repeat touches it --
-// shuffling a sequence breaks it rather than reordering it. Stops at the end,
-// like a normal queue.
+// The same, for a queue whose order is part of its meaning: the chapters of a
+// book, in reading order. Neither shuffle nor repeat touches it -- shuffling a
+// sequence breaks it rather than reordering it. Stops at the end, like a
+// normal queue.
 void playlist_load_paths_ordered(const char *const *list, int count, int start_index);
 
 // Puts `path` into the queue right after the track playing now ("add to

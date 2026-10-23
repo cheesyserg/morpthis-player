@@ -418,10 +418,10 @@ void switch_screen(lv_obj_t *target_screen) {
 	// already on screen, so there is nothing to load and nothing to remember.
 	if (target_screen == player_screen) {
 		// Except when arriving from a page the player opened itself: the queue,
-		// an audiobook's chapters, a Qobuz list. Tapping a track there brings
-		// the player back up, but if the sheet slid over the queue, the next
-		// chevron press would pull the queue out again instead of the page the
-		// player was first opened from. Picking a track from the queue is not a
+		// an audiobook's chapters. Tapping a track there brings the player back
+		// up, but if the sheet slid over the queue, the next chevron press would
+		// pull the queue out again instead of the page the player was first
+		// opened from. Picking a track from the queue is not a
 		// step forward: it is the same playback, and the queue is done.
 		//
 		// So the queue is closed here, exactly as the chevron would (see
@@ -559,7 +559,7 @@ void switcher_set_back_guard(lv_obj_t *screen, bool (*handler)(void)) {
 
 // The question the drag preview has to ask without moving anything: going back
 // now, does the page stay the same? Pages that keep a stack of their own --
-// Qobuz, Tidal, podcasts, every list that lives on one screen -- answer here,
+// the audiobook lists, every list that lives on one screen -- answer here,
 // and the drag uses it to avoid drawing another screen's page underneath when
 // that is not where the release will land.
 void switcher_set_back_guard_peek(lv_obj_t *screen, bool (*peek)(void)) {

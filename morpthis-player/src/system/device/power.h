@@ -28,8 +28,8 @@
 //
 // Wi-Fi parking in standby has no switch: a minute after the screen goes dark
 // with nothing wanting the radio it powers itself down, and wifi_in_use() in
-// power.c keeps it up while something is using it -- Qobuz, Tidal, podcasts,
-// radio, AirPlay, DLNA, file transfer. The wait is [power] radio_park_seconds.
+// power.c keeps it up while something is using it -- an app holding the
+// network, AirPlay, DLNA, file transfer. The wait is [power] radio_park_seconds.
 //
 // Every knob here is driven at runtime from the settings pages, so the config is
 // copied into the module and exposed through setters and getters.

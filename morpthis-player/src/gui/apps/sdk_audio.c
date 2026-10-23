@@ -11,7 +11,7 @@
 #include "src/system/audio/audio.h"
 #include "src/system/audio/eq.h"
 #include "src/system/playback/device_state.h"
-#include "src/system/streaming/radio.h"
+
 
 // ---------------------------------------------------------------------------
 // audio.h
@@ -183,12 +183,9 @@ static bool reopen_output(bool playing) {
 	int channels = external_channels;
 	int bits = external_bits;
 	int buffer_ms = external_buffer_ms;
-	// The suspend may have let local playback or the radio start in the
-	// meantime. An app taking the output still means one writer only.
+	// The suspend may have let local playback start in the meantime. An app
+	// taking the output still means one writer only.
 	audio_stop();
-	if (radio_is_playing()) {
-		radio_stop();
-	}
 	external_open = audio_external_begin_latency(rate, channels, bits, buffer_ms);
 	if (!external_open) {
 		return false;
@@ -324,9 +321,6 @@ bool morpthis_audio_open_ex(int rate, int channels, int bits, int buffer_ms) {
 	// One writer on the DAC. The queue is kept, so the player can resume the
 	// track it was on once the app has closed the output.
 	audio_stop();
-	if (radio_is_playing()) {
-		radio_stop();
-	}
 
 	external_open = audio_external_begin_latency(rate, channels, bits, buffer_ms);
 	if (external_open) {

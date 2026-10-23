@@ -23,7 +23,6 @@
 #include "src/system/device/sysserver.h"
 #include "src/system/audio/usbaudio.h"
 #include "src/system/core/utils.h"
-#include "src/system/streaming/radio.h"
 #include "src/gui/apps/apphost.h"
 #include "src/gui/nowplaying/cover.h"
 
@@ -902,7 +901,6 @@ static void storage_reopen_services(void) {
 	btlog_card_attach(sd_mount);
 
 	cover_set_cache_dir(sd_mount);
-	radio_store_open(sd_mount);
 
 	storage_active = false;
 	library_card_returned(sd_mount);
@@ -976,14 +974,10 @@ static void storage_export(void) {
 	logging_suspend_for_usb();
 	btlog_card_release();
 
-	// Two more open files live on the card, and missing them is what made the
-	// export fail to unmount it: the thumbnail cache (cover.c) and the radio
-	// database (radio.c) are SQLite handles the player keeps open for the whole
-	// session. A file left open by this process is enough to make the umount
-	// fail with EBUSY. Shutdown closes exactly these two for the same reason.
-	// They go back on the card in storage_restore().
+	// The thumbnail cache is another open file on the card, and missing it is
+	// what made the export fail to unmount it. It goes back on the card in
+	// storage_restore().
 	cover_set_cache_dir(NULL); // the thumbnail cache moves to /tmp
-	radio_store_close();
 
 	if (sysserver_available()) {
 		sysserver_umount(sd_mount);

@@ -16,9 +16,7 @@ void trackmenu_init(gui_config_t *cfg);
 // Opens the popover next to `anchor` with the queue and details entries.
 void trackmenu_open(lv_obj_t *anchor);
 
-// Opens the queue page directly, without the menu in front. For the player with
-// a podcast playing: there the button is the episodes button, and the episodes
-// are the queue.
+// Opens the queue page directly, without the menu in front.
 void trackmenu_open_queue(void);
 
 // Opens the details page for a specific file (from a library list's menu).

@@ -17,12 +17,6 @@
 
 // The values stay here for the life of the program: short strings, read once,
 // and every caller expects a pointer that does not die under it.
-static char qobuz_app_id[64];
-static char qobuz_app_secret[128];
-static char tidal_client_id[64];
-static char tidal_client_secret[128];
-static char podcast_key[64];
-static char podcast_secret[128];
 static char lastfm_key[64];
 static char lastfm_secret[64];
 static char source_path[256];
@@ -89,37 +83,13 @@ static void parse_line(char *line, char section[32]) {
 
 	char *dest = NULL;
 	size_t dest_size = 0;
-	if (strcmp(section, "qobuz") == 0) {
-		if (strcmp(key, "app_id") == 0) {
-			dest = qobuz_app_id;
-			dest_size = sizeof(qobuz_app_id);
-		} else if (strcmp(key, "app_secret") == 0) {
-			dest = qobuz_app_secret;
-			dest_size = sizeof(qobuz_app_secret);
-		}
-	} else if (strcmp(section, "podcast") == 0) {
-		if (strcmp(key, "api_key") == 0) {
-			dest = podcast_key;
-			dest_size = sizeof(podcast_key);
-		} else if (strcmp(key, "api_secret") == 0) {
-			dest = podcast_secret;
-			dest_size = sizeof(podcast_secret);
-		}
-	} else if (strcmp(section, "lastfm") == 0) {
+	if (strcmp(section, "lastfm") == 0) {
 		if (strcmp(key, "api_key") == 0) {
 			dest = lastfm_key;
 			dest_size = sizeof(lastfm_key);
 		} else if (strcmp(key, "api_secret") == 0) {
 			dest = lastfm_secret;
 			dest_size = sizeof(lastfm_secret);
-		}
-	} else if (strcmp(section, "tidal") == 0) {
-		if (strcmp(key, "client_id") == 0) {
-			dest = tidal_client_id;
-			dest_size = sizeof(tidal_client_id);
-		} else if (strcmp(key, "client_secret") == 0) {
-			dest = tidal_client_secret;
-			dest_size = sizeof(tidal_client_secret);
 		}
 	}
 
@@ -254,11 +224,7 @@ static bool load(const char *path) {
 static void report(const char *path) {
 	snprintf(source_path, sizeof(source_path), "%s", path);
 
-	printf("streamkeys: from %s -- Qobuz %s, Tidal %s, Podcast %s, Last.fm %s\n", path,
-		   qobuz_app_id[0] && qobuz_app_secret[0] ? "yes" : "no",
-		   tidal_client_id[0] && tidal_client_secret[0] ? "yes" : "no",
-		   podcast_key[0] && podcast_secret[0] ? "yes" : "no",
-		   lastfm_key[0] && lastfm_secret[0] ? "yes" : "no");
+	printf("streamkeys: from %s -- Last.fm %s\n", path, lastfm_key[0] && lastfm_secret[0] ? "yes" : "no");
 }
 
 void streamkeys_init(void) {
@@ -273,7 +239,7 @@ void streamkeys_init(void) {
 	}
 
 	if (!path) {
-		printf("streamkeys: no %s, Tidal, Qobuz, podcasts and Last.fm stay off\n",
+		printf("streamkeys: no %s, Last.fm stays off\n",
 			   configured && configured[0] ? configured : STREAMKEYS_PATH);
 		return;
 	}
@@ -311,14 +277,6 @@ bool streamkeys_load_card(const char *card_root) {
 }
 
 static const char *or_null(const char *s) { return s[0] ? s : NULL; }
-
-const char *streamkeys_qobuz_app_id(void) { return or_null(qobuz_app_id); }
-const char *streamkeys_qobuz_app_secret(void) { return or_null(qobuz_app_secret); }
-const char *streamkeys_tidal_client_id(void) { return or_null(tidal_client_id); }
-const char *streamkeys_tidal_client_secret(void) { return or_null(tidal_client_secret); }
-
-const char *streamkeys_podcast_key(void) { return or_null(podcast_key); }
-const char *streamkeys_podcast_secret(void) { return or_null(podcast_secret); }
 
 const char *streamkeys_lastfm_key(void) { return or_null(lastfm_key); }
 const char *streamkeys_lastfm_secret(void) { return or_null(lastfm_secret); }

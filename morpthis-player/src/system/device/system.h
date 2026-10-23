@@ -75,11 +75,11 @@ const char *storage_sd_device(void);
 // outlives the card that was pulled out.
 bool storage_card_attached(void);
 
-// Reopens whichever of the card's databases -- music, audiobooks, radio,
-// podcasts, thumbnails -- was deleted or replaced since it was opened. Called
-// after something on the device may have removed files: the file manager, the
-// Wi-Fi transfer page. Interface thread; a database that changed is closed and
-// opened again, an unchanged one costs a stat().
+// Reopens whichever of the card's databases -- music, audiobooks, thumbnails --
+// was deleted or replaced since it was opened. Called after something on the
+// device may have removed files: the file manager, the Wi-Fi transfer page.
+// Interface thread; a database that changed is closed and opened again, an
+// unchanged one costs a stat().
 void storage_card_files_recheck(void);
 
 // Looks at the card and puts it back if it has gone missing: a mount that has

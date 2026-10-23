@@ -268,7 +268,7 @@ static void main_menu_refresh_now_playing(void) {
 
 	device_state_t state;
 	device_state_get(&state);
-	bool loaded = state.live || state.current_file[0] != '\0';
+	bool loaded = state.current_file[0] != '\0';
 	const char *title = NULL;
 	const char *artist = "";
 
@@ -279,8 +279,6 @@ static void main_menu_refresh_now_playing(void) {
 	} else {
 		if (state.metadata.title[0]) {
 			title = state.metadata.title;
-		} else if (state.live) {
-			title = tr("player_live");
 		} else {
 			const char *file = strrchr(state.current_file, '/');
 			title = file ? file + 1 : state.current_file;

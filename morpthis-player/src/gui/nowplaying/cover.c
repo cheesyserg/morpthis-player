@@ -18,7 +18,7 @@
 #include "src/system/library/albumart.h"
 #include "src/system/library/library.h"
 #include "src/system/library/metadata.h"
-#include "src/system/streaming/podcastcache.h"
+
 #include "src/system/image/jpeg_planes.h"
 #include "src/system/image/jpeg_scaled.h"
 #include "src/system/image/png_scaled.h"
@@ -1582,16 +1582,6 @@ bool cover_load_player_images(const char *filepath, int cover_w, int cover_h, co
 	}
 
 	cover_build_t built = build_from_sources(filepath, false, reqs, n, results);
-	if (built == COVER_BUILD_NONE) {
-		// A podcast episode with no cover file beside it: fetch it now, on the
-		// loader thread, which can afford to wait on a network request, then
-		// try again. This covers episodes started from the queue, whose tags
-		// carry the cover URL but whose jpg was never downloaded.
-		if (!podcastcache_ensure_cover(filepath)) {
-			return false;
-		}
-		built = build_from_sources(filepath, false, reqs, n, results);
-	}
 	bool ok = (built == COVER_BUILD_OK);
 
 	// A sleeve decoded here is the same picture the scan pass would have written,

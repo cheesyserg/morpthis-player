@@ -22,7 +22,6 @@ static const struct {
 } PROFILES[SLEEPTIMER_COUNT] = {
 	[SLEEPTIMER_MUSIC] = {"player", "sleep_timer", "sleep_minutes", "music"},
 	[SLEEPTIMER_AUDIOBOOK] = {"audiobook", "sleep_timer", "sleep_minutes", "audiobook"},
-	[SLEEPTIMER_PODCAST] = {"podcast", "sleep_timer", "sleep_minutes", "podcast"},
 };
 
 typedef struct {
@@ -122,8 +121,7 @@ void sleeptimer_note_playing(sleeptimer_kind_t kind) {
 	}
 	playing_kind = kind;
 	// All of them, not only the one named: whatever stopped playing has a
-	// countdown to put away, and going from an album to a podcast is both at
-	// once.
+	// countdown to put away, and going from an album to a book is both at once.
 	for (int i = 0; i < SLEEPTIMER_COUNT; i++) {
 		restart((sleeptimer_kind_t)i);
 		if (timers[i].counting) {

@@ -31,7 +31,7 @@ void topbar_refresh_playback(void);
 // is the one place that merges the app host's playing flag and format; without
 // it a playing app counted as idle and the "LED off in standby" option darkened
 // the light while music was coming out.
-void topbar_refresh_led(bool playing, int sample_rate, bool lossy, int bits, bool podcast, bool dsd);
+void topbar_refresh_led(bool playing, int sample_rate, bool lossy, int bits, bool dsd);
 
 // The same from the player's own state, still merging an app's raw output.
 // Call after an app starts, pauses or changes format, and on the periodic poll.

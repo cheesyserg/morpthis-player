@@ -228,10 +228,11 @@ $(HOST_BIN): $(HOST_OBJS)
 	$(HOST_LD) -o $@ $(HOST_OBJS) $(HOST_LDFLAGS)
 	@echo "Host build complete: Run './$(HOST_BIN)' to start the simulator."
 
-# The key that opens streaming-keys.bin (src/system/streaming/streamkeys.h),
-# kept outside git and compiled into streamkeys.c. The header is rewritten only
-# when the key changes. Without the key file the build still works and the
-# player reads only a plain streaming-keys.ini.
+# The key that opens streaming-keys.bin (src/system/core/streamkeys.h), kept
+# outside git and compiled into streamkeys.c. The file now carries Last.fm's
+# API credentials. The header is rewritten only when the key changes. Without
+# the key file the build still works and the player reads only a plain
+# streaming-keys.ini.
 STREAMKEYS_KEY ?= streaming-keys.key
 STREAMKEYS_KEY_H = build_gen/streamkeys_key.h
 $(STREAMKEYS_KEY_H): FORCE
@@ -248,7 +249,7 @@ $(STREAMKEYS_KEY_H): FORCE
 	@if cmp -s $@.tmp $@; then rm -f $@.tmp; else mv $@.tmp $@; \
 		if [ -f "$(STREAMKEYS_KEY)" ]; then echo "streamkeys: key from $(STREAMKEYS_KEY)"; \
 		else echo "streamkeys: no $(STREAMKEYS_KEY), this build reads only a plain streaming-keys.ini"; fi; fi
-build_host/system/streaming/streamkeys.o build_target/system/streaming/streamkeys.o: $(STREAMKEYS_KEY_H)
+build_host/system/core/streamkeys.o build_target/system/core/streamkeys.o: $(STREAMKEYS_KEY_H)
 
 build_host/%.o: src/%.c
 	@mkdir -p $(dir $@)

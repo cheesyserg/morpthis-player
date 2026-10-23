@@ -352,7 +352,7 @@ void powersettings_init(gui_config_t *cfg) {
 	led_off_card = settingsrow_toggle(container, "power_led_off_in_standby", &led_off_switch, led_off_toggled_cb);
 	// No "turn Wi-Fi off in standby" entry: parking the radio is automatic, and
 	// wifi_in_use() in power.c knows on its own when not to turn it off --
-	// Qobuz, Tidal, podcasts, radio, AirPlay, DLNA, transfers.
+	// an app holding the network, AirPlay, DLNA, transfers.
 
 	// What a held power key does (system.c): the menu with its two slides, or
 	// the power-off itself. Next to the key lock because both are about the

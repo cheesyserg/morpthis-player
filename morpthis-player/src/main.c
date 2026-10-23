@@ -41,23 +41,16 @@
 #include "src/system/audio/eq.h"
 #include "src/system/audio/headset.h"
 #include "src/system/input/keymap.h"
-#include "src/system/streaming/qobuz.h"
-#include "src/system/streaming/tidal.h"
 #include "src/system/remote/dlna.h"
 #include "src/system/remote/sonixlink.h"
 #include "src/system/core/panel.h"
-#include "src/system/streaming/qobuzcache.h"
-#include "src/system/streaming/podcastcache.h"
-#include "src/system/streaming/podcastsubs.h"
-#include "src/system/streaming/tidalcache.h"
-#include "src/system/streaming/streamkeys.h"
+#include "src/system/core/streamkeys.h"
 #include "src/system/lastfm/lastfm.h"
 #include "src/system/library/library.h"
 #include "src/system/core/logging.h"
 #include "src/system/playback/playlist.h"
 #include "src/system/library/playlists.h"
 #include "src/system/device/power.h"
-#include "src/system/streaming/radio.h"
 #include "src/system/device/screenshot.h"
 #include "src/system/device/sysinfo.h"
 #include "src/system/net/tls.h"
@@ -1984,12 +1977,9 @@ int main(int argc, char **argv) {
 	// the update file's name, the converter's name and the serial number.
 	sysinfo_load();
 
-	// The streaming services' application keys, and Qobuz with them. Before
-	// the GUI builds its pages, because the Qobuz page is drawn one way or
-	// the other depending on whether the keys are there.
+	// Last.fm's application credentials. Before the GUI builds its settings
+	// page, which says whether scrobbling can work.
 	streamkeys_init();
-	qobuz_init();
-	tidal_init();
 	lastfm_init();
 
 	lv_init();
@@ -2189,54 +2179,32 @@ int main(int argc, char **argv) {
 		snprintf(db_path, sizeof(db_path), "%s/.local/audiobooks.db", db_root);
 		audiobookdb_open(db_path);
 
-		// And the radio's own: the starred stations and the last few played.
-		radio_store_open(db_root);
 	}
 
-	// TLS, so an https:// station can be opened at all. Warmed up here rather
+	// TLS, so an https:// request can be opened at all. Warmed up here rather
 	// than on first use for two reasons: the first call parses a ~200 KB
 	// certificate bundle, which on this CPU is long enough to be felt if it
 	// happens while a list is being drawn, and the log line it prints says
-	// which bundle was found -- which is the first thing to look at when
-	// https stations fail.
+	// which bundle was found.
 	tls_set_card_root(gui_cfg.sd_root_path);
-	// Where downloaded stream tracks go. The real card is used -- the same
-	// root the Qobuz page and the card watcher use -- and not
-	// gui_cfg.sd_root_path, which on the simulator is a different folder: the
-	// cache and the code that cleans it must agree on one root.
+	// The real card, not gui_cfg.sd_root_path: on the simulator the latter is a
+	// different folder, and the card watcher and anything writing to the card
+	// must agree on one root.
 	const char *card_root = storage_sd_root();
 
-	// The streaming keys may be on the card instead of in the image. Every
-	// published firmware is built without them -- an image anyone can download
-	// cannot carry a service's application keys -- so this is how streaming is
-	// turned on afterwards, with no rebuild and no reflash: copy
-	// streaming-keys.ini to the card's root and restart. The card is mounted
-	// only now, which is why the look at startup could not see it.
-	//
-	// The three services read the keys once, at their own startup, and that has
-	// already happened: they are told again only when the card changed the
-	// answer. Both are still before gui_init(), and the pages are built after
-	// it, so the Qobuz page is drawn the one way or the other on first sight.
+	// Last.fm's credentials may be on the card instead of in the image. The
+	// card is mounted only now, which is why the look at startup could not see
+	// it. One read at startup is enough; it is retried here only when the card
+	// supplied a file that was not there before.
 	if (streamkeys_load_card(card_root)) {
-		qobuz_init();
-		tidal_init();
 		lastfm_init();
 	}
 
-	qobuzcache_set_root(card_root && card_root[0] ? card_root : gui_cfg.sd_root_path);
-	tidalcache_set_root(card_root && card_root[0] ? card_root : gui_cfg.sd_root_path);
-	podcastcache_set_root(card_root && card_root[0] ? card_root : gui_cfg.sd_root_path);
-	podcastsubs_set_root(card_root && card_root[0] ? card_root : gui_cfg.sd_root_path);
-	// And where a track arriving over DLNA lands: same card, same reason.
+	// Where a track arriving over DLNA lands: same card, same reason.
 	dlna_set_root(card_root && card_root[0] ? card_root : gui_cfg.sd_root_path);
 
-	// Rows pointing into the stream caches are dropped once at boot: a cache
-	// file may be gone, and starring a streamed track goes to the account
-	// rather than to the local database.
-	library_forget_under(qobuzcache_dir());
-	library_forget_under(tidalcache_dir());
 	if (!tls_available()) {
-		fprintf(stderr, "tls: unavailable; https radio stations cannot be opened\n");
+		fprintf(stderr, "tls: unavailable; https requests cannot be opened\n");
 	}
 
 	// The radios, before the interface: both read their switch out of the
@@ -2253,9 +2221,9 @@ int main(int argc, char **argv) {
 	// switch is on, which the same config read decides.
 	sonixlink_init();
 
-	// The sleep timers, as they were left. Before the interface: the music,
-	// audiobook and podcast pages read their switch and their wheels while
-	// they are built, and read before this they all say off, 0 minutes.
+	// The sleep timers, as they were left. Before the interface: the music and
+	// audiobook pages read their switch and their wheels while they are built,
+	// and read before this they all say off, 0 minutes.
 	sleeptimer_init();
 
 	gui_init(&gui_cfg);

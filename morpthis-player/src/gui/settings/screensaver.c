@@ -431,7 +431,7 @@ static void clock_timer_cb(lv_timer_t *timer) {
 	device_state_get(&state);
 	const void *cover = player_cover_image();
 
-	const char *now = state.live ? state.metadata.title : state.current_file;
+	const char *now = state.current_file;
 	if (framed_arrived || strcmp(now, shown_file) != 0 || cover != shown_cover ||
 		player_cover_serial() != shown_serial) {
 		refresh_content(); // refreshes the clock on its way through
@@ -700,22 +700,14 @@ static void refresh_content(void) {
 	device_state_get(&state);
 
 	// Recorded before anything is drawn from it, so what the tick above
-	// compares against is exactly what ended up on screen. A live stream has no
-	// file, so the station name stands in; without it every radio would look
-	// identical to the tick and a change of station would never redraw.
-	snprintf(shown_file, sizeof(shown_file), "%s",
-			 state.live ? state.metadata.title : state.current_file);
+	// compares against is exactly what ended up on screen.
+	snprintf(shown_file, sizeof(shown_file), "%s", state.current_file);
 
-	// The placeholder behind a missing cover says what kind of thing is
-	// playing: a note for a track, a radio for a stream.
 	if (cover_placeholder) {
-		lv_image_set_src(cover_placeholder, state.live ? &icon_radio_player : &icon_music_note);
+		lv_image_set_src(cover_placeholder, &icon_music_note);
 	}
 
-	if (state.live) {
-		scrolltext_set(title_label, state.metadata.title);
-		scrolltext_set(artist_label, state.metadata.artist);
-	} else if (state.current_file[0]) {
+	if (state.current_file[0]) {
 		const char *slash = strrchr(state.current_file, '/');
 		scrolltext_set(title_label, state.metadata.title[0] ? state.metadata.title
 															: (slash ? slash + 1 : state.current_file));

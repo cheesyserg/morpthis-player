@@ -13,9 +13,7 @@
 #include "src/system/device/clock.h"
 #include "src/system/device/led.h"
 #include "src/system/core/config.h"
-#include "src/system/streaming/qobuzcache.h"
-#include "src/system/streaming/podcastcache.h"
-#include "src/system/streaming/tidalcache.h"
+
 #include "src/system/remote/dlna.h"
 #include "src/system/device/power.h"
 #include "src/system/device/sysinfo.h"
@@ -123,11 +121,7 @@ void firmware_update_start(void) {
 	// kernel, and the decoder still has it open.
 	audio_stop();
 
-	// The streaming caches (tracks and covers) survive no power cycle, the
-	// update's included.
-	qobuzcache_clear_on_exit();
-	tidalcache_clear_on_exit();
-	podcastcache_clear_on_exit();
+	// The DLNA cache survives no power cycle, the update's included.
 	dlna_clear_on_exit();
 
 	// The clock goes into the RTC on the way out, like every other exit path

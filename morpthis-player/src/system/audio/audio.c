@@ -4,7 +4,6 @@
 #include "src/system/decode/decode.h"
 #include "src/system/decode/growfile.h"
 #include "src/system/decode/sndfile.h"
-#include "src/system/streaming/streambridge.h"
 #include "src/system/audio/replaygain.h"
 #include "src/system/audio/speed.h"
 #include "src/system/audio/swvolume.h"
@@ -4101,23 +4100,12 @@ static bool playback_reader_should_abort(void) {
 	return out;
 }
 
-// Inside a codec read, pause must NOT look like EOF. The block-boundary
-// wait above uses the full command predicate; this one only discards a decoder
-// which is going to be closed anyway. No audio_mutex is held by the bridge.
-static bool playback_stream_should_abort(void) {
-	pthread_mutex_lock(&audio_mutex);
-	bool out = audio_command == AUDIO_CMD_STOP || play_request || stop_thread;
-	pthread_mutex_unlock(&audio_mutex);
-	return out;
-}
-
 int audio_init(void) {
 	static bool initialized = false;
 	if (initialized)
 		return 0;
 
 	growfile_set_reader_abort_cb(playback_reader_should_abort);
-	streambridge_set_reader_abort(playback_stream_should_abort);
 
 	set_volume_percent(40); // a sane, audible default on the new dB taper
 	auto_set_output();

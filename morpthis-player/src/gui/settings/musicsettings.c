@@ -104,10 +104,10 @@ static void build_filter_page(gui_config_t *cfg) {
 
 static lv_obj_t *dre_switch;
 
-// Gapless: local music only. A stream (radio, Qobuz while downloading) has no
-// "next track" ready to hand, and the emulator has a PCM of its own. The
-// switch tells the audio engine how to behave at track boundaries; anything
-// that does not go through them is unaffected.
+// Gapless: local music only. A stream from an app or a phone has no "next
+// track" ready to hand, and the emulator has a PCM of its own. The switch
+// tells the audio engine how to behave at track boundaries; anything that does
+// not go through them is unaffected.
 static lv_obj_t *gapless_switch;
 
 bool musicsettings_gapless_enabled(void) { return audio_get_gapless(); }
@@ -2383,9 +2383,9 @@ static void endless_shuffle_cb(lv_event_t *e) {
 	config_save();
 }
 
-// The sleep timer for music, which is the card, Tidal and Qobuz: one transport,
-// one timer. Books and podcasts have their own, on their own pages, because the
-// stretch that suits one is not the one that suits another.
+// The sleep timer for music, which is the card: one transport, one timer.
+// Books have their own, on their own page, because the stretch that suits one
+// is not the one that suits another.
 static settingsrow_duration_t sleep_row;
 
 static void sleep_refresh(void) {

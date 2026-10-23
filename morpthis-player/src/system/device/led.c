@@ -30,17 +30,14 @@
 #define PATTERN_PCM_HI 4
 #define PATTERN_DSD_WHITE 11
 #define PATTERN_OFF 5 // the logical-0 state: all registers zero
-// Podcast purple: pattern 13, added by hand to the driver script by the user,
-// like 12 for transfers. (The first attempt used 10, the stock MQA rendering
-// pattern, which lit up magenta rather than purple.)
-#define PATTERN_PODCAST_PURPLE 13
+
 // Wi-Fi transfer: pattern 12, added by hand to the driver script
 // (leds_sgm31324_add.sh, regs="000E7D00686601010706"). Lit while a transfer is
 // active, and never turned off by the standby option: with the screen dark it
 // is the only sign the transfer server is running.
 #define PATTERN_WIFI_TRANSFER 12
 // Bluetooth receiver: pattern 14, blue at full brightness, added by hand to the
-// driver script like 12 and 13. Lit for as long as the mode is on, screen off
+// driver script like 12. Lit for as long as the mode is on, screen off
 // included -- it is the only sign the player is being used as a pair of
 // headphones.
 #define PATTERN_BT_RECEIVER 14
@@ -79,7 +76,6 @@ typedef enum {
 	LS_CD, // lossless, 16-bit at 48 kHz or below
 	LS_HIFI, // lossless above that
 	LS_DSD,
-	LS_PODCAST,
 	LS_WIFI,
 	LS_BT,
 	LS_CHARGING,
@@ -133,7 +129,7 @@ static bool s_playing;
 static int s_rate;
 static bool s_lossy; // the source is a lossy codec (mp3, aac, ogg, opus)
 static int s_bits;	 // the source bit depth, 0 while unknown
-static bool s_podcast;		 // what is playing is a podcast episode
+
 static bool s_dsd;			 // ...or a DSD file, whatever its carrier rate
 static bool s_wifi_transfer; // a Wi-Fi transfer is active
 static bool s_bt_receiver;	 // Bluetooth receiver mode is on
@@ -416,8 +412,6 @@ static int state_pattern(led_state_t s) {
 		return PATTERN_PCM_HI;
 	case LS_DSD:
 		return PATTERN_DSD_WHITE;
-	case LS_PODCAST:
-		return PATTERN_PODCAST_PURPLE;
 	case LS_WIFI:
 		return PATTERN_WIFI_TRANSFER;
 	case LS_BT:
@@ -432,8 +426,8 @@ static int state_pattern(led_state_t s) {
 
 // The colour and effect a state is played with on the direct path. The colours
 // are the ones the registered patterns stand for: aqua idle, yellow 48 kHz,
-// aqua up to 192 kHz, orange above it, white DSD, purple podcasts, blue the
-// Bluetooth receiver, red breathing while charging and green once charged.
+// aqua up to 192 kHz, orange above it, white DSD, blue the Bluetooth
+// receiver, red breathing while charging and green once charged.
 static void build_render(led_state_t s, led_render_t *out) {
 	int r = 0, g = 0, b = 0;
 	bool white = false;
@@ -460,10 +454,6 @@ static void build_render(led_state_t s, led_render_t *out) {
 		g = 255;
 		b = 255;
 		white = true;
-		break;
-	case LS_PODCAST:
-		r = 160;
-		b = 255;
 		break;
 	case LS_WIFI:
 		g = 128;
@@ -554,10 +544,8 @@ static void apply(void) {
 		// by the standby option: a player left plugged in overnight stays lit.
 		state = LS_CHARGED;
 	} else if (s_playing && s_rate > 0) {
-		// Playback always shows its colour. A podcast has its own colour, purple,
-		// whatever the sample rate: it says what is being listened to, not how it
-		// is sampled.
-		state = s_podcast ? LS_PODCAST : quality_state(s_rate, s_lossy, s_bits, s_dsd);
+		// Playback always shows its sample-rate colour.
+		state = quality_state(s_rate, s_lossy, s_bits, s_dsd);
 	} else if (s_dac_streaming && s_dac_rate > 0) {
 		// In DAC mode nothing plays through audio.c, so s_playing is false and
 		// the LED went dark twenty seconds after the screen did -- with the
@@ -669,12 +657,11 @@ void led_set_on_charger(bool present) {
 	apply();
 }
 
-void led_update_playback(bool playing, int sample_rate, bool lossy, int bits, bool podcast, bool dsd) {
+void led_update_playback(bool playing, int sample_rate, bool lossy, int bits, bool dsd) {
 	s_playing = playing && sample_rate > 0;
 	s_rate = sample_rate;
 	s_lossy = lossy;
 	s_bits = bits;
-	s_podcast = podcast;
 	s_dsd = dsd;
 	if (s_playing) {
 		s_last_playing = time(NULL);

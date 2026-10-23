@@ -27,7 +27,6 @@
 #include "src/gui/shell/topbar.h"
 #include "src/system/device/power.h"
 #include "src/system/playback/sleeptimer.h"
-#include "src/system/streaming/radio.h"
 #include "src/system/audio/audio.h"
 #include "src/system/playback/audiobook.h"
 #include "src/system/playback/device_state.h"
@@ -39,13 +38,6 @@
 #include "src/system/library/library.h"
 #include "src/system/library/lyrics.h"
 #include "src/system/playback/playlist.h"
-#include "src/system/streaming/podcast.h"
-#include "src/system/streaming/podcastcache.h"
-#include "src/system/streaming/podcastsubs.h"
-#include "src/system/streaming/qobuzcache.h"
-#include "src/system/streaming/qobuzsync.h"
-#include "src/system/streaming/tidalcache.h"
-#include "src/system/streaming/tidalsync.h"
 #include "src/system/core/utils.h"
 #include "src/system/audio/waveform.h"
 
@@ -228,11 +220,6 @@ static lv_obj_t *cover_art_group;
 static lv_obj_t *cover_img;
 static lv_obj_t *cover_placeholder_icon;
 
-// Live mode (internet radio). A stream is not a track: it cannot be paused,
-// skipped or seeked, and it has no position and no length. Rather than leave
-// controls on screen that would do nothing, the ones that make no sense are
-// hidden and the play button becomes a stop button. These are kept so
-// apply_live_mode() can reach them.
 static lv_obj_t *prev_btn_obj;
 static lv_obj_t *next_btn_obj;
 static lv_obj_t *more_btn_obj;
@@ -241,18 +228,6 @@ static lv_obj_t *repeat_btn_obj;
 static lv_obj_t *speed_btn_obj;	 // stands in the repeat button's place on a book
 static lv_obj_t *speed_btn_icon;
 static lv_obj_t *below_slider_obj; // the two clocks under the bar
-// How far the four source marks keep from the corner of the artwork they
-// share. One number, because they replace each other in that corner and a
-// difference between them would read as the mark jumping.
-#define BADGE_INSET 14
-
-static lv_obj_t *live_badge;	   // live indicator, top right over the artwork
-static lv_obj_t *qobuz_badge;	   // the Qobuz mark, in the same corner
-static lv_obj_t *tidal_badge;	   // and the Tidal one, over it: only one ever shows
-static lv_obj_t *podcast_badge;	   // and the podcast one, third in the same place
-static bool live_mode;
-static bool live_transport_hidden; // prev/next taken away on a stream
-static bool live_custom_nav;	   // on a station from a list, where they change station
 
 // Audiobook mode. A book is one long file, not a queue of songs: previous and
 // next have nothing to move to, and what a listener wants from those two
@@ -262,10 +237,6 @@ static bool live_custom_nav;	   // on a station from a list, where they change s
 // the music library and its queue -- go away rather than sit there doing
 // something invisible to a book.
 static bool audiobook_mode;
-// A podcast is not an audiobook, but the two skip buttons are the same. See
-// apply_audiobook_mode(): the rest of the book dressing -- chapters, speed,
-// book icon -- stays with books only.
-static bool podcast_mode;
 static bool audiobook_has_chapters;		 // whether the loaded book is marked up
 static int audiobook_skip_shown_back;	 // the two jump sizes the buttons are drawn
 static int audiobook_skip_shown_forward; // for, so changing the setting repaints
@@ -358,11 +329,11 @@ static int alt_pill_pad_v = ALT_PILL_PAD_V;
 //
 // They are two different things because the alternative arrangement is built
 // around a file on the card: the shape of the track comes from decoding it, the
-// colour from its sleeve, and the pill in the corner from tags. A radio station
-// has no length to draw, a stream from a phone has no file to read ahead of,
-// and a Qobuz track is a cache entry that will be gone tomorrow. So the setting
-// says what the user wants for their music, and `layout_alt_now` says whether
-// what is playing is music of that kind. Everything that draws asks the second.
+// colour from its sleeve, and the pill in the corner from tags. A stream from a
+// phone has no file to read ahead of, and a track an app is feeding in has no
+// tags to draw. So the setting says what the user wants for their music, and
+// `layout_alt_now` says whether what is playing is music of that kind.
+// Everything that draws asks the second.
 static player_layout_t layout_choice; // the setting, saved in the config
 static bool layout_alt_now;		// and whether the current source can use it
 static bool layout_studio_now;	// likewise for the third arrangement
@@ -466,160 +437,25 @@ static double view_length;
 // prev/next glyphs turn light there to stay legible against the artwork.
 static bool chrome_over_cover;
 
-// While a station connects, stop, previous and next are greyed out and do
-// nothing: the connection is on its way, and pulling it down or starting the
-// next one in the middle of it is a tap that only makes the wait longer. The
-// side keys and the control centre ask radio_is_connecting() themselves.
-static bool connecting_shown;
 
-static void apply_connecting(void) {
-	bool connecting = radio_is_connecting();
-	if (connecting == connecting_shown) {
-		return;
-	}
-	connecting_shown = connecting;
-	lv_obj_t *const buttons[] = {play_btn, prev_btn_obj, next_btn_obj};
-	for (size_t i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i++) {
-		if (!buttons[i]) {
-			continue;
-		}
-		if (connecting) {
-			lv_obj_add_state(buttons[i], LV_STATE_DISABLED);
-		} else {
-			lv_obj_remove_state(buttons[i], LV_STATE_DISABLED);
-		}
-	}
-}
 
-// Switches the transport between a track and a live stream. Cheap and
-// idempotent: called from every now-playing refresh, and does nothing at all
-// unless the mode actually changed.
-static void apply_live_mode(bool live) {
-	// Previous and next go away on a stream, playing or stopped: they would
-	// start a local track in place of the station. On a station started from a
-	// list -- radio.txt, a country, a search, the starred -- they stay and move
-	// along that list, and the bearing under the bar says where in it the
-	// station is (see update_queue_position()).
-	bool custom_nav = live && radio_can_step();
-	bool transport_hidden = live && !custom_nav;
-
-	if (live == live_mode && transport_hidden == live_transport_hidden && custom_nav == live_custom_nav &&
-		cover_placeholder_icon) {
-		return;
-	}
-	live_mode = live;
-	live_transport_hidden = transport_hidden;
-	live_custom_nav = custom_nav;
-
-	// A stream has no queue to look at, no length to scrub and no repeat mode
-	// that means anything.
-	//
-	// Repeat/shuffle goes for a reason worth stating: it is not merely useless
-	// on a stream, it is misleading. The mode it cycles belongs to the track
-	// queue, so a tap there would silently change what happens to the music
-	// the radio interrupted.
-	lv_obj_t *const hidden_when_live[] = {more_btn_obj, repeat_btn_obj, progress_slider, elapsed_label,
-										  remaining_label};
-	for (size_t i = 0; i < sizeof(hidden_when_live) / sizeof(hidden_when_live[0]); i++) {
-		if (!hidden_when_live[i]) {
-			continue;
-		}
-		if (live) {
-			lv_obj_set_hidden(hidden_when_live[i], true);
-		} else {
-			lv_obj_set_hidden(hidden_when_live[i], false);
-		}
-	}
-	// The row under the bar stays for a station from a list, for its place in
-	// the list and nothing else.
-	if (below_slider_obj) {
-		if (live && !custom_nav) {
-			lv_obj_set_hidden(below_slider_obj, true);
-		} else {
-			lv_obj_set_hidden(below_slider_obj, false);
-		}
-	}
-
-	// The shape of the track goes with the bar, and comes back only if the
-	// alternative layout is the one up -- it is not in the list above because
-	// that list has no idea which arrangement is on screen, and unhiding it in
-	// the standard one would leave an empty strip under the title.
-	if (wave_box) {
-		if (live || !layout_wave_now) {
-			lv_obj_set_hidden(wave_box, true);
-		} else {
-			lv_obj_set_hidden(wave_box, false);
-		}
-	}
-
-	lv_obj_t *const transport[] = {prev_btn_obj, next_btn_obj};
-	for (size_t i = 0; i < sizeof(transport) / sizeof(transport[0]); i++) {
-		if (!transport[i]) {
-			continue;
-		}
-		if (transport_hidden) {
-			lv_obj_set_hidden(transport[i], true);
-		} else {
-			lv_obj_set_hidden(transport[i], false);
-		}
-	}
-
-	if (live_badge) {
-		if (live) {
-			lv_obj_set_hidden(live_badge, false);
-			lv_obj_move_foreground(live_badge);
-		} else {
-			lv_obj_set_hidden(live_badge, true);
-		}
-	}
-	// The marks share one corner and can never go there together: a live
-	// stream does not come from Qobuz.
-	if (tidal_badge && live) {
-		lv_obj_set_hidden(tidal_badge, true);
-	}
-	if (podcast_badge && live) {
-		lv_obj_set_hidden(podcast_badge, true);
-	}
-	if (qobuz_badge && live) {
-		lv_obj_set_hidden(qobuz_badge, true);
-	}
-
-	// A note means "track", a book means a book, and a station with no artwork
-	// gets the radio. Coming back off a stream has to restore whichever of the
-	// first two is right, not assume the note.
-	if (cover_placeholder_icon) {
-		lv_image_set_src(cover_placeholder_icon, live ? &icon_radio_player
-									: (audiobook_mode ? &icon_book_headphones : &icon_music_note));
-	}
-}
-
-// Dresses the player for a book or for a track. Cheap and idempotent, like
-// apply_live_mode(): called from every now-playing refresh and from the poll,
-// and does nothing at all unless the answer changed.
-static void apply_audiobook_mode(bool book, bool podcast) {
+// Dresses the player for a book or for a track. Cheap and idempotent: called
+// from every now-playing refresh and from the poll, and does nothing at all
+// unless the answer changed.
+static void apply_audiobook_mode(bool book) {
 	// Whether this book is marked up decides what the chapter button does, not
 	// whether it is there. A folder book's files are its chapters.
 	bool chapters = book && (audiobook_chapter_count() > 0 || audiobook_part_count() > 1);
 
-	// Books and podcasts both get the second-jump buttons, but not the same
-	// pair of sizes: a book's forward jump steps over a pause, a podcast's
-	// over a half-minute sponsor read. They are two separate settings on two
-	// separate pages (podcast settings, and Audiobooks -> change controls).
-	//
-	// Speed carries over too, as a setting of its own. Nothing else does: a
-	// podcast has no chapters, is not a single file, and sits in a real queue
-	// of episodes. Chapters and the book icon stay with books.
-	bool skips = book || podcast;
-	int back = podcast && !book ? podcast_skip_back() : audiobook_skip_back();
-	int forward = podcast && !book ? podcast_skip_forward() : audiobook_skip_forward();
+	bool skips = book;
+	int back = audiobook_skip_back();
+	int forward = audiobook_skip_forward();
 
-	if (audiobook_mode_valid && book == audiobook_mode && podcast == podcast_mode &&
-		chapters == audiobook_has_chapters && back == audiobook_skip_shown_back &&
-		forward == audiobook_skip_shown_forward) {
+	if (audiobook_mode_valid && book == audiobook_mode && chapters == audiobook_has_chapters &&
+		back == audiobook_skip_shown_back && forward == audiobook_skip_shown_forward) {
 		return;
 	}
 	audiobook_mode = book;
-	podcast_mode = podcast;
 	audiobook_has_chapters = chapters;
 	audiobook_skip_shown_back = back;
 	audiobook_skip_shown_forward = forward;
@@ -643,12 +479,8 @@ static void apply_audiobook_mode(bool book, bool podcast) {
 																	 : &icon_next_10);
 		lv_image_set_scale(next_icon, skip_icon_scale);
 	}
-	// A book has a menu of its own behind the usual glyph: chapters,
-	// bookmarks, summary. On a podcast the same button goes straight to the
-	// episodes, the only thing wanted from it, rather than to a menu whose one
-	// useful entry would always be picked.
 	if (more_btn_icon) {
-		lv_image_set_src(more_btn_icon, podcast && !book ? &icon_podcast_episodes : &icon_ellipsis_vertical);
+		lv_image_set_src(more_btn_icon, &icon_ellipsis_vertical);
 	}
 
 	// The star and the repeat mode are about the music library and its queue.
@@ -656,44 +488,22 @@ static void apply_audiobook_mode(bool book, bool podcast) {
 	// the music favourites for a file the music library does not index, and
 	// the repeat mode would silently change what happens to the queue the book
 	// interrupted.
-	//
-	// On a podcast the star stays but means something else: it follows the
-	// podcast, putting it under the subscribed feeds -- the same promise the
-	// star makes everywhere, "find this again without searching". Repeat still
-	// goes: a queue of episodes is not an album, and looping the last twenty
-	// instalments is nothing anybody asks for.
 	if (fav_btn_obj) {
-		if (book) {
-			lv_obj_set_hidden(fav_btn_obj, true);
-		} else {
-			lv_obj_set_hidden(fav_btn_obj, false);
-		}
+		lv_obj_set_hidden(fav_btn_obj, book);
 	}
 	if (repeat_btn_obj) {
-		if (book || podcast) {
-			lv_obj_set_hidden(repeat_btn_obj, true);
-		} else {
-			lv_obj_set_hidden(repeat_btn_obj, false);
-		}
+		lv_obj_set_hidden(repeat_btn_obj, book);
 	}
 
 	if (speed_btn_obj) {
-		if (book || podcast) {
-			lv_obj_set_hidden(speed_btn_obj, false);
+		lv_obj_set_hidden(speed_btn_obj, !book);
+		if (book) {
 			update_speed_button();
-		} else {
-			lv_obj_set_hidden(speed_btn_obj, true);
 		}
 	}
 
-	// A book with no artwork gets the book and an episode the microphone, not
-	// a musical note -- each the glyph its own page uses, drawn at the size
-	// this one is, which is why the podcast row's 40 px copy is not the one
-	// named here. Only touched when a station is not up: live mode owns this
-	// icon while it is on.
-	if (cover_placeholder_icon && !live_mode) {
-		const lv_image_dsc_t *mark = book ? &icon_book_headphones : podcast ? &icon_podcast_cover : &icon_music_note;
-		lv_image_set_src(cover_placeholder_icon, mark);
+	if (cover_placeholder_icon) {
+		lv_image_set_src(cover_placeholder_icon, book ? &icon_book_headphones : &icon_music_note);
 	}
 }
 
@@ -773,30 +583,18 @@ static void audiobook_seek_by(double delta, const device_state_t *state) {
 // keeps the UI from going stale if the track stops on its own.
 // Which sleep timer, if any, owns what is playing.
 //
-// Books and podcasts have their own because they are listened to differently: a
-// stretch that is right for falling asleep to music is not the one somebody
-// chose for a chapter, and a podcast timer set at bedtime should not be counting
-// down over an album the next morning. Everything else the transport plays --
-// the card, Tidal, Qobuz -- is one thing and gets one timer.
+// A book has its own timer: a stretch that is right for falling asleep to
+// music is not the one somebody chose for a chapter. Everything else the
+// transport plays is one thing and gets the music timer.
 //
-// Three sources are none of them, and for the same reason: they do not go
-// through the player's transport at all. The radio and the Bluetooth receiver
-// push their sound out through the external path, and there is no pause to give
-// them -- stopping a station is a disconnection, and stopping the receiver is
-// silence in a room where somebody else's phone is still playing. Only the
-// radio ever reports playing here; the receiver is written down so that it
-// stays true if it ever starts to.
+// The Bluetooth receiver is neither: it does not go through the player's
+// transport at all, so there is no pause to give it.
 static sleeptimer_kind_t sleeptimer_kind_playing(void) {
-	if (radio_is_active() || btreceiver_is_active()) {
+	if (btreceiver_is_active()) {
 		return SLEEPTIMER_COUNT;
 	}
 	if (audiobook_is_playing()) {
 		return SLEEPTIMER_AUDIOBOOK;
-	}
-	char path[512];
-	audio_get_current_file(path, sizeof(path));
-	if (podcastcache_is_episode(path)) {
-		return SLEEPTIMER_PODCAST;
 	}
 	return SLEEPTIMER_MUSIC;
 }
@@ -808,13 +606,7 @@ static void apply_playback_status(audio_status_t status) {
 	// control in two states. Only the disc under it changes (see
 	// set_over_cover): white over artwork and in the dark theme, dark in the
 	// light theme when there is no cover to stand out against.
-	//
-	// On a live stream there is no pause -- stopping and starting again does
-	// not resume, it reconnects -- so the button says stop while it is on.
-	// Stopped, it goes back to play: the station stays loaded, and pressing
-	// it opens a fresh connection to the same one.
-	lv_image_set_src(play_btn_icon,
-					 live_mode ? (playing ? &icon_stop : &icon_play) : (playing ? &icon_pause : &icon_play));
+	lv_image_set_src(play_btn_icon, playing ? &icon_pause : &icon_play);
 	lv_obj_set_style_image_recolor(play_btn_icon, chrome_accent(), 0);
 	lv_obj_set_style_image_recolor_opa(play_btn_icon, LV_OPA_COVER, 0);
 
@@ -861,7 +653,7 @@ static void apply_playback_status(audio_status_t status) {
 // "3/24": which track of the queue is playing.
 //
 // It reads the queue itself, so it says the same thing whatever filled it --
-// tracks off the card, a podcast's episodes, a Tidal or Qobuz album.
+// tracks off the card.
 //
 // The number is the track's place in the LIST, not in the dealt order: under
 // shuffle those are two different things, and the list is the one that means
@@ -876,16 +668,6 @@ static void apply_playback_status(audio_status_t status) {
 bool player_queue_position(int *position, int *count) {
 	*position = 0;
 	*count = 0;
-	if (live_mode) {
-		int index;
-		int total;
-		if (live_custom_nav && radio_list_position(&index, &total)) {
-			*position = index + 1;
-			*count = total;
-			return true;
-		}
-		return false;
-	}
 	int total = playlist_count();
 	int index = playlist_current_index();
 	if (total <= 1 || index < 0 || audiobook_mode || dlna_owns_playback()) {
@@ -898,17 +680,6 @@ bool player_queue_position(int *position, int *count) {
 
 static void update_queue_position(void) {
 	if (!queue_position_label) {
-		return;
-	}
-
-	if (live_mode) {
-		int index;
-		int count;
-		if (live_custom_nav && radio_list_position(&index, &count)) {
-			lv_label_set_text_fmt(queue_position_label, "%d/%d", index + 1, count);
-		} else {
-			lv_label_set_text(queue_position_label, "");
-		}
 		return;
 	}
 
@@ -1358,8 +1129,7 @@ static void paint_alt_tint(void) {
 // leaves the player dressed as the wrong thing.
 //
 // Everything that is not a file on the card is somebody else's audio passing
-// through: the radio has no length, Qobuz, Tidal, a podcast and a phone pushing
-// over DLNA all play out of a cache folder that is emptied behind them, and
+// through: a phone pushing over DLNA plays out of a file the phone owns, and
 // AirPlay does not go through the decoder at all -- during an AirPlay session
 // `current_file` still names whatever local track was loaded last, so it has to
 // be asked separately rather than inferred from the path.
@@ -1368,10 +1138,10 @@ static void paint_alt_tint(void) {
 // anyway: the page is already dressed as a book -- chapters instead of a queue,
 // skips instead of tracks, no star -- and none of what the alternative
 // arrangement adds means anything to one. A shape drawn across nine hours of
-// speech is a flat stripe, and the nine hours would have to be decoded to find
+// speech is a flat stripe, and those hours would have to be decoded to find
 // that out.
 static bool playing_local_file(const device_state_t *state) {
-	if (state->live || !state->current_file[0] || audiobook_is_playing()) {
+	if (!state->current_file[0] || audiobook_is_playing()) {
 		return false;
 	}
 	airplay_state_t air;
@@ -1379,9 +1149,7 @@ static bool playing_local_file(const device_state_t *state) {
 	if (air.playing) {
 		return false;
 	}
-	const char *f = state->current_file;
-	return !qobuzcache_owns(f) && !tidalcache_owns(f) && !podcastcache_is_episode(f) && !dlna_owns_path(f) &&
-		   !dlna_owns_playback();
+	return !dlna_owns_path(state->current_file) && !dlna_owns_playback();
 }
 
 // Puts the progress slider over the waveform, or back where it belongs.
@@ -2503,22 +2271,15 @@ static void lyrics_bg_prepare(void) {
 	}
 }
 
-// Which of the four quality marks belongs to what is playing.
-//
-// Asked of the stream and not of the library, so a radio station and a track
-// still downloading are answered as well as a file that has been indexed.
-//
-// A podcast gets none of them. The marks rank an encoding against what music
-// needs, and an episode is speech at whatever bitrate the publisher chose:
-// "lossy" beside it is true and says nothing anyone would act on.
+// Which quality mark belongs to what is playing. Asked of the stream and not
+// of the library, so a file that has been indexed reads the same as one that
+// was just opened.
 static const lv_image_dsc_t *studio_quality_mark(const device_state_t *state) {
-	if (!state->live && podcastcache_is_episode(state->current_file)) {
-		return NULL;
-	}
+	(void)state;
 	if (audio_get_dsd_multiple() > 0) {
 		return &icon_quality_dsd;
 	}
-	if (state->live || audio_stream_is_lossy()) {
+	if (audio_stream_is_lossy()) {
 		return &icon_quality_lossy;
 	}
 	int rate = 0, channels = 0;
@@ -2568,25 +2329,6 @@ static int studio_cover_geometry(int *top_out) {
 	return size;
 }
 
-// The four marks that say where a track comes from -- Qobuz, Tidal, podcast,
-// and the red one for a live stream -- share the top right corner of the
-// artwork, which in this arrangement is where the ellipsis went. They move
-// down under it and keep its right edge, so the two read as one column.
-//
-// `parent` of NULL leaves them where they are and only re-places them, which
-// is what studio_place() wants on a relayout.
-static void studio_badges_move(lv_obj_t *parent, int y) {
-	lv_obj_t *const marks[] = {live_badge, qobuz_badge, tidal_badge, podcast_badge};
-	for (size_t i = 0; i < sizeof(marks) / sizeof(marks[0]); i++) {
-		if (!marks[i]) {
-			continue;
-		}
-		if (parent) {
-			lv_obj_set_parent(marks[i], parent);
-		}
-		lv_obj_align(marks[i], LV_ALIGN_TOP_RIGHT, -STUDIO_INFO_MARGIN, y);
-	}
-}
 
 // Where everything goes.
 static void studio_place(void) {
@@ -2609,7 +2351,7 @@ static void studio_place(void) {
 	lv_obj_set_pos(studio_head, STUDIO_INFO_MARGIN, head_top);
 	lv_obj_set_size(studio_head, screen_w - 2 * STUDIO_INFO_MARGIN, STUDIO_HEAD_H);
 
-	studio_badges_move(NULL, head_top + STUDIO_HEAD_H + STUDIO_BADGE_GAP);
+
 
 	lv_obj_set_size(studio_cover, size, size);
 	lv_obj_set_pos(studio_cover, cover_x, cover_y);
@@ -2758,15 +2500,7 @@ static void studio_take_back(void) {
 			lv_obj_set_parent(format_label, song_side_obj);
 			lv_obj_set_style_text_align(format_label, LV_TEXT_ALIGN_RIGHT, 0);
 		}
-		// The marks go back to the corner of the artwork they share with every
-		// other arrangement.
-		lv_obj_t *const marks[] = {live_badge, qobuz_badge, tidal_badge, podcast_badge};
-		for (size_t i = 0; i < sizeof(marks) / sizeof(marks[0]); i++) {
-			if (marks[i]) {
-				lv_obj_set_parent(marks[i], cover_art_group);
-				lv_obj_align(marks[i], LV_ALIGN_TOP_RIGHT, -BADGE_INSET, BADGE_INSET);
-			}
-		}
+
 		set_over_cover(current_cover.pixels != NULL);
 	}
 
@@ -2828,7 +2562,7 @@ static void studio_put(void) {
 
 	// Onto the panel, so they draw over the sleeve rather than under it, and
 	// below the ellipsis. studio_place() settles where.
-	studio_badges_move(studio_box, 0);
+
 
 	// The blurred sleeve is the whole background here, so everything that would
 	// otherwise cover it gets out of the way: the two panels' own fills, the
@@ -3249,14 +2983,13 @@ static void apply_layout(void) {
 //
 // Called from every now-playing refresh and from the live-mode watch in the
 // poll, which is what makes the arrangement follow the source instead of being
-// settled once at startup. It has to run on the way out of a stream as well as
+// settled once at startup. It has to run on the way out of a source as well as
 // on the way in, or the ordinary progress bar is left behind on top of the
 // waveform: the bar's parent, size and transparency are decided here and
 // nowhere else.
 static void update_layout(const device_state_t *state) {
-	// Studio and Immersive only want a picture and a name, and take whatever
-	// is playing: a file, a cached Qobuz or Tidal track, a podcast, a book, a
-	// station.
+	// Studio and Immersive only want a picture and a name, and take whatever is
+	// playing: a file, a book.
 	bool local = playing_local_file(state);
 	bool lyrics = lyrics_wanted && local;
 	bool studio = layout_choice == PLAYER_LAYOUT_STUDIO;
@@ -3639,7 +3372,7 @@ void player_release_artwork(void) {
 void player_refresh_artwork(void) {
 	device_state_t state;
 	device_state_get(&state);
-	refresh_cover(state.live ? state.live_cover : state.current_file);
+	refresh_cover(state.current_file);
 }
 
 // The answer to whichever question was asked, picked up on the progress poll.
@@ -3892,8 +3625,6 @@ static void player_refresh_theme(void) {
 	}
 }
 
-static void update_qobuz_badge(void);
-
 // Refreshes the now-playing info (title + artist) from the current
 // device state and resets the per-track length cache. Used both when the user
 // picks a file and when playback auto-advances to a new track.
@@ -3915,34 +3646,14 @@ static void refresh_now_playing(void) {
 	device_state_t state;
 	device_state_get(&state);
 
-	apply_live_mode(state.live);
-	apply_connecting();
 	// Before anything is drawn: which arrangement this source gets decides
 	// where the title goes and what colour everything is.
 	update_layout(&state);
 	// Decided from the path every time, as for books: a flag raised at start
 	// would have to be cleared on every route by which the track can change,
-	// and the first one forgotten leaves the player dressed as a podcast over
-	// a song.
-	apply_audiobook_mode(!state.live && audiobook_is_playing(),
-						 !state.live && podcastcache_is_episode(state.current_file));
-
-	if (state.live) {
-		// The station on top, what it says is on air underneath -- the same
-		// two lines as a track, carrying the two things a radio knows.
-		scrolltext_set(song_title_label, state.metadata.title);
-		scrolltext_set(song_artist_label, state.metadata.artist);
-		lyrics_head_sync();
-		alt_pills_sync();
-
-		update_fav_button();
-		update_format_label(&state);
-
-		// The artwork is the station's own icon, downloaded when it started.
-		// An empty path simply leaves the radio placeholder up.
-		refresh_cover(state.live_cover);
-		return;
-	}
+	// and the first one forgotten leaves the player dressed as a book over a
+	// song.
+	apply_audiobook_mode(audiobook_is_playing());
 
 	const char *file = state.current_file;
 	const char *slash = strrchr(file, '/');
@@ -3956,35 +3667,12 @@ static void refresh_now_playing(void) {
 
 	update_fav_button();
 	update_format_label(&state);
-	update_qobuz_badge();
 
 	lyrics_request(&state);
 
 	refresh_cover(file);
 }
 
-// The parts of the now-playing display a live stream changes while it runs:
-// the station name (the stream's own name arrives with the connection), what
-// is on air (an ICY title, every few minutes), the bitrate, and the artwork
-// once the icon has been downloaded. Deliberately not a full
-// refresh_now_playing(): that throws the decoded cover away and asks for it
-// again, which for a station whose icon has not changed is work for nothing.
-static void refresh_live_texts(const device_state_t *state) {
-	scrolltext_set(song_title_label, state->metadata.title);
-	scrolltext_set(song_artist_label, state->metadata.artist);
-	lyrics_head_sync();
-	alt_pills_sync();
-	update_fav_button();
-	update_format_label(state);
-
-	if (strcmp(cover_shown_path, state->live_cover) != 0) {
-		refresh_cover(state->live_cover);
-	}
-}
-
-// The mirror of the Qobuz favourites has arrived, so the star may need to
-// change face. It comes from the qobuzsync worker, hence the bounce onto the
-// UI thread.
 static void update_fav_button(void);
 
 static void fav_refresh_async(void *user) {
@@ -3992,113 +3680,6 @@ static void fav_refresh_async(void *user) {
 	update_fav_button();
 }
 
-static void qobuz_favorites_changed(void) { gui_post(fav_refresh_async, NULL); }
-static void tidal_favorites_changed(void) { gui_post(fav_refresh_async, NULL); }
-
-// The Qobuz id of the loaded track, 0 when what is playing does not come from
-// Qobuz. This is the question that splits the star and "add to playlist" in
-// two: a user's own file is written to the local database, a Qobuz track to
-// the account.
-static long current_qobuz_track(void) {
-	device_state_t state;
-	device_state_get(&state);
-	return state.current_file[0] ? qobuzcache_track_id(state.current_file) : 0;
-}
-
-// The podcast the playing episode belongs to, plus what following it needs:
-// title, author and cover. All from the sidecar written when the episode was
-// downloaded -- no network, which listening to an already cached episode may
-// well not have.
-static bool podcast_current_feed(long long *id_out, podcast_feed_t *feed_out) {
-	device_state_t state;
-	device_state_get(&state);
-	if (state.live || !state.current_file[0]) {
-		return false;
-	}
-	long long id = 0;
-	if (!podcastcache_feed_id(state.current_file, &id) || id <= 0) {
-		return false;
-	}
-	if (id_out) {
-		*id_out = id;
-	}
-	if (feed_out) {
-		memset(feed_out, 0, sizeof(*feed_out));
-		feed_out->id = id;
-		// The podcast name is also the episode's album tag: see
-		// podcastcache_write_sidecars(), which writes it to both places on
-		// purpose.
-		snprintf(feed_out->title, sizeof(feed_out->title), "%.*s", (int)sizeof(feed_out->title) - 1,
-				 state.metadata.album);
-		podcastcache_tag(state.current_file, "feed_author", feed_out->author, sizeof(feed_out->author));
-		podcastcache_tag(state.current_file, "feed_image", feed_out->image, sizeof(feed_out->image));
-	}
-	return true;
-}
-
-static bool current_podcast_episode(void) {
-	device_state_t state;
-	device_state_get(&state);
-	return state.current_file[0] && podcastcache_is_episode(state.current_file);
-}
-
-// The playing episode's podcast, for callers outside the player (the control
-// centre): the same lookup the player uses for its own star, exposed so both
-// stars say the same thing.
-bool player_current_podcast_feed(long long *id_out, podcast_feed_t *feed_out) {
-	return podcast_current_feed(id_out, feed_out);
-}
-
-// The same for Tidal. Two separate questions rather than one returning "which
-// service": the two caches live in different directories, so a path can answer
-// yes to at most one, which makes it impossible by construction for the player
-// to believe a track comes from both.
-static long current_tidal_track(void) {
-	device_state_t state;
-	device_state_get(&state);
-	return state.current_file[0] ? tidalcache_track_id(state.current_file) : 0;
-}
-
-// The Qobuz mark, top right, when what is playing comes from there. Same place
-// and same purpose as the live badge for radio: say where the music comes from
-// without taking space from anything else.
-//
-// The question is the star's own -- is the file in the Qobuz cache? -- so
-// there is no extra state to keep in step.
-static void update_qobuz_badge(void) {
-	// The marks share one corner and can never appear together: a track comes
-	// from one service only. So which one shows is decided here, rather than
-	// leaving each badge to hide itself -- which is how they would eventually
-	// have overlapped.
-	bool from_qobuz = !live_mode && current_qobuz_track() != 0;
-	bool from_tidal = !live_mode && !from_qobuz && current_tidal_track() != 0;
-	bool from_podcast = !live_mode && !from_qobuz && !from_tidal && current_podcast_episode();
-
-	if (qobuz_badge) {
-		if (from_qobuz) {
-			lv_obj_set_hidden(qobuz_badge, false);
-			lv_obj_move_foreground(qobuz_badge);
-		} else {
-			lv_obj_set_hidden(qobuz_badge, true);
-		}
-	}
-	if (tidal_badge) {
-		if (from_tidal) {
-			lv_obj_set_hidden(tidal_badge, false);
-			lv_obj_move_foreground(tidal_badge);
-		} else {
-			lv_obj_set_hidden(tidal_badge, true);
-		}
-	}
-	if (podcast_badge) {
-		if (from_podcast) {
-			lv_obj_set_hidden(podcast_badge, false);
-			lv_obj_move_foreground(podcast_badge);
-		} else {
-			lv_obj_set_hidden(podcast_badge, true);
-		}
-	}
-}
 
 // Repaints the favourite marker: filled when the loaded track is a favourite,
 // outlined otherwise, in the theme-specific colour (a heart in Immersive and
@@ -4108,40 +3689,13 @@ static void update_fav_button(void) {
 		return;
 	}
 
-	// A station is starred in the radio favourites, not the music library:
-	// there is no file to put in the database, and the list the star feeds is
-	// the one on the Radio page.
-	radio_station_t station;
-	bool starred = false;
-	long qobuz_id = 0;
-	long tidal_id = 0;
-	long long feed_id = 0;
-	if (radio_current_station(&station)) {
-		starred = radio_fav_contains(station.uuid);
-	} else if (podcast_current_feed(&feed_id, NULL)) {
-		// On a podcast the star does not mark a liked track: it follows the
-		// podcast, so it turns up in the followed list without searching. The
-		// list is on the card, so the answer is immediate and nothing has to
-		// be asked of the network.
-		starred = podcastsubs_is_followed(feed_id);
-	} else if ((qobuz_id = current_qobuz_track()) > 0) {
-		// A Qobuz track: the star reports what is on the account, not what is
-		// in the local database. Until the mirror arrives it is drawn empty
-		// and asked for -- one request per session, not one per song.
-		starred = qobuzsync_is_favorite(qobuz_id);
-		qobuzsync_favorites_refresh(qobuz_favorites_changed);
-	} else if ((tidal_id = current_tidal_track()) > 0) {
-		starred = tidalsync_is_favorite(tidal_id);
-		tidalsync_favorites_refresh(tidal_favorites_changed);
-	} else {
-		// device_state, not audio_get_current_file(): the star is drawn from
-		// one source and toggled from another, and when the two disagreed the
-		// star never filled in -- the tap wrote the right track to the
-		// database while the drawing looked up a different one.
-		device_state_t state;
-		device_state_get(&state);
-		starred = state.current_file[0] && library_fav_contains(state.current_file);
-	}
+	// device_state, not audio_get_current_file(): the star is drawn from one
+	// source and toggled from another, and when the two disagreed the star never
+	// filled in -- the tap wrote the right track to the database while the
+	// drawing looked up a different one.
+	device_state_t state;
+	device_state_get(&state);
+	bool starred = state.current_file[0] && library_fav_contains(state.current_file);
 
 	// The favorite marker's colour is decided here and nowhere else. This
 	// function runs last on every track change, so anything that tints it
@@ -4179,58 +3733,8 @@ static void update_fav_button(void) {
 	lv_obj_set_style_image_recolor_opa(fav_btn_icon, LV_OPA_COVER, 0);
 }
 
-// The outcome of a Qobuz star, from the qobuzsync worker. Success says
-// nothing -- the filled star already did; failure has to be said, because the
-// star had filled in optimistically and is about to empty again.
-static char fav_error[192];
-
-static void fav_error_async(void *user) {
-	(void)user;
-	if (fav_error[0]) {
-		gui_notify_popup(fav_error);
-	}
-	update_fav_button();
-}
-
-static void qobuz_fav_done(bool ok, const char *error, void *user) {
-	(void)user;
-	snprintf(fav_error, sizeof(fav_error), "%s", ok ? "" : (error && error[0] ? error : tr("qobuz_favourites_failed")));
-	gui_post(fav_error_async, NULL);
-}
-
-static void tidal_fav_done(bool ok, const char *error, void *user) {
-	(void)user;
-	snprintf(fav_error, sizeof(fav_error), "%s", ok ? "" : (error && error[0] ? error : tr("tidal_favourites_failed")));
-	gui_post(fav_error_async, NULL);
-}
-
 static void fav_btn_event_cb(lv_event_t *e) {
 	(void)e;
-
-	radio_station_t station;
-	if (radio_current_station(&station)) {
-		if (radio_fav_contains(station.uuid)) {
-			radio_fav_remove(station.uuid);
-		} else {
-			radio_fav_add(&station);
-		}
-		update_fav_button();
-		return;
-	}
-
-	// A podcast: the star follows or unfollows it. Written to the card at
-	// once, so switching the player off a moment later does not lose it.
-	long long feed_id = 0;
-	podcast_feed_t feed;
-	if (podcast_current_feed(&feed_id, &feed)) {
-		if (podcastsubs_is_followed(feed_id)) {
-			podcastsubs_unfollow(feed_id);
-		} else {
-			podcastsubs_follow(&feed);
-		}
-		update_fav_button();
-		return;
-	}
 
 	device_state_t state;
 	device_state_get(&state);
@@ -4238,26 +3742,8 @@ static void fav_btn_event_cb(lv_event_t *e) {
 		return;
 	}
 
-	// A Qobuz track goes into the account's favourites. Saving it in the local
-	// database would mean keeping the path of a cache file that will be gone
-	// twenty tracks from now, and invisible from any other device.
-	long qobuz_id = qobuzcache_track_id(state.current_file);
-	if (qobuz_id > 0) {
-		bool want = !qobuzsync_is_favorite(qobuz_id);
-		qobuzsync_favorite_toggle(qobuz_id, want, qobuz_fav_done, NULL);
-		update_fav_button(); // the mirror has already flipped: shows at once
-		return;
-	}
-
-	long tidal_id = tidalcache_track_id(state.current_file);
-	if (tidal_id > 0) {
-		bool want = !tidalsync_is_favorite(tidal_id);
-		tidalsync_favorite_toggle(tidal_id, want, tidal_fav_done, NULL);
-		update_fav_button();
-		return;
-	}
-
-	const char *title = state.metadata.title[0] ? state.metadata.title : strrchr(state.current_file, '/') + 1;
+	const char *slash = strrchr(state.current_file, '/');
+	const char *title = state.metadata.title[0] ? state.metadata.title : (slash ? slash + 1 : state.current_file);
 	// No notification popup: the star filling in is the whole feedback.
 	library_fav_toggle(state.current_file, title, state.metadata.artist);
 	update_fav_button();
@@ -4282,35 +3768,7 @@ static void update_format_label(const device_state_t *state) {
 		return;
 	}
 
-	if (state->live) {
-		// No bit depth to quote on a stream: what a station is, is its
-		// bitrate. Nothing at all until the first frame has been decoded.
-		radio_now_t now;
-		radio_get_now(&now);
-		// The format was written "MP3" because that was the only thing the
-		// stream path could decode. It reads AAC too now, and a station that
-		// says MP3 while an AAC decoder is running on it is a lie the log
-		// cannot correct.
-		if (now.bitrate > 0) {
-			lv_label_set_text_fmt(format_label, "%d kbps %s", now.bitrate, now.codec[0] ? now.codec : "MP3");
-		} else if (now.codec[0]) {
-			lv_label_set_text(format_label, now.codec);
-		} else {
-			lv_label_set_text(format_label, "");
-		}
-		return;
-	}
-
 	if (state->stream_sample_rate <= 0 || !state->current_file[0]) {
-		lv_label_set_text(format_label, "");
-		return;
-	}
-
-	// Nothing on a podcast. "16/44.1 MP3" is true and useless: an episode is
-	// not chosen for its audio quality, there is no better version to buy, and
-	// the number takes the line under the title without saying anything worth
-	// knowing.
-	if (podcastcache_is_episode(state->current_file)) {
 		lv_label_set_text(format_label, "");
 		return;
 	}
@@ -4347,18 +3805,13 @@ static void update_format_label(const device_state_t *state) {
 	// MP3 and a 320 kbps one. What an MP3, an AAC or an Opus is -- exactly as
 	// for a radio station -- is its bitrate.
 	if (audio_stream_is_lossy()) {
-		// The nominal figure first, the one written in the file. It is the
-		// only one showable on a Qobuz or Tidal track: the cache file is still
-		// growing while it plays, so the bytes-over-seconds average climbed on
-		// screen until the download finished and it settled.
 		int kbps = audio_get_stream_bitrate_kbps();
 
 		// When the file does not declare one (a variable-bitrate MP3, a silent
-		// AAC) the real average stands in -- but only once the download has
-		// finished, for the reason just given.
+		// AAC) the real average stands in.
 		struct stat st;
-		if (kbps <= 0 && !qobuzcache_owns(state->current_file) && !tidalcache_owns(state->current_file) &&
-			state->progress_total_secs > 0.5 && stat(state->current_file, &st) == 0 && st.st_size > 0) {
+		if (kbps <= 0 && state->progress_total_secs > 0.5 && stat(state->current_file, &st) == 0 &&
+			st.st_size > 0) {
 			kbps = (int)((double)st.st_size * 8.0 / state->progress_total_secs / 1000.0 + 0.5);
 		}
 
@@ -4376,17 +3829,11 @@ static void update_format_label(const device_state_t *state) {
 	lv_label_set_text_fmt(format_label, "%d/%g %s", bits > 0 ? bits : 16, state->stream_sample_rate / 1000.0, name);
 }
 
-// The speed setting of what is playing: an episode has its own, apart from the
-// books'.
-static bool speed_is_podcast(void) { return podcast_mode && !audiobook_mode; }
+// The speed setting of what is playing: books are the only source with one.
+static int speed_current_permille(void) { return audiobook_speed_permille(); }
 
-static int speed_current_permille(void) {
-	return speed_is_podcast() ? podcast_speed_permille() : audiobook_speed_permille();
-}
-
-// The gauge wears the accent colour whenever the book or episode is not at
-// normal speed, the way the repeat glyph it stands in for marks a mode that is
-// on.
+// The gauge wears the accent colour whenever the book is not at normal speed,
+// the way the repeat glyph it stands in for marks a mode that is on.
 static void update_speed_button(void) {
 	if (!speed_btn_icon) {
 		return;
@@ -4404,13 +3851,8 @@ static void update_speed_button(void) {
 
 static void speed_pick(void *user) {
 	int permille = (int)(intptr_t)user;
-	if (speed_is_podcast()) {
-		podcast_set_speed_permille(permille);
-		permille = podcast_speed_permille();
-	} else {
-		audiobook_set_speed_permille(permille);
-		permille = audiobook_speed_permille();
-	}
+	audiobook_set_speed_permille(permille);
+	permille = audiobook_speed_permille();
 	// Straight through to the playback thread: it picks the factor up on the
 	// next block, so the change is heard within a period rather than at the
 	// next track.
@@ -4427,9 +3869,8 @@ static void speed_btn_event_cb(lv_event_t *e) {
 	// `checked`, and stack garbage in it puts a tick on a random entry -- along
 	// with the different row layout a tick brings.
 	//
-	// The tick belongs here for the same reason it does in the Qobuz quality
-	// menu: this is a choice between alternatives, not a list of actions, so
-	// the current one has to be visible.
+	// The tick belongs here because this is a choice between alternatives, not a
+	// list of actions, so the current one has to be visible.
 	popover_item_t items[CHOICE_COUNT] = {0};
 	int current = speed_current_permille();
 	for (int i = 0; i < CHOICE_COUNT; i++) {
@@ -4496,19 +3937,6 @@ static void handle_track_finished(void) {
 		return;
 	}
 
-	// "Stop at the end of the episode": the queue is left exactly where it is,
-	// which is what the player already does when a queue simply runs out. Asked
-	// here and not at a boundary inside the file, because for a podcast the end
-	// of the episode IS the end of the track -- there is no chapter to watch
-	// for, which is what makes this the cheaper half of the audiobook's version.
-	char path[512];
-	audio_get_current_file(path, sizeof(path));
-	if (podcast_stop_at_episode_end() && podcastcache_is_episode(path)) {
-		fprintf(stderr, "player: end of the episode; not starting the next\n");
-		refresh_now_playing();
-		return;
-	}
-
 	if (device_state_advance_auto(NULL, 0)) {
 		refresh_now_playing();
 	}
@@ -4539,27 +3967,6 @@ static void update_progress(void) {
 	device_state_get(&state);
 	lv_obj_set_clickable(progress_slider, true);
 
-	// The live source moves under the player: the station's own name comes
-	// with the connection, the on-air title arrives later and keeps changing,
-	// the artwork lands when its download finishes -- and the whole thing
-	// ends by itself when a station drops for good. None of that goes through
-	// a track change, so it is followed here.
-	{
-		static bool was_live;
-		static unsigned last_serial;
-		unsigned serial = radio_now_serial();
-
-		if (state.live != was_live) {
-			was_live = state.live;
-			last_serial = serial;
-			// In or out of live: the whole display changes hands.
-			refresh_now_playing();
-			device_state_get(&state);
-		} else if (state.live && serial != last_serial) {
-			last_serial = serial;
-			refresh_live_texts(&state);
-		}
-	}
 
 	// Asked on every poll and not only at a track change, for the routes that
 	// are not one: a phone claiming the output over AirPlay does not change the
@@ -4567,10 +3974,6 @@ static void update_progress(void) {
 	// answer here has to follow it. Two string compares and a struct copy,
 	// twice a second.
 	update_layout(&state);
-	// Likewise the transport: radio.txt can be reloaded under a station, which
-	// decides whether previous and next are there for it.
-	apply_live_mode(state.live);
-	apply_connecting();
 
 	// The bar itself is set by set_progress_label() below, which knows
 	// whether it stands for the file or for the chapter.
@@ -4599,21 +4002,17 @@ static void update_progress(void) {
 	apply_playback_status(state.status);
 	// Asked every poll rather than only on a track change: the answer comes
 	// from the audiobook index, which a scan finishing can change under a
-	// track that is already playing. Both answers come from the path every
-	// time -- a flag raised at start would have to be cleared on every route
-	// by which the track can change, and the first one forgotten leaves the
-	// player dressed as a podcast over a song.
-	apply_audiobook_mode(!state.live && audiobook_is_playing(),
-						 !state.live && podcastcache_is_episode(state.current_file));
+	// track that is already playing. It comes from the path every time -- a
+	// flag raised at start would have to be cleared on every route by which the
+	// track can change, and the first one forgotten leaves the player dressed
+	// as a book over a song.
+	apply_audiobook_mode(audiobook_is_playing());
 	update_format_label(&state); // the rate/bits settle shortly after the start
 
 	// The status LED follows playback promptly from here (the battery poll
 	// only comes round once a minute). Only writes when the colour changes.
-	// A podcast lights purple instead of the sample-rate colour.
 	topbar_refresh_led(state.status == AUDIO_STATUS_PLAYING, state.stream_sample_rate,
-					   audio_stream_is_lossy(), audio_get_stream_bits(),
-					   !state.live && podcastcache_is_episode(state.current_file),
-					   !state.live && audio_get_dsd_multiple() > 0);
+					   audio_stream_is_lossy(), audio_get_stream_bits(), audio_get_dsd_multiple() > 0);
 
 	// Where the book got to. Not the same thing as "remember track" below and
 	// not subject to its switch: that setting is about which track comes back
@@ -4622,7 +4021,7 @@ static void update_progress(void) {
 	// and turning it off would make the feature meaningless. Throttled inside
 	// audiobook_note_position(); forced whenever playback stops or pauses, so
 	// a shutdown loses at most a few seconds.
-	if (!state.live && audiobook_mode) {
+	if (audiobook_mode) {
 		bool stopped_itself = audiobook_auto_stop(&state);
 
 		static audio_status_t book_last_status = AUDIO_STATUS_STOPPED;
@@ -4644,65 +4043,24 @@ static void update_progress(void) {
 
 static void play_btn_event_cb(lv_event_t *e) {
 	(void)e;
-
-	// A live stream has no position to come back to, so this is a stop, not a
-	// pause: the connection goes, the station stays on screen, and pressing
-	// play again reconnects to it. Not while it is still connecting.
-	if (radio_is_active()) {
-		if (radio_is_connecting()) {
-			return;
-		}
-		if (radio_is_playing()) {
-			radio_stop();
-		} else {
-			radio_resume();
-		}
-		player_refresh_now_playing();
-		return;
-	}
-
 	audio_status_t new_status = device_state_toggle_play_pause();
 	apply_playback_status(new_status); // optimistic UI update; next poll reconciles against the real status
 }
 
-// What the on-screen prev/next buttons do. On a book or a podcast they are
-// jumps of seconds; on a track they are previous/next, Spotify style -- within
-// the first few seconds of a track prev moves to the previous one, later it
+// What the on-screen prev/next buttons do. On a book they are jumps of
+// seconds; on a track they are previous/next, Spotify style -- within the
+// first few seconds of a track prev moves to the previous one, later it
 // restarts the current one. Public so the control centre can do exactly this:
-// the same buttons cannot mean two different things in the two places. (The
-// physical side keys stay episode changes on a podcast: see
-// player_key_prev/next.)
-// Previous and next on a stream. True when the press was the stream's: it
-// changed station along the list the station came from, or there was nowhere
-// to go, or the station is still connecting (see apply_connecting()), and it
-// did nothing. False when no station is loaded and the press is the queue's.
-static bool live_step(int step) {
-	if (!radio_is_active()) {
-		return false;
-	}
-	if (radio_is_connecting()) {
-		return true;
-	}
-	if (radio_step(step)) {
-		refresh_now_playing();
-	}
-	return true;
-}
-
+// the same buttons cannot mean two different things in the two places.
 void player_screen_prev(void) {
-	if (live_step(-1)) {
-		return;
-	}
-
 	device_state_t state;
 	device_state_get(&state);
 
 	// On a book these two are not "previous chapter" and "next chapter": they
 	// are ten seconds back and ten seconds on, which is what somebody who
 	// missed a sentence reaches for. Chapters have their own list.
-	if (audiobook_mode || podcast_mode) {
-		int back = podcast_mode && !audiobook_mode ? podcast_skip_back() : audiobook_skip_back();
-		audiobook_seek_by(-(double)back, &state);
+	if (audiobook_mode) {
+		audiobook_seek_by(-(double)audiobook_skip_back(), &state);
 		update_progress();
 		return;
 	}
@@ -4722,15 +4080,10 @@ void player_screen_prev(void) {
 }
 
 void player_screen_next(void) {
-	if (live_step(1)) {
-		return;
-	}
-
-	if (audiobook_mode || podcast_mode) {
+	if (audiobook_mode) {
 		device_state_t state;
 		device_state_get(&state);
-		int fwd = podcast_mode && !audiobook_mode ? podcast_skip_forward() : audiobook_skip_forward();
-		audiobook_seek_by((double)fwd, &state);
+		audiobook_seek_by((double)audiobook_skip_forward(), &state);
 		update_progress();
 		return;
 	}
@@ -4762,10 +4115,6 @@ void player_key_play_pause(void) {
 }
 
 void player_key_next(void) {
-	if (live_step(1)) {
-		return;
-	}
-
 	// On a track coming from DLNA, "next" is a question for the phone: the
 	// queue is its own.
 	if (dlna_owns_playback()) {
@@ -4773,12 +4122,8 @@ void player_key_next(void) {
 		return;
 	}
 
-	// The side keys stay previous/next track on a podcast, deliberately. A
-	// book is a single file, so "next track" means nothing there and the keys
-	// become jumps. A podcast sits in a real queue of episodes: if the side
-	// keys also jumped thirty seconds, there would be no way to reach the next
-	// episode without opening the queue. This way both exist -- jumps on
-	// screen, episode change under the finger.
+	// A book is a single file, so "next track" means nothing there and the keys
+	// become jumps.
 	if (audiobook_mode) {
 		device_state_t state;
 		device_state_get(&state);
@@ -4794,10 +4139,6 @@ void player_key_next(void) {
 }
 
 void player_key_prev(void) {
-	if (live_step(-1)) {
-		return;
-	}
-
 	device_state_t state;
 	device_state_get(&state);
 
@@ -4854,8 +4195,8 @@ static void book_summary_action(void *user) {
 	audiobookextras_open_current_summary();
 }
 
-// The overflow button: the book's menu on a book, the episode queue on a
-// podcast, the track menu on anything else.
+// The overflow button: the book's menu on a book, the track menu on anything
+// else.
 static void more_btn_event_cb(lv_event_t *e) {
 	if (audiobook_mode) {
 		static const popover_item_t BOOK_ITEMS[] = {
@@ -4865,12 +4206,6 @@ static void more_btn_event_cb(lv_event_t *e) {
 			{"audiobook_summary", book_summary_action, NULL},
 		};
 		popover_show(lv_event_get_current_target(e), BOOK_ITEMS, (int)(sizeof(BOOK_ITEMS) / sizeof(BOOK_ITEMS[0])));
-		return;
-	}
-	// A podcast has no chapters: it has episodes, and the episodes are already
-	// the queue. The button goes straight there.
-	if (podcast_mode) {
-		trackmenu_open_queue();
 		return;
 	}
 	trackmenu_open(lv_event_get_current_target(e));
@@ -5084,7 +4419,7 @@ void player_refresh_artist(void) {
 	}
 	device_state_t state;
 	device_state_get(&state);
-	if (state.live || !state.current_file[0]) {
+	if (!state.current_file[0]) {
 		return;
 	}
 	scrolltext_set(song_artist_label, metadata_shown_artist(&state.metadata));
@@ -6128,7 +5463,7 @@ void player_init(gui_config_t *cfg) {
 	lv_obj_center(prev_icon);
 
 	lv_obj_add_event_cb(prev_btn, prev_btn_event_cb, LV_EVENT_CLICKED, NULL);
-	lv_obj_set_style_opa(prev_btn, LV_OPA_40, LV_STATE_DISABLED); // see apply_connecting()
+	lv_obj_set_style_opa(prev_btn, LV_OPA_40, LV_STATE_DISABLED);
 
 	// Play/pause: a plain glyph like prev/next, with the same generous hit target.
 	play_btn = lv_btn_create(player_controls_buttons);
@@ -6205,44 +5540,6 @@ void player_init(gui_config_t *cfg) {
 		lv_obj_set_style_bg_opa(cover_art_group, LV_OPA_COVER, 0);
 	}
 
-	// The live badge, top right over the artwork: the one thing that has to be
-	// legible at a glance is that this is not a file being played but a
-	// broadcast going past. Red because that is what a live indicator is, and
-	// deliberately not the accent colour -- it says something about the
-	// stream, not about the theme.
-	live_badge = lv_label_create(cover_art_group);
-	lv_label_set_text(live_badge, tr("player_live"));
-	lv_obj_set_style_text_font(live_badge, &font_ui_18, 0);
-	lv_obj_set_style_text_color(live_badge, lv_color_white(), 0);
-	lv_obj_set_style_bg_color(live_badge, lv_color_make(224, 27, 36), 0); // Adwaita red
-	lv_obj_set_style_bg_opa(live_badge, LV_OPA_COVER, 0);
-	lv_obj_set_style_radius(live_badge, 6, 0);
-	lv_obj_set_style_pad_hor(live_badge, 10, 0);
-	lv_obj_set_style_pad_ver(live_badge, 5, 0);
-	lv_obj_align(live_badge, LV_ALIGN_TOP_RIGHT, -BADGE_INSET, BADGE_INSET);
-	lv_obj_set_hidden(live_badge, true);
-
-	// The Qobuz mark, in the same corner and for the same reason: say where
-	// what is playing comes from. It is the white-outlined image, legible even
-	// over a black cover, and is not recoloured (theme_style_icon would turn
-	// it into a solid square).
-	qobuz_badge = lv_image_create(cover_art_group);
-	lv_image_set_src(qobuz_badge, &icon_qobuz_badge);
-	lv_obj_align(qobuz_badge, LV_ALIGN_TOP_RIGHT, -BADGE_INSET, BADGE_INSET);
-	lv_obj_set_hidden(qobuz_badge, true);
-
-	// Same corner, same size: the marks replace each other instead of sitting
-	// side by side, and update_qobuz_badge() decides which.
-	tidal_badge = lv_image_create(cover_art_group);
-	lv_image_set_src(tidal_badge, &icon_tidal_badge);
-	lv_obj_align(tidal_badge, LV_ALIGN_TOP_RIGHT, -BADGE_INSET, BADGE_INSET);
-	lv_obj_set_hidden(tidal_badge, true);
-
-	// And the third, same corner and same size as the other two.
-	podcast_badge = lv_image_create(cover_art_group);
-	lv_image_set_src(podcast_badge, &icon_podcast_badge);
-	lv_obj_align(podcast_badge, LV_ALIGN_TOP_RIGHT, -BADGE_INSET, BADGE_INSET);
-	lv_obj_set_hidden(podcast_badge, true);
 
 	// Shown while there is no artwork for the current track. The mark is drawn
 	// at 128x128 natively, which overflows a V1 sleeve, so it is scaled to a

@@ -36,11 +36,6 @@
 #include "src/system/input/hookclicks.h"
 #include "src/system/input/keymap.h"
 #include "src/system/core/panel.h"
-#include "src/system/streaming/qobuzcache.h"
-#include "src/system/streaming/podcastcache.h"
-#include "src/system/streaming/podcastsubs.h"
-#include "src/system/streaming/radio.h"
-#include "src/system/streaming/tidalcache.h"
 #include "src/system/library/library.h"
 #include "src/system/core/logging.h"
 #include "src/system/library/playlists.h"
@@ -846,10 +841,6 @@ static void card_databases_attach(const char *root) {
 	eq_presets_set_dir(root);
 	peq_presets_set_dir(root);
 	mseb_presets_set_dir(root);
-	qobuzcache_set_root(root);
-	tidalcache_set_root(root);
-	podcastcache_set_root(root);
-	podcastsubs_set_root(root);
 	dlna_set_root(root);
 
 	// The log, from the setting rather than from a remembered flag: a flag does
@@ -867,8 +858,6 @@ void storage_card_files_recheck(void) {
 	}
 	library_reopen_if_replaced();
 	audiobookdb_reopen_if_replaced();
-	radio_store_reopen_if_replaced();
-	podcastsubs_reload_if_replaced();
 	cover_cache_reopen_if_replaced();
 }
 
@@ -974,7 +963,6 @@ void storage_release_for_shutdown(void) {
 
 	card_databases_detach(); // playback, the log, the library and audiobook databases
 	cover_set_cache_dir(NULL); // the thumbnail cache moves to /tmp
-	radio_store_close();
 	sync();
 
 	// Unmounting is what every driver leaves clean. When something still holds

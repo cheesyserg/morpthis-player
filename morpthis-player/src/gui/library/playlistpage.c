@@ -23,10 +23,6 @@
 #include "src/system/library/library.h"
 #include "src/system/library/playlists.h"
 #include "src/system/core/utils.h"
-#include "src/system/streaming/qobuzcache.h"
-#include "src/system/streaming/qobuzsync.h"
-#include "src/system/streaming/tidalcache.h"
-#include "src/system/streaming/tidalsync.h"
 
 lv_obj_t *playlistpage_screen;
 
@@ -48,15 +44,6 @@ static lv_obj_t *title_label;
 static bool picking;
 static char pending_track[512];
 
-// Service track id of the pending track, zero for a local file. It decides
-// everything that follows: which playlists are listed (the account's instead of
-// the card's) and where the track is written when one is tapped.
-//
-// A local playlist is not an option for a streamed track: the file being played
-// lives in the cache, which empties itself, so a local playlist holding it
-// would be a list of dead paths within an afternoon.
-static long pending_qobuz_id;
-static long pending_tidal_id;
 
 // Picker mode for a set of tracks at once (the library lists' selection): the
 // paths waiting for a playlist, owned by this page. Always local files.
@@ -275,8 +262,7 @@ static lv_obj_t *name_field;
 static keyboard_t *name_keyboard;
 
 static void rebuild_rows(void);
-static void qobuz_row_clicked_cb(lv_event_t *e);
-static void tidal_row_clicked_cb(lv_event_t *e);
+
 static void name_layer_show(const char *initial);
 
 // ---------------------------------------------------------------------------
@@ -421,14 +407,8 @@ static void menu_btn_cb(lv_event_t *e) {
 // needs no worker behind it.
 // ---------------------------------------------------------------------------
 
-// `tidal_uuid`, when present, is duplicated and freed with the row. Passing an
-// index into the playlist mirror and re-reading it on tap would be shorter, but
-// the mirror refreshes in the background: between drawing a row and tapping it
-// the index can shift, and the track would land in a different playlist from
-// the one on screen. A uuid attached to the row cannot slide.
 // Returns the subtitle label, for a caller that has to correct it later.
-static lv_obj_t *add_row(const char *name, const char *subtitle, const lv_image_dsc_t *glyph, long qobuz_id,
-						 const char *tidal_uuid) {
+static lv_obj_t *add_row(const char *name, const char *subtitle, const lv_image_dsc_t *glyph) {
 	char *owned = strdup(name);
 	if (!owned) {
 		return NULL;
@@ -447,23 +427,7 @@ static lv_obj_t *add_row(const char *name, const char *subtitle, const lv_image_
 	lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
 	lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 	lv_obj_set_event_bubble(row, true); // the player sheet drags from here too
-	char *uuid = NULL;
-	if (qobuz_id > 0) {
-		// An account playlist has no file to delete, so it carries no menu:
-		// tapping it is the only action.
-		lv_obj_add_event_cb(row, qobuz_row_clicked_cb, LV_EVENT_CLICKED, (void *)(intptr_t)qobuz_id);
-	} else if (tidal_uuid && tidal_uuid[0]) {
-		uuid = strdup(tidal_uuid);
-		if (!uuid) {
-			lv_obj_delete(row);
-			free(owned);
-			return NULL;
-		}
-		lv_obj_add_event_cb(row, tidal_row_clicked_cb, LV_EVENT_CLICKED, uuid);
-		lv_obj_add_event_cb(row, row_delete_cb, LV_EVENT_DELETE, uuid);
-	} else {
-		lv_obj_add_event_cb(row, row_clicked_cb, LV_EVENT_CLICKED, owned);
-	}
+	lv_obj_add_event_cb(row, row_clicked_cb, LV_EVENT_CLICKED, owned);
 	lv_obj_add_event_cb(row, row_delete_cb, LV_EVENT_DELETE, owned);
 
 	lv_obj_t *icon = lv_image_create(row);
@@ -499,10 +463,6 @@ static lv_obj_t *add_row(const char *name, const char *subtitle, const lv_image_
 		lv_obj_set_style_text_font(sub, &font_ui_16, 0);
 	}
 
-	if (qobuz_id > 0 || uuid) {
-		return sub; // no ellipsis: account playlists cannot be deleted from here
-	}
-
 	// The ellipsis on the right edge, as on every track row.
 	lv_obj_t *menu_btn = lv_btn_create(row);
 	lv_obj_set_size(menu_btn, 44, 44);
@@ -521,75 +481,6 @@ static lv_obj_t *add_row(const char *name, const char *subtitle, const lv_image_
 	return sub;
 }
 
-// --- account playlists -----------------------------------------------------
-
-// Result of a service write, handed back to the GUI thread.
-static char sync_error[192];
-
-static void sync_done_async(void *user) {
-	(void)user;
-	if (sync_error[0]) {
-		gui_notify_popup(sync_error);
-		return;
-	}
-	toast_success("playlist_track_added");
-	back_btn_cb(NULL);
-}
-
-static void sync_done_cb(bool ok, const char *error, void *user) {
-	(void)user;
-	// The fallback message names the service actually being written to: this
-	// callback serves both, and saying "Qobuz" while adding a track to a Tidal
-	// playlist sends the user looking in the wrong place.
-	snprintf(sync_error, sizeof(sync_error), "%s",
-			 ok ? ""
-				: (error && error[0]        ? error
-				   : pending_tidal_id > 0 ? tr("tidal_change_refused")
-										   : tr("qobuz_change_refused")));
-	gui_post(sync_done_async, NULL);
-}
-
-// The playlist mirror arrived; redraw if it is still what the page is showing.
-static void qobuz_playlists_ready_async(void *user) {
-	(void)user;
-	if (picking && pending_qobuz_id > 0) {
-		rebuild_rows();
-	}
-}
-
-static void qobuz_playlists_changed(void) { gui_post(qobuz_playlists_ready_async, NULL); }
-
-static void qobuz_row_clicked_cb(lv_event_t *e) {
-	if (player_sheet_drag_active() || switcher_back_drag_active()) {
-		return;
-	}
-	long playlist_id = (long)(intptr_t)lv_event_get_user_data(e);
-	if (playlist_id <= 0 || pending_qobuz_id <= 0) {
-		return;
-	}
-	qobuzsync_playlist_add(playlist_id, pending_qobuz_id, sync_done_cb, NULL);
-}
-
-static void tidal_row_clicked_cb(lv_event_t *e) {
-	if (player_sheet_drag_active() || switcher_back_drag_active()) {
-		return;
-	}
-	const char *playlist_id = lv_event_get_user_data(e);
-	if (!playlist_id || !playlist_id[0] || pending_tidal_id <= 0) {
-		return;
-	}
-	tidalsync_playlist_add(playlist_id, pending_tidal_id, sync_done_cb, NULL);
-}
-
-// The Tidal playlist mirror arrived; redraw if it is still what is shown.
-static void tidal_playlists_ready_async(void *user) {
-	(void)user;
-	if (picking && pending_tidal_id > 0) {
-		rebuild_rows();
-	}
-}
-
-static void tidal_playlists_changed(void) { gui_post(tidal_playlists_ready_async, NULL); }
 
 static bool collect_row_cb(const char *name, void *user) {
 	int *count = user;
@@ -597,7 +488,7 @@ static bool collect_row_cb(const char *name, void *user) {
 	char subtitle[48];
 	int tracks = playlists_count_tracks(name);
 	snprintf(subtitle, sizeof(subtitle), tr(tracks == 1 ? "playlist_track_2" : "playlist_tracks"), tracks);
-	add_row(name, subtitle, &icon_list_music, 0, NULL);
+	add_row(name, subtitle, &icon_list_music);
 
 	(*count)++;
 	return true;
@@ -1135,20 +1026,6 @@ static void name_accept_cb(lv_event_t *e) {
 		return;
 	}
 
-	// A Qobuz playlist is created on the account with the track in it, in one
-	// call. Nothing is written to the card.
-	if (picking && pending_qobuz_id > 0) {
-		name_layer_hide();
-		qobuzsync_playlist_create_with(name, pending_qobuz_id, sync_done_cb, NULL);
-		return;
-	}
-
-	if (picking && pending_tidal_id > 0) {
-		name_layer_hide();
-		tidalsync_playlist_create_with(name, pending_tidal_id, sync_done_cb, NULL);
-		return;
-	}
-
 	if (playlists_exists(name)) {
 		gui_notify_popup("playlist_name_taken");
 		return;
@@ -1244,37 +1121,7 @@ static void rebuild_rows(void) {
 	lv_obj_set_style_text_color(new_label, theme()->accent, 0);
 
 	int count = 0;
-	if (picking && pending_qobuz_id > 0) {
-		qobuz_playlist_t got[QOBUZSYNC_PLAYLISTS_MAX];
-		int total = qobuzsync_playlists(got, QOBUZSYNC_PLAYLISTS_MAX);
-		for (int i = 0; i < total; i++) {
-			char subtitle[48];
-			snprintf(subtitle, sizeof(subtitle), tr(got[i].track_count == 1 ? "playlist_track_2" : "playlist_tracks"),
-					 got[i].track_count);
-			add_row(got[i].name, subtitle, &icon_list_music, got[i].id, NULL);
-			count++;
-		}
-		// Nothing has arrived yet: ask for it, and the callback calls this
-		// function again once it does.
-		if (!qobuzsync_playlists_known()) {
-			qobuzsync_playlists_refresh(qobuz_playlists_changed);
-		}
-	} else if (picking && pending_tidal_id > 0) {
-		tidal_playlist_t got[TIDALSYNC_PLAYLISTS_MAX];
-		int total = tidalsync_playlists(got, TIDALSYNC_PLAYLISTS_MAX);
-		for (int i = 0; i < total; i++) {
-			char subtitle[48];
-			snprintf(subtitle, sizeof(subtitle), tr(got[i].track_count == 1 ? "playlist_track_2" : "playlist_tracks"),
-					 got[i].track_count);
-			add_row(got[i].name, subtitle, &icon_list_music, 0, got[i].id);
-			count++;
-		}
-		if (!tidalsync_playlists_known()) {
-			tidalsync_playlists_refresh(tidal_playlists_changed);
-		}
-	} else {
-		playlists_for_each(collect_row_cb, &count);
-	}
+	playlists_for_each(collect_row_cb, &count);
 
 	if (count == 0) {
 		lv_obj_set_hidden(empty_label, false);
@@ -1287,8 +1134,6 @@ void playlistpage_open(void) {
 	picking = false;
 	pending_track[0] = '\0';
 	pending_many_free();
-	pending_qobuz_id = 0;
-	pending_tidal_id = 0;
 	lv_label_set_text(title_label, tr("playlists"));
 	name_layer_hide();
 	import_layer_hide();
@@ -1304,14 +1149,7 @@ void playlistpage_add_track(const char *track_path) {
 	picking = true;
 	pending_many_free();
 	snprintf(pending_track, sizeof(pending_track), "%s", track_path);
-	pending_qobuz_id = qobuzcache_track_id(track_path);
-	pending_tidal_id = tidalcache_track_id(track_path);
-	// The title states where the track is about to be written: an account or
-	// the card. The two caches live in different directories, so at most one of
-	// the two ids can be non-zero.
-	lv_label_set_text(title_label, pending_qobuz_id > 0   ? tr("playlist_qobuz_playlist")
-						   : pending_tidal_id > 0 ? tr("playlist_tidal_playlist")
-												  : tr("playlist_add_to_playlist_2"));
+	lv_label_set_text(title_label, tr("playlist_add_to_playlist_2"));
 	name_layer_hide();
 	import_layer_hide();
 	// While the page is choosing where a track goes it is not somewhere to
@@ -1342,8 +1180,6 @@ void playlistpage_add_tracks(const char *const *paths, int count) {
 
 	picking = true;
 	pending_track[0] = '\0';
-	pending_qobuz_id = 0;
-	pending_tidal_id = 0;
 	lv_label_set_text(title_label, tr("playlist_add_to_playlist_2"));
 	name_layer_hide();
 	import_layer_hide();

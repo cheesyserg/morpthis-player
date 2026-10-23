@@ -24,14 +24,9 @@
 #include "src/system/playback/device_state.h"
 #include "src/system/remote/dlna.h"
 #include "src/system/remote/sonixlink.h"
-#include "src/system/streaming/qobuzcache.h"
-#include "src/system/streaming/podcastcache.h"
-#include "src/system/streaming/podcastdl.h"
-#include "src/system/streaming/tidalcache.h"
 #include "src/system/device/adb.h"
 #include "src/system/library/library.h"
 #include "src/system/remote/airplay.h"
-#include "src/system/streaming/radio.h"
 #include "src/system/net/wifi.h"
 #include "src/system/net/wifitransfer.h"
 #include "src/system/lastfm/lastfm.h"
@@ -731,55 +726,24 @@ static uint32_t g_radio_park_after_ms = RADIO_PARK_AFTER_MS_DEFAULT;
 static bool g_wifi_parked; // this module switched it off, so it switches it back on
 static bool g_bt_parked;
 
-// Whether what is playing right now comes off the network. The download flags
-// tested by wifi_in_use() do not cover it: they are raised while a fetch is
-// wanted and dropped as soon as the bytes are in, so an album whose next track
-// is already cached looks exactly like an idle device -- and parking the radio
-// there means the track after that never arrives. What decides is who owns the
-// file being played.
-//
-// radio_is_playing(), not radio_is_active(): a station merely loaded and
-// stopped uses nothing, and counting it as in-use would leave the radio on and
-// the automatic shutdown disabled for the rest of the day after one listen.
-static bool streaming_playback_active(void) {
-	if (radio_is_playing()) {
-		return true;
-	}
-	// A network hold keeps the radios up for a streaming or downloading app.
-	// Audio writes alone are not a hold -- a game mixer writes silence all day.
-	if (apphost_network_hold()) {
-		return true;
-	}
-	if (audio_get_status() == AUDIO_STATUS_STOPPED) {
-		return false;
-	}
-
-	char path[512];
-	audio_get_current_file(path, sizeof(path));
-	if (!path[0]) {
-		return false;
-	}
-	return qobuzcache_owns(path) || tidalcache_owns(path) || podcastcache_owns(path);
-}
+// Whether an app is doing network work. Audio writes alone are not a hold --
+// a game mixer writes silence all day -- so the app states this explicitly.
+static bool streaming_playback_active(void) { return apphost_network_hold(); }
 
 // Whether the network is the point rather than an idle drain: an AirPlay
 // receiver waiting to be found, a DLNA server, a browser halfway through an
-// upload, a station streaming, a Qobuz/Tidal/podcast fetch or a Last.fm request
-// in flight.
+// upload, an app holding the network, or a Last.fm request in flight.
 //
-// The *_network_wanted() halves matter as much as the downloading ones: between
-// the end of one track and the first bytes of the next there is an HTTPS request
-// during which nothing plays and nothing downloads, and parking the radio in
-// that gap stops the next track from ever arriving.
+// lastfm_network_wanted() matters as much as the downloading flags: between the
+// end of one track and the first bytes of the next there is an HTTPS request
+// during which nothing plays, and parking the radio in that gap stops it from
+// ever arriving.
 static bool wifi_in_use(void) {
 	// A scan or a connect in flight counts as use: parking the radio out from
 	// under wpa_supplicant mid-association leaves the driver to sort out a
 	// teardown it did not expect.
 	return wifi_busy() || wifi_scan_running() || streaming_playback_active() || airplay_get_enabled() ||
-		   dlna_get_enabled() || sonixlink_get_enabled() ||
-		   wifitransfer_get_enabled() || qobuzcache_downloading_id() > 0 ||
-		   qobuzcache_network_wanted() || tidalcache_downloading_id() > 0 || tidalcache_network_wanted() ||
-		   podcastcache_downloading_id() > 0 || podcastcache_network_wanted() || podcastdl_busy() ||
+		   dlna_get_enabled() || sonixlink_get_enabled() || wifitransfer_get_enabled() ||
 		   lastfm_network_wanted() || ota_busy();
 }
 
@@ -828,14 +792,13 @@ static bool bluetooth_in_use(void) {
 // user doing something, and switching off under their fingers is not what a
 // shutdown timer is for.
 static bool player_is_busy(bool playing, uint32_t input_idle) {
-	return playing ||							   // a track or a station
-		   input_idle < POWER_TICK_MS * 4 ||	   // a key just pressed
-		   usbdac_is_active() ||				   // a computer feeding the DAC
-		   usb_storage_active() ||				   // the card exported over USB
-		   library_scan_running() ||			   // a scan, which is also writing to the card
+	return playing ||						   // a track
+		   input_idle < POWER_TICK_MS * 4 ||   // a key just pressed
+		   usbdac_is_active() ||			   // a computer feeding the DAC
+		   usb_storage_active() ||			   // the card exported over USB
+		   library_scan_running() ||		   // a scan, which is also writing to the card
 		   audiobookdb_scan_running() || wifitransfer_running() || dlna_running() || airplay_running() ||
 		   sonixlink_is_connected() || // a phone driving the player, not a switch left on
-		   qobuzcache_downloading_id() > 0 || tidalcache_downloading_id() > 0 || podcastcache_downloading_id() > 0 ||
 		   ota_busy(); // a firmware update being fetched
 }
 
@@ -1127,16 +1090,8 @@ void power_shutdown(void) {
 	// last set is otherwise lost the moment the power goes.
 	clock_shutdown();
 
-	// The radio database is on the card: close it so its journal is tidied
-	// away before the power goes, rather than left for the next boot to find.
-	radio_store_close();
-
-	// Streamed and downloaded tracks are transient and must not survive a
-	// power cycle: without this the hidden folders carry a gigabyte of files
-	// the user never put there and will not listen to again.
-	qobuzcache_clear_on_exit();
-	tidalcache_clear_on_exit();
-	podcastcache_clear_on_exit();
+	// DLNA's transient files must not survive a power cycle: without this the
+	// hidden folder carries files the user never put there.
 	dlna_clear_on_exit();
 
 	// The charger back on before the power goes: the driver keeps that bit
@@ -1168,10 +1123,6 @@ void power_reboot(void) {
 		fprintf(stderr, "power: audio did not quiesce completely before reboot\n");
 	}
 	clock_shutdown();
-	radio_store_close();
-	qobuzcache_clear_on_exit();
-	tidalcache_clear_on_exit();
-	podcastcache_clear_on_exit();
 	dlna_clear_on_exit();
 	storage_release_for_shutdown();
 	sync();
@@ -1936,7 +1887,7 @@ static void power_timer_cb(lv_timer_t *timer) {
 	// app says what it is doing with the power.h hold mask; AWAKE (or NETWORK,
 	// which implies it) is the only app-side standby hold.
 	bool playing = (audio_get_status() == AUDIO_STATUS_PLAYING) || apphost_awake_hold() ||
-				   radio_is_playing() || btreceiver_is_streaming();
+				   btreceiver_is_streaming();
 	if (playing) {
 		g_last_playing_ms = now;
 	}

@@ -1,10 +1,11 @@
 # Streaming removal and app migration
 
-Status: **phase 1 complete; streaming UI removed; back end next**. The player
-keeps working at every phase. This checkout could not be UI-built in the current
-container (LVGL/SDL build is not supported there), so the layout changes are
-source-reviewed only; run the normal UI build on the build machine before
-flashing.
+Status: **phases 1–3 complete** (home/Music layout, streaming UI, streaming back
+end). The player keeps working at every phase. This checkout could not be
+UI-built in the current container (LVGL/SDL build is not supported there), so
+phases 2–3 were validated statically: symbol audit across `src` and `tests`,
+diff review and `git diff --check`. Run the normal UI build on the build
+machine before flashing.
 
 ## Goal
 
@@ -56,7 +57,7 @@ Audiobooks becomes a Music destination next to Browse:
 - The tile arrangement settings include the new slug `audiobooks`, so users can
   move or hide it like every other Music tile.
 
-## Current inventory
+## Inventory before removal
 
 | Area | Files | Lines | Used by |
 | --- | --- | ---: | --- |
@@ -135,21 +136,27 @@ is refreshed; the test skips the old Audiobooks native art for tile 3.
 - [x] Remove the service-specific album routing from `trackmenu.c`.
 - [x] Remove the podcast sleep-timer button and page lookup from the control
   centre.
-- [ ] Remove service badges, favourites and podcast transport branches from
+- [x] Remove service badges, favourites and podcast transport branches from
   `player.c`.
-- [ ] Remove the remaining service favourite/star branches from `quickpanel.c`.
-- [ ] Remove service switches from settings.
-- [ ] Keep local playback, audiobooks, AirPlay/DLNA/BT/Last.fm working.
+- [x] Remove the remaining service favourite/star branches from `quickpanel.c`.
+- [x] Remove service switches from settings.
+- [x] Keep local playback, audiobooks, AirPlay/DLNA/BT/Last.fm working.
 
 ### Phase 3 — remove the built-in streaming back end
 
-- [ ] Delete `src/system/streaming/`.
-- [ ] Remove init/shutdown/cache-root/key loading from `main.c`.
-- [ ] Remove radio/cache ownership from `power.c`; leave app NETWORK holds.
-- [ ] Remove service cleanup from USB, firmware, factory reset and system.
-- [ ] Remove `streamkeys` from the Makefile.
-- [ ] Remove HLS if it has no remaining user.
-- [ ] Full host build and UI tests.
+- [x] Delete `src/system/streaming/`.
+- [x] Remove init/shutdown/cache-root/key loading from `main.c`.
+- [x] Remove radio/cache ownership from `power.c`; leave app NETWORK holds.
+- [x] Remove service cleanup from USB, firmware, factory reset and system.
+- [x] Move `streamkeys` to `src/system/core/` and trim it to Last.fm (the name
+  and file paths are kept so existing cards and images still work).
+- [x] Remove HLS (`src/system/net/hls.c`), which radio alone used.
+- [x] Remove the Qobuz-only `library_forget_under()` and keep skipping the
+  legacy `Podcast` folder the scanner used to know about
+  (`LIBRARY_LEGACY_PODCAST_FOLDER`).
+- [x] Static validation: no live reference to a symbol unique to the deleted
+  headers; `git diff --check` clean; no dangling includes. Host build and UI
+  tests still to be run on the build machine.
 
 ### Phase 4 — Radio app
 
@@ -187,9 +194,17 @@ is refreshed; the test skips the old Audiobooks native art for tile 3.
 
 ### Phase 8 — cleanup
 
-- [ ] Remove unused translation keys and icons.
-- [ ] Remove `streaming-keys.ini.example` and the seal/streamkeys tooling.
+- [ ] Remove unused translation keys and icons (`icon_qobuz_badge`,
+  `icon_tidal_badge`, `icon_podcast_badge`, `player_live`, `qobuz_*`,
+  `tidal_*`, `podcast_*` are still generated and compiled).
+- [ ] Remove `streaming-keys.ini.example` and the seal/streamkeys tooling once
+  Last.fm credentials have another home; `streamkeys` itself stays while
+  Last.fm is built in.
 - [ ] Update `README.md`, `FEATURES.md`, `docs/`, `apps.md`.
+- [ ] Refresh prose in modules that still cite Qobuz/Tidal as their motivating
+  user (`http`, `json`, `base64`, `sha1`, `md5`, `growfile`, `decode`,
+  `mp4flac`, `dlna`): the code is generic and stays, the comments are
+  historical.
 - [ ] Check free RAM and boot time before/after.
 - [ ] Full regression: local playback, audiobooks, apps, USB storage, standby.
 

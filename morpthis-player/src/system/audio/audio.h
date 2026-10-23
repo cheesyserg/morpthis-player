@@ -165,9 +165,8 @@ int audio_get_stream_bits(void); // source bit depth (16/24/32); 0 while unknown
 // its own and is described by bitrate instead.
 //
 // audio_get_stream_bitrate_kbps() is the nominal bitrate read from the file,
-// not bytes divided by seconds: on a Qobuz or Tidal track the cache file is
-// still growing while it plays, so the average would visibly climb. 0 when
-// unknown.
+// not bytes divided by seconds: on a file an app is still writing while it
+// plays, the average would visibly climb. 0 when unknown.
 int audio_get_stream_bitrate_kbps(void);
 bool audio_stream_is_lossy(void);
 // "MP3", "AAC", "FLAC", "ALAC", ... Empty when the right name is the

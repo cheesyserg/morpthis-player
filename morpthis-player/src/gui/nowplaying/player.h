@@ -3,7 +3,6 @@
 
 #include "src/gui/shell/gui.h"
 #include "src/system/library/library.h"
-#include "src/system/streaming/podcast.h" // podcast_feed_t
 
 #include "lvgl/lvgl.h"
 
@@ -99,14 +98,11 @@ void player_key_next(void);
 void player_key_prev(void);
 
 // What the player's on-screen prev/next buttons do: seconds-sized skips on an
-// audiobook or podcast, previous/next track otherwise. The control centre
-// calls these so that it behaves exactly like the player.
+// audiobook, previous/next track otherwise. The control centre calls these so
+// that it behaves exactly like the player.
 void player_screen_prev(void);
 void player_screen_next(void);
 
-// The feed of the episode being played, for the control centre's star button.
-// Returns true and fills id/feed when a podcast is playing.
-bool player_current_podcast_feed(long long *id_out, podcast_feed_t *feed_out);
 
 bool player_sheet_is_open(void);
 

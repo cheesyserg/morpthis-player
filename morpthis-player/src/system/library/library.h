@@ -47,6 +47,11 @@ int library_track_count(void);
 // on its own thread and the UI polls the counters below.
 // ---------------------------------------------------------------------------
 
+// A folder the removed podcast feature used for downloads. The scan still
+// skips it: a card written by an older build can carry one, and what is in it
+// is not the user's music.
+#define LIBRARY_LEGACY_PODCAST_FOLDER "Podcast"
+
 // The folders at the root of the card the scan reads; none for the whole card.
 // A scan limited to some folders leaves out the files at the root of the card
 // too. library_scan_folders() returns an array the caller frees with
@@ -409,12 +414,6 @@ int library_fav_add_many(const library_fav_row_t *rows, int count);
 // Unstars every track in `paths`, in one transaction. Returns how many were
 // favourites and are not any more.
 int library_fav_remove_many(const char *const *paths, int count);
-
-// Removes from the favourites (and from the saved playback state) everything
-// under `prefix`. It is what clears rows pointing into the stream cache, whose
-// files are emptied and would otherwise show as dead favourites. Run once at
-// startup. Returns how many rows it removed.
-int library_forget_under(const char *prefix);
 
 // The ordering used everywhere (group by script, case/accent folded, leading
 // English/Italian articles skipped: "The Beatles" files under B). Exported so

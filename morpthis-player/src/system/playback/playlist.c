@@ -129,11 +129,11 @@ static size_t pos = 0;	// where playback is, as an index into `order`
 static bool custom_queue = false;
 static playback_mode_t mode = PLAYBACK_MODE_NORMAL;
 
-// A queue whose order is part of its content: podcast episodes.
+// A queue whose order is part of its content: the chapters of a book.
 //
 // Other queues are a set of tracks an order can be applied to -- alphabetical,
-// random, looping -- and which one is a preference. A queue of episodes is a
-// sequence, newest going back in time, and shuffling it is not another order
+// random, looping -- and which one is a preference. A queue of chapters is a
+// sequence, in reading order, and shuffling it is not another order
 // but a broken one.
 //
 // Hence this flag: the queue carries its own order, and neither shuffle nor
@@ -960,8 +960,7 @@ bool playlist_advance_auto(char *out, size_t out_size) {
 
 	// A queue that carries its own order is played straight through: one step
 	// forward, then stop. Shuffle and repeat mean nothing on a sequence of
-	// episodes, which is also why the player hides that button during a
-	// podcast.
+	// chapters, which is also why the player hides that button during a book.
 	if (ordered_queue) {
 		if (pos + 1 >= entry_count) {
 			return false;

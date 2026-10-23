@@ -18,7 +18,7 @@
 #include "src/system/device/usb.h"
 #include "src/system/net/http.h"
 #include "src/system/net/wifi.h"
-#include "src/system/streaming/streamkeys.h"
+#include "src/system/core/streamkeys.h"
 
 #define API_URL "https://ws.audioscrobbler.com/2.0/"
 #define API_TIMEOUT_SECS 15

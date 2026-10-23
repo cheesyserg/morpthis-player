@@ -2,7 +2,7 @@
 
 #include "src/system/library/audiobookdb.h"
 #include "src/system/playback/playlist.h"
-#include "src/system/streaming/podcastdl.h"
+
 
 #include <ctype.h>
 #include <dirent.h>
@@ -1995,47 +1995,6 @@ int library_fav_remove_many(const char *const *paths, int count) {
 		bump_generation(GEN_FAVOURITES);
 	}
 	pthread_mutex_unlock(&db_lock);
-	return removed;
-}
-
-int library_forget_under(const char *prefix) {
-	if (!prefix || !prefix[0]) {
-		return 0;
-	}
-
-	char pattern[600];
-	snprintf(pattern, sizeof(pattern), "%.500s%%", prefix);
-
-	pthread_mutex_lock(&db_lock);
-	int removed = 0;
-	sqlite3_stmt *stmt = NULL;
-	if (db && sqlite3_prepare_v2(db, "DELETE FROM FAVOURITES WHERE path LIKE ?", -1, &stmt, NULL) == SQLITE_OK) {
-		sqlite3_bind_text(stmt, 1, pattern, -1, SQLITE_TRANSIENT);
-		if (sqlite3_step(stmt) == SQLITE_DONE) {
-			removed = sqlite3_changes(db);
-		}
-		sqlite3_finalize(stmt);
-	}
-	// And the remembered playback position, if it pointed at a cache file.
-	if (db && sqlite3_prepare_v2(db, "DELETE FROM PLAYBACK_STATE WHERE path LIKE ?", -1, &stmt, NULL) == SQLITE_OK) {
-		sqlite3_bind_text(stmt, 1, pattern, -1, SQLITE_TRANSIENT);
-		sqlite3_step(stmt);
-		sqlite3_finalize(stmt);
-	}
-	if (db && sqlite3_prepare_v2(db, "DELETE FROM PLAY_COUNTS WHERE path LIKE ?", -1, &stmt, NULL) == SQLITE_OK) {
-		sqlite3_bind_text(stmt, 1, pattern, -1, SQLITE_TRANSIENT);
-		if (sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(db) > 0) {
-			bump_generation(GEN_PLAY_COUNTS);
-			play_counts_rev++;
-		}
-		sqlite3_finalize(stmt);
-	}
-	bump_generation(GEN_FAVOURITES);
-	pthread_mutex_unlock(&db_lock);
-
-	if (removed > 0) {
-		printf("library: removed %d favourites that pointed at the Qobuz cache\n", removed);
-	}
 	return removed;
 }
 
@@ -4506,9 +4465,9 @@ static void scan_directory(const char *path, int depth) {
 		if (S_ISDIR(st.st_mode)) {
 			folder_sig_add(&sig, de->d_name, true);
 			// The audiobooks have an index of their own (audiobookdb.h), and the
-			// downloaded podcasts a page of their own (podcastdl.h).
+			// Podcast folder an older build wrote is not music either.
 			if (depth == 0 && (strcasecmp(de->d_name, AUDIOBOOKDB_FOLDER) == 0 ||
-							   strcasecmp(de->d_name, PODCASTDL_FOLDER) == 0)) {
+							   strcasecmp(de->d_name, LIBRARY_LEGACY_PODCAST_FOLDER) == 0)) {
 				continue;
 			}
 			if (depth == 0 && scan_folder_count > 0 && !scan_folder_chosen(de->d_name)) {
@@ -5089,7 +5048,7 @@ static void update_folder(const char *path, int depth, walk_t *w) {
 			folder_sig_add(&sig, de->d_name, true);
 			overflow |= !namelist_add(&dirs, de->d_name);
 			if (depth == 0 && (strcasecmp(de->d_name, AUDIOBOOKDB_FOLDER) == 0 ||
-							   strcasecmp(de->d_name, PODCASTDL_FOLDER) == 0)) {
+							   strcasecmp(de->d_name, LIBRARY_LEGACY_PODCAST_FOLDER) == 0)) {
 				continue;
 			}
 			if (depth == 0 && scan_folder_count > 0 && !scan_folder_chosen(de->d_name)) {

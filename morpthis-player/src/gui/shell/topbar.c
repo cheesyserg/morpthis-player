@@ -25,7 +25,7 @@
 #include "src/system/playback/device_state.h"
 #include "src/system/bluetooth/btreceiver.h"
 #include "src/system/device/led.h"
-#include "src/system/streaming/podcastcache.h"
+
 #include "src/system/device/power.h"
 #include "src/system/remote/sonixlink.h"
 #include "src/system/device/usb.h"
@@ -627,7 +627,7 @@ void topbar_refresh_playback(void) {
 	refresh_play_icon(&state);
 }
 
-void topbar_refresh_led(bool playing, int sample_rate, bool lossy, int bits, bool podcast, bool dsd) {
+void topbar_refresh_led(bool playing, int sample_rate, bool lossy, int bits, bool dsd) {
 	if (apphost_audio_playing()) {
 		// The app's output is what is coming out of the jack. Its rate and depth
 		// are the ones it opened with; the SDK does not carry a lossy flag, so
@@ -638,19 +638,16 @@ void topbar_refresh_led(bool playing, int sample_rate, bool lossy, int bits, boo
 		sample_rate = apphost_audio_rate();
 		bits = apphost_audio_bits();
 		lossy = false;
-		podcast = false;
 		dsd = false;
 	}
-	led_update_playback(playing, sample_rate, lossy, bits, podcast, dsd);
+	led_update_playback(playing, sample_rate, lossy, bits, dsd);
 }
 
 void topbar_refresh_led_current(void) {
 	device_state_t state;
 	device_state_get(&state);
 	topbar_refresh_led(state.status == AUDIO_STATUS_PLAYING, state.stream_sample_rate,
-					   audio_stream_is_lossy(), audio_get_stream_bits(),
-					   !state.live && podcastcache_is_episode(state.current_file),
-					   !state.live && audio_get_dsd_multiple() > 0);
+					   audio_stream_is_lossy(), audio_get_stream_bits(), audio_get_dsd_multiple() > 0);
 }
 
 static void refresh_play_icon(const device_state_t *state) {
@@ -824,9 +821,7 @@ static void timer_update_cb(lv_timer_t *timer) {
 	// is what nobody is standing over -- the playback colour, Wi-Fi transfer,
 	// DAC mode.
 	topbar_refresh_led(state.status == AUDIO_STATUS_PLAYING, state.stream_sample_rate,
-					   audio_stream_is_lossy(), audio_get_stream_bits(),
-					   !state.live && podcastcache_is_episode(state.current_file),
-					   !state.live && audio_get_dsd_multiple() > 0);
+					   audio_stream_is_lossy(), audio_get_stream_bits(), audio_get_dsd_multiple() > 0);
 	// Wi-Fi transfer takes the same route: its pattern stays lit, screen off
 	// included, for as long as the transfer is on. The switch rather than the
 	// process, because this poll is five seconds apart and the server takes a

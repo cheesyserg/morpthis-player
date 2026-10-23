@@ -78,7 +78,7 @@ typedef struct {
 	const char *artist;
 	const char *title;
 	const char *album;
-	bool skip; // radio, audiobooks and podcasts are never scrobbled
+	bool skip; // audiobooks are never scrobbled
 } lastfm_playback_t;
 
 // GUI thread, about once a second. Tags may arrive empty on the first calls

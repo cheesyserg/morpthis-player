@@ -20,11 +20,9 @@
 #include "src/system/core/lang.h"
 #include "src/system/device/power.h"
 #include "src/system/device/system.h"
-#include "src/system/streaming/qobuzcache.h"
-#include "src/system/streaming/podcastcache.h"
-#include "src/system/streaming/tidalcache.h"
+
 #include "src/system/remote/dlna.h"
-#include "src/system/streaming/radio.h"
+
 
 // ---------------------------------------------------------------------------
 // The power menu, iOS-style: two slide-to-confirm pills over a near-opaque

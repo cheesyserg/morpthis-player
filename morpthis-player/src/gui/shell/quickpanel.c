@@ -21,9 +21,7 @@
 #include "src/gui/wireless/wifitransfer.h"
 #include "src/gui/shell/theme.h"
 #include "src/system/playback/audiobook.h"
-#include "src/system/streaming/podcast.h"
-#include "src/system/streaming/podcastcache.h"
-#include "src/system/streaming/podcastsubs.h"
+
 #include "src/system/bluetooth/btreceiver.h"
 #include "src/system/audio/usbdac.h"
 #include "src/system/net/wifitransfer.h"
@@ -42,11 +40,7 @@
 #include "src/system/playback/playlist.h"
 #include "src/system/playback/sleeptimer.h"
 #include "src/system/device/power.h"
-#include "src/system/streaming/qobuzcache.h"
-#include "src/system/streaming/qobuzsync.h"
-#include "src/system/streaming/tidalcache.h"
-#include "src/system/streaming/tidalsync.h"
-#include "src/system/streaming/radio.h"
+
 #include "src/system/remote/dlna.h"
 #include "src/system/remote/sonixlink.h"
 #include "src/system/net/wifi.h"
@@ -338,13 +332,7 @@ static void refresh_now_playing_card(void) {
 	device_state_t state;
 	device_state_get(&state);
 
-	if (state.live) {
-		// A radio: the station on the first line, what it reports on air on the
-		// second. A live stream has no file, so without this branch the card
-		// shows the no-track text while a station is playing.
-		scrolltext_set(np_title, state.metadata.title);
-		scrolltext_set(np_artist, state.metadata.artist);
-	} else if (state.current_file[0]) {
+	if (state.current_file[0]) {
 		const char *slash = strrchr(state.current_file, '/');
 		scrolltext_set(np_title, state.metadata.title[0] ? state.metadata.title
 														 : (slash ? slash + 1 : state.current_file));
@@ -356,61 +344,17 @@ static void refresh_now_playing_card(void) {
 		scrolltext_set(np_artist, "");
 	}
 
-	// A live stream cannot be paused, so on a radio the button becomes the stop
-	// the player also shows.
 	const lv_image_dsc_t *glyph = state.status == AUDIO_STATUS_PLAYING ? &icon_pause_large : &icon_play_large;
-	if (state.live && state.status == AUDIO_STATUS_PLAYING) {
-		glyph = &icon_stop;
-	}
 	lv_image_set_src(np_play_icon, glyph);
 
-	bool station_steps = state.live && radio_can_step();
-
-	// Greyed out and inert while a station connects, as on the player.
-	bool connecting = state.live && radio_is_connecting();
-	lv_obj_t *const transport[] = {np_prev_btn, np_play_btn, np_next_btn};
-	for (size_t i = 0; i < sizeof(transport) / sizeof(transport[0]); i++) {
-		if (!transport[i]) {
-			continue;
-		}
-		if (connecting) {
-			lv_obj_add_state(transport[i], LV_STATE_DISABLED);
-		} else {
-			lv_obj_remove_state(transport[i], LV_STATE_DISABLED);
-		}
-	}
-	lv_obj_t *const only_for_tracks[] = {np_prev_btn, np_next_btn, np_repeat_btn};
-	for (size_t i = 0; i < sizeof(only_for_tracks) / sizeof(only_for_tracks[0]); i++) {
-		if (!only_for_tracks[i]) {
-			continue;
-		}
-		bool steps = station_steps && only_for_tracks[i] != np_repeat_btn;
-		if (state.live && !steps) {
-			lv_obj_set_hidden(only_for_tracks[i], true);
-		} else {
-			lv_obj_set_hidden(only_for_tracks[i], false);
-		}
-	}
-
-	// Must come after the loop above: that loop unhides the repeat button for
-	// everything that is not a stream, books included, so hiding it earlier
-	// would be undone in the same pass.
-	//
 	// On a book the transport is a pair of timed jumps, mirroring the player so
 	// the two places do not disagree about what the same buttons do. prev_cb and
 	// next_cb already route through the player, which knows about books, so only
 	// the glyphs change here.
-	bool book = !state.live && audiobook_is_playing();
-	// A podcast is driven like an audiobook -- timed jumps instead of prev/next
-	// track -- but with its own intervals (podcast_skip_*), no repeat mode, and a
-	// star that follows the feed rather than the track. Same dressing as the
-	// player.
-	long long podcast_feed_id = 0;
-	player_current_podcast_feed(&podcast_feed_id, NULL);
-	bool podcast = !state.live && !book && podcastcache_is_episode(state.current_file);
-	bool skips = book || podcast;
-	int back = book ? audiobook_skip_back() : podcast ? podcast_skip_back() : 0;
-	int forward = book ? audiobook_skip_forward() : podcast ? podcast_skip_forward() : 0;
+	bool book = audiobook_is_playing();
+	bool skips = book;
+	int back = audiobook_skip_back();
+	int forward = audiobook_skip_forward();
 	if (np_prev_icon) {
 		lv_image_set_src(np_prev_icon, !skips                       ? &icon_skip_back_large
 									   : back == AUDIOBOOK_SKIP_HUGE ? &icon_prev_60
@@ -424,15 +368,9 @@ static void refresh_now_playing_card(void) {
 																		: &icon_next_10);
 	}
 
-	// Repeat/shuffle goes away on both books and podcasts: a queue of episodes is
-	// not an album. The star goes away only on books; on a podcast it stays and
-	// follows the feed (see star_cb).
+	// Repeat/shuffle goes away on a book: its queue is the book, not an album.
 	if (np_repeat_btn) {
-		if (book || podcast) {
-			lv_obj_set_hidden(np_repeat_btn, true);
-		} else {
-			lv_obj_set_hidden(np_repeat_btn, false);
-		}
+		lv_obj_set_hidden(np_repeat_btn, book);
 	}
 	if (np_star_btn) {
 		if (book) {
@@ -446,37 +384,7 @@ static void refresh_now_playing_card(void) {
 	lv_obj_set_style_image_recolor(np_play_icon, theme()->accent, 0);
 	lv_obj_set_style_image_recolor_opa(np_play_icon, LV_OPA_COVER, 0);
 
-	// On a radio the star is about the station and lives in the radio database:
-	// there is no file to look up in the music library.
-	radio_station_t station;
-	bool fav;
-	long qobuz_id = 0;
-	long tidal_id = 0;
-	if (radio_current_station(&station)) {
-		fav = radio_fav_contains(station.uuid);
-	} else if (podcast) {
-		// On a podcast the star reports whether the feed is followed, exactly as
-		// the player's star does.
-		fav = podcastsubs_is_followed(podcast_feed_id);
-	} else if (state.current_file[0] && (tidal_id = tidalcache_track_id(state.current_file)) > 0) {
-		// Same reasoning as the Qobuz case below: the star must report what is on
-		// the account, not what is in the local database.
-		//
-		// The local mirror is also refreshed, because it may not be populated
-		// yet: the control centre can be opened on a Tidal track without the
-		// player ever having been visited, and an empty star on a track that is
-		// a favourite turns the next tap into an "add" for something already
-		// added.
-		fav = tidalsync_is_favorite(tidal_id);
-		tidalsync_favorites_refresh(NULL);
-	} else if (state.current_file[0] && (qobuz_id = qobuzcache_track_id(state.current_file)) > 0) {
-		// A Qobuz track: the star reports the account state, like the player's.
-		// Reading the local database here would draw a star that disagrees with
-		// the one a tap fills.
-		fav = qobuzsync_is_favorite(qobuz_id);
-	} else {
-		fav = state.current_file[0] && library_fav_contains(state.current_file);
-	}
+	bool fav = state.current_file[0] && library_fav_contains(state.current_file);
 	lv_image_set_src(np_star_icon, fav ? &icon_star_filled : &icon_star);
 	lv_obj_set_style_image_recolor(np_star_icon, fav ? lv_color_make(246, 211, 45) : lv_color_make(150, 150, 150), 0);
 	lv_obj_set_style_image_recolor_opa(np_star_icon, LV_OPA_COVER, 0);
@@ -895,8 +803,8 @@ static void play_cb(lv_event_t *e) {
 }
 
 // The control centre is an on-screen control, so its prev/next do what the
-// player's on-screen buttons do: on a podcast they seek by seconds rather than
-// changing episode, which stays with the physical side keys.
+// player's on-screen buttons do: on an audiobook they seek by seconds rather
+// than changing track.
 static void next_cb(lv_event_t *e) {
 	(void)e;
 	if (apphost_audio_active()) {
@@ -937,89 +845,12 @@ static void repeat_cb(lv_event_t *e) {
 	refresh_repeat_icon();
 }
 
-// Result of a Qobuz star, delivered by the qobuzsync worker. Same contract as
-// the player's star: success needs no message, since the filled star already
-// says it, but failure does, because the star filled on touch and now empties
-// again. Reported on the GUI thread via gui_post, never from the worker.
-static char qp_fav_error[192];
-
-static void qp_fav_error_async(void *user) {
-	(void)user;
-	if (qp_fav_error[0]) {
-		gui_notify_popup(qp_fav_error);
-	}
-	refresh_now_playing_card();
-	player_refresh_now_playing();
-}
-
-static void qp_fav_done(bool ok, const char *error, void *user) {
-	(void)user;
-	snprintf(qp_fav_error, sizeof(qp_fav_error), "%s",
-			 ok ? "" : (error && error[0] ? error : tr("qobuz_favourites_failed")));
-	gui_post(qp_fav_error_async, NULL);
-}
-
-static void qp_tidal_fav_done(bool ok, const char *error, void *user) {
-	(void)user;
-	snprintf(qp_fav_error, sizeof(qp_fav_error), "%s",
-			 ok ? "" : (error && error[0] ? error : tr("tidal_favourites_failed")));
-	gui_post(qp_fav_error_async, NULL);
-}
-
 static void star_cb(lv_event_t *e) {
 	(void)e;
-
-	radio_station_t station;
-	if (radio_current_station(&station)) {
-		if (radio_fav_contains(station.uuid)) {
-			radio_fav_remove(station.uuid);
-		} else {
-			radio_fav_add(&station);
-		}
-		refresh_now_playing_card();
-		player_refresh_now_playing();
-		return;
-	}
-
-	// A podcast: the star follows or unfollows the feed, like the player's, and
-	// reads the same source so the two stars cannot disagree.
-	long long feed_id = 0;
-	podcast_feed_t feed;
-	if (player_current_podcast_feed(&feed_id, &feed)) {
-		if (podcastsubs_is_followed(feed_id)) {
-			podcastsubs_unfollow(feed_id);
-		} else {
-			podcastsubs_follow(&feed);
-		}
-		refresh_now_playing_card();
-		player_refresh_now_playing();
-		return;
-	}
 
 	device_state_t state;
 	device_state_get(&state);
 	if (!state.current_file[0]) {
-		return;
-	}
-
-	// A Qobuz track: the star goes to the account favourites, like the player's,
-	// and not to the local database, which would store the path of a cache file
-	// that is gone twenty tracks later.
-	long qobuz_id = qobuzcache_track_id(state.current_file);
-	if (qobuz_id > 0) {
-		bool want = !qobuzsync_is_favorite(qobuz_id);
-		qobuzsync_favorite_toggle(qobuz_id, want, qp_fav_done, NULL);
-		refresh_now_playing_card(); // the local mirror already flipped, so redraw at once
-		player_refresh_now_playing();
-		return;
-	}
-
-	long tidal_id = tidalcache_track_id(state.current_file);
-	if (tidal_id > 0) {
-		bool want = !tidalsync_is_favorite(tidal_id);
-		tidalsync_favorite_toggle(tidal_id, want, qp_tidal_fav_done, NULL);
-		refresh_now_playing_card();
-		player_refresh_now_playing();
 		return;
 	}
 
@@ -1818,7 +1649,7 @@ static void sleep_audiobook_clicked_cb(lv_event_t *e) {
 static void open_page(lv_obj_t *screen);
 
 // A hold opens the page that sets the length: the playback options for music,
-// the audiobook options, the podcast settings. Looked up at the press rather
+// the audiobook options. Looked up at the press rather
 // than when the buttons are made, since not every one of those pages exists
 // by then.
 static void sleep_page_cb(lv_event_t *e) {

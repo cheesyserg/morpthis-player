@@ -1741,9 +1741,9 @@ static void read_ape_metadata(const char *filepath, song_metadata_t *out) {
 // ---------------------------------------------------------------------------
 // Sidecar files
 //
-// A track downloaded from a streaming service can arrive with no tags at all:
-// Qobuz FLACs are often bare. What the file does not say the API does, and the
-// downloader writes it alongside, in "<file>.tags":
+// A file can arrive with no tags at all, or with tags that describe something
+// else: an audio file an app fetched from a service is the usual case. What the
+// file does not say, the app does, and it writes it alongside, in "<file>.tags":
 //
 //     title=...
 //     artist=...
@@ -1753,7 +1753,7 @@ static void read_ape_metadata(const char *filepath, song_metadata_t *out) {
 // It is read after the real tags and overrides whatever they said (see the
 // note in read_sidecar_tags). The same function then serves the player, the
 // details page, the favourites and the library scan without any of them
-// knowing that streaming exists.
+// knowing where the file came from.
 // ---------------------------------------------------------------------------
 
 static void read_sidecar_tags(const char *filepath, song_metadata_t *out) {
@@ -1781,11 +1781,9 @@ static void read_sidecar_tags(const char *filepath, song_metadata_t *out) {
 			continue;
 		}
 
-		// The sidecar wins over the file's own tags. It exists only beside a
-		// cached track (Qobuz, Tidal, a podcast episode) and was written from
-		// what the service says, while the file's tags are whatever someone else
-		// published -- a podcast episode's MP3 very often carries the tags of the
-		// show, or of the most recent episode, or none at all.
+		// The sidecar wins over the file's own tags. It exists only beside a file
+		// an app wrote from values it knew, while the file's own tags are whatever
+		// someone else published -- often the album, the show, or nothing.
 		//
 		// Music on the card is unaffected: no .tags file is there.
 		if (strcmp(key, "title") == 0) {

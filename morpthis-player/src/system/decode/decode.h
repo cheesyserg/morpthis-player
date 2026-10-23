@@ -82,9 +82,8 @@ bool decoder_is_lossy(const decoder_t *dec);
 // header's number would be a lie), an AAC that declares nothing. Whoever
 // displays the number needs an answer for zero too.
 //
-// On Qobuz and Tidal tracks it is the only usable number: the cache file is
-// still growing while it plays, and bytes-over-seconds would give a bitrate
-// that visibly climbs.
+// On a file that is still being written while it plays it is the only usable
+// number: bytes-over-seconds would give a bitrate that visibly climbs.
 int decoder_bitrate_kbps(const decoder_t *dec);
 
 // "MP3", "AAC", "FLAC", "ALAC", "Opus", "Vorbis", "WavPack", "APE". Empty string when
