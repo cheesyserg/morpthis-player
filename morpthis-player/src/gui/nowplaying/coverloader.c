@@ -2,6 +2,7 @@
 
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "src/system/device/power.h"
@@ -81,6 +82,66 @@ static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t wakeup = PTHREAD_COND_INITIALIZER;
 static bool started;
 
+// ---------------------------------------------------------------------------
+// Pixels the interface thread has finished with.
+//
+// It hands them over instead of freeing them. Releasing a screen-sized backdrop
+// is a munmap and a TLB flush, and the one moment that must not happen is
+// between two repaints of a track change -- which is exactly when the interface
+// thread has this to do. The worker frees them at the top of its loop, where
+// the only thing that waits is the next picture.
+//
+// Bounded, so a stalled or missing worker can never grow this without limit:
+// with no room left the calling thread pays for its own buffer and nothing
+// leaks.
+// ---------------------------------------------------------------------------
+#define RETIRE_MAX 8
+
+static uint8_t *retired[RETIRE_MAX];
+static int retired_count;
+
+// Called with the lock held.
+static void defer_free(uint8_t *pixels) {
+	if (!pixels) {
+		return;
+	}
+	if (!started || retired_count >= RETIRE_MAX) {
+		free(pixels); // nobody to hand it to; the caller's thread pays
+		return;
+	}
+	retired[retired_count++] = pixels;
+	pthread_cond_signal(&wakeup);
+}
+
+// Frees what the interface thread has handed over, off the interface thread.
+static void drain_retired(void) {
+	uint8_t *junk[RETIRE_MAX];
+	int n;
+
+	pthread_mutex_lock(&lock);
+	n = retired_count;
+	if (n > 0) {
+		memcpy(junk, retired, sizeof(junk[0]) * (size_t)n);
+		memset(retired, 0, sizeof(retired[0]) * (size_t)n);
+		retired_count = 0;
+	}
+	pthread_mutex_unlock(&lock);
+
+	for (int i = 0; i < n; i++) {
+		free(junk[i]);
+	}
+}
+
+void coverloader_retire(uint8_t *first, uint8_t *second) {
+	if (!first && !second) {
+		return;
+	}
+	pthread_mutex_lock(&lock);
+	defer_free(first);
+	defer_free(second);
+	pthread_mutex_unlock(&lock);
+}
+
 // Picks up the next slot waiting to be decoded. Called with the lock held.
 static int next_pending(void) {
 	for (int i = 0; i < COVERLOADER_SLOTS; i++) {
@@ -143,6 +204,10 @@ static void *worker(void *arg) {
 	thread_be_low_priority("coverloader");
 
 	for (;;) {
+		// Whatever the interface thread has finished with goes first, and off
+		// this thread: see defer_free().
+		drain_retired();
+
 		// Where in the background this thread sits, decided again before every
 		// job.
 		//
@@ -284,7 +349,7 @@ static void discard(slot_t *slot) {
 	slot->pending = false;
 
 	if (slot->done && slot->found) {
-		cover_free(&slot->image);
+		defer_free(slot->image.pixels);
 	}
 	slot->done = false;
 	slot->found = false;
@@ -385,8 +450,8 @@ static void dual_discard(dual_job_t *job) {
 	if (job->done) {
 		// Not gated on `found`: the second image is filled even when the decode
 		// reports failure, so a coverless track would leave one behind.
-		cover_free(&job->first);
-		cover_free(&job->second);
+		defer_free(job->first.pixels);
+		defer_free(job->second.pixels);
 	}
 	job->done = false;
 	job->found = false;
@@ -448,8 +513,8 @@ static bool dual_take(dual_job_t *job, cover_image_t *first, cover_image_t *seco
 	// reported failure can still have filled the second image, which at
 	// full-screen size is most of a megabyte per track.
 	if (!found) {
-		cover_free(&job->first);
-		cover_free(&job->second);
+		defer_free(job->first.pixels);
+		defer_free(job->second.pixels);
 	}
 	job->done = false;
 	job->found = false;

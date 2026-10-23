@@ -139,10 +139,18 @@ void player_restore_list(const char *const *list, int count, int start_index, bo
 // The loaded track's artwork, already decoded and scaled by the player: the
 // cover itself, and the blurred copy the controls are drawn on. NULL when the
 // track has no artwork (or its decode has not landed yet). Borrowed, not
-// owned -- the player frees these at the next track change, so nothing may
+// owned -- the player hands these back at the next track change, so nothing may
 // keep them across one.
+//
+// The descriptor lives at a fixed address, so the pointer is the same one for
+// every picture: anything comparing it to notice that the ARTWORK changed must
+// compare player_cover_serial() instead.
 const lv_image_dsc_t *player_cover_image(void);
 const lv_image_dsc_t *player_backdrop_image(void);
+
+// Bumped every time the picture behind those two is replaced or dropped. A
+// number rather than the pointer because the pointer never moves.
+uint32_t player_cover_serial(void);
 
 // The path that artwork was read from: the track for a file, the downloaded
 // icon or cover for a live stream. NULL whenever player_cover_image() is NULL.

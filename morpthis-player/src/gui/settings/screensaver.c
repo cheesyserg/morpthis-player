@@ -320,14 +320,16 @@ static void request_frame(void) {
 	coverloader_request_frame(path, frame_side, frame_side);
 }
 
-// Off the screen first, then freed: LVGL keeps drawing from the buffer it was
-// given, and freeing it while it is still the widget's source is a
-// use-after-free at the next redraw (see promote_next).
+// Off the screen first, then handed over: LVGL keeps drawing from the buffer it
+// was given, and freeing it while it is still the widget's source is a
+// use-after-free at the next redraw (see promote_next). The free itself happens
+// on the loader's thread -- see coverloader_retire().
 static void free_frame_pic(void) {
 	if (cover_img && lv_image_get_src(cover_img) == &frame_pic.dsc) {
 		lv_image_set_src(cover_img, NULL);
 	}
-	cover_free(&frame_pic);
+	coverloader_retire(frame_pic.pixels, NULL);
+	memset(&frame_pic, 0, sizeof(frame_pic));
 }
 
 // Takes delivery of a finished framed decode, if there is one. Cheap and
@@ -403,11 +405,12 @@ static void refresh_clock(void) {
 // from a track that changed while the screensaver was up.
 static char shown_file[512];
 static const void *shown_cover;
+static uint32_t shown_serial; // the player's, so a new picture on the same pointer is noticed
 
 // Runs while the screensaver is up. The clock is the obvious reason, but the
-// important one is the track: the player frees its artwork at every track
-// change and calls screensaver_release_artwork(), which blanks the picture, so
-// this check is what puts the new one back.
+// important one is the track: a change of track means a new picture, which the
+// player swaps in behind descriptors whose address never moves -- so the serial
+// is what notices it, and this check redraws with whatever is up now.
 static void clock_timer_cb(lv_timer_t *timer) {
 	(void)timer;
 
@@ -429,7 +432,8 @@ static void clock_timer_cb(lv_timer_t *timer) {
 	const void *cover = player_cover_image();
 
 	const char *now = state.live ? state.metadata.title : state.current_file;
-	if (framed_arrived || strcmp(now, shown_file) != 0 || cover != shown_cover) {
+	if (framed_arrived || strcmp(now, shown_file) != 0 || cover != shown_cover ||
+		player_cover_serial() != shown_serial) {
 		refresh_content(); // refreshes the clock on its way through
 		return;
 	}
@@ -724,8 +728,11 @@ static void refresh_content(void) {
 
 	// Recorded whatever is being drawn: the tick above compares it to notice a
 	// track change, and in Images mode a track change still has to redraw the
-	// title -- it just must not change the picture.
+	// title -- it just must not change the picture. The serial is what notices
+	// the artwork landing after this, since the player swaps pictures behind an
+	// address that never moves.
 	shown_cover = player_cover_image();
+	shown_serial = player_cover_serial();
 
 	if (source == SCREENSAVER_SOURCE_IMAGES) {
 		draw_from_folder();

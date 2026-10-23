@@ -259,6 +259,10 @@ static bool audiobook_mode_valid;   // false until the first apply, so it paints
 
 static cover_image_t current_cover;	   // pixels currently referenced by cover_img
 static cover_image_t current_backdrop; // upside-down blurred copy behind the controls
+// Bumped every time either of those is replaced or dropped. The descriptors
+// live here for the life of the program, so their address says nothing about
+// whether the picture behind them is the same one; this does.
+static uint32_t cover_serial = 1;
 static int cover_box_w, cover_box_h;   // the full panel that owns lyrics and gestures
 static int cover_art_w, cover_art_h;   // the visible sleeve, inset on compact panels
 // How round the sleeve's corners are. One number for the frame and for the
@@ -2413,14 +2417,17 @@ typedef struct {
 static void lyrics_bg_arrived(void *user) {
 	lyrics_bg_job_t *job = user;
 	if (job->generation == lyrics_bg_generation && job->out.pixels) {
-		cover_free(&lyrics_screen_pic);
+		// The copy on the page keeps drawing until the widgets are pointed at
+		// the new one; its buffer is only handed over after that.
+		uint8_t *old = lyrics_screen_pic.pixels;
 		lyrics_screen_pic = job->out;
 		lyrics_screen_pic.dsc.data = lyrics_screen_pic.pixels; // struct moved, buffer didn't
 		if (lyrics_progress > 0) {
 			lyrics_look(true);
 		}
+		coverloader_retire(old, NULL);
 	} else {
-		cover_free(&job->out);
+		coverloader_retire(job->out.pixels, NULL);
 	}
 	free(job);
 }
@@ -2446,7 +2453,8 @@ static void lyrics_bg_forget(void) {
 	if (!layout_studio_now && studio_bg && lv_image_get_src(studio_bg) == &lyrics_screen_pic.dsc) {
 		lv_image_set_src(studio_bg, NULL);
 	}
-	cover_free(&lyrics_screen_pic);
+	coverloader_retire(lyrics_screen_pic.pixels, NULL);
+	memset(&lyrics_screen_pic, 0, sizeof(lyrics_screen_pic));
 }
 
 // Starts the blur of the sleeve just put up. Not in Studio, which has its own
@@ -3439,50 +3447,42 @@ static void wave_refresh(const char *path, double position) {
 	wave_paint(px);
 }
 
-// Throws away the loaded artwork and everything on screen that points at it.
-// The caller asks for the next picture itself.
-static void drop_cover(bool forget_tone) {
-	if (cover_release_cb) {
-		cover_release_cb();
-	}
-
-	// Detach the old pixels before freeing them, so nothing can draw from a
-	// buffer that's already gone. The placeholder covers the gap while the
-	// worker decodes.
+// Takes the picture, and everything on the page made from it, down now.
+//
+// The buffers are handed to the cover loader rather than freed here: releasing
+// a screen-sized backdrop is a munmap and a TLB flush, and the interface thread
+// has a repaint to get to.
+static void cover_clear_now(bool forget_tone) {
+	// Detach the old pixels before handing them over, so nothing can draw from
+	// a buffer that's already gone. The placeholder covers the gap.
 	lv_image_set_src(cover_img, NULL);
 	lv_obj_set_style_bg_image_src(player_menu, NULL, 0);
 	// The blur of the picture going away goes with it, from behind the words
 	// too: until the new one is made they are on a plain dark page.
 	lyrics_bg_forget();
 	if (studio_bg && lv_image_get_src(studio_bg) == &current_backdrop.dsc) {
-		lv_image_set_src(studio_bg, NULL); // Studio's, or the V1's, points at the backdrop freed below
+		lv_image_set_src(studio_bg, NULL); // Studio's, or the V1's, points at the backdrop handed over below
 	}
-	cover_free(&current_cover);
-	cover_free(&current_backdrop);
+	coverloader_retire(current_cover.pixels, current_backdrop.pixels);
+	memset(&current_cover, 0, sizeof(current_cover));
+	memset(&current_backdrop, 0, sizeof(current_backdrop));
+	cover_serial++;
 	full_backdrop_apply(); // nothing to show behind the V1's page until the next one lands
 	immersive_blur_apply(); // and nothing for the frost to be made of, likewise
 
 	cover_show(false);
 	// Studio holds pointers to both of those, so it is told in the same breath:
-	// its sleeve and its background come down and the empty square goes up for
-	// as long as the decode takes.
+	// its sleeve and its background come down and the empty square goes up.
 	if (layout_studio_now) {
 		studio_refresh_cover();
 	}
 
 	// Backdrop gone: the chrome goes back to following the theme.
 	set_over_cover(false);
-	// The sleeve's colour is not dropped here when another picture has been
-	// asked for. It used to be, and for the whole of the decode the page was
-	// then painted as if there were no sleeve at all -- the theme's colours,
-	// the accent included -- until the new picture landed and its colour took
-	// over: a flash of a colour belonging to neither record, between the old
-	// sleeve's and the new one's. So the old colour stands until the picture
-	// it describes is replaced, which is what the cover itself already does
-	// while refresh_cover() is asking whether the next track's artwork is the
-	// one on screen. A track with nothing coming loses it at once, here or --
-	// where that is only known once the worker answers -- in
-	// apply_cover_result().
+	// A track with nothing coming loses the sleeve's colour as well. A track
+	// whose next picture is only on its way does not: dropping it here would
+	// paint the page in the theme's accent -- a colour belonging to neither
+	// record -- for the whole of the decode.
 	if (forget_tone) {
 		album_tone = 0;
 	}
@@ -3490,6 +3490,40 @@ static void drop_cover(bool forget_tone) {
 
 	lv_obj_invalidate(cover_panel);
 	lv_obj_invalidate(player_menu);
+}
+
+// Throws away the loaded artwork and everything on screen that points at it.
+// The caller asks for the next picture itself.
+//
+// Two cases, and only one of them costs anything.
+//
+// When another picture is already on its way -- which is every ordinary track
+// change -- the page is left exactly as it is. The sleeve, the blurred backdrop
+// behind the chrome and the words' copy are all still valid, so nothing is
+// detached, nothing is freed and nothing is repainted: the next picture swaps
+// them out in one go in apply_cover_result(). Tearing them down first is what
+// used to make a track change stall -- a screen-sized backdrop taken off the
+// page is the whole panel repainted from its styles, and the same panel painted
+// again a moment later when the new one landed. The old picture standing for the
+// length of the decode is also what the user sees instead of the placeholder.
+//
+// When nothing is coming -- no track, or one with no artwork at all -- it comes
+// down here and now, and that is the only path that pays for a teardown.
+static void drop_cover(bool forget_tone) {
+	if (!forget_tone) {
+		// A blur still being made for the sleeve that is going must not land
+		// after the next one is up. The copy already on the page stays; the new
+		// job replaces it when it arrives.
+		lyrics_bg_generation++;
+		return;
+	}
+
+	// Whoever borrowed the pixels (the screensaver) is told before they go.
+	if (cover_release_cb) {
+		cover_release_cb();
+	}
+
+	cover_clear_now(true);
 }
 
 // Throws away what is on screen and asks for the artwork of `filepath`. The
@@ -3654,6 +3688,13 @@ static void apply_cover_result(void) {
 			coverloader_request_player_id(cover_shown_path);
 		}
 
+		// The picture on the page -- if there is one -- is the one this replaces,
+		// and its buffer has to outlive every widget that still points at it.
+		// Those pointers are all moved over in this block, so it is only handed
+		// to the loader at the end of it.
+		uint8_t *old_cover = current_cover.pixels;
+		uint8_t *old_backdrop = current_backdrop.pixels;
+
 		current_cover = new_cover;
 		current_cover.dsc.data = current_cover.pixels; // struct moved, buffer didn't
 
@@ -3663,8 +3704,10 @@ static void apply_cover_result(void) {
 
 		cover_show(true);
 
-		if (new_backdrop.pixels) {
-			current_backdrop = new_backdrop;
+		// Taken unconditionally, so a new sleeve with no blur behind it cannot
+		// leave the last record's on the page.
+		current_backdrop = new_backdrop;
+		if (current_backdrop.pixels) {
 			current_backdrop.dsc.data = current_backdrop.pixels;
 			if (backdrop_is_band) {
 				// Immersive's frost: the band stands over the picture itself,
@@ -3678,6 +3721,12 @@ static void apply_cover_result(void) {
 			} else {
 				lv_obj_set_style_bg_image_src(player_menu, &current_backdrop.dsc, 0);
 			}
+		} else {
+			// A sleeve decoded but no blur to go with it: the page underneath
+			// changed, so the last record's comes down.
+			lv_obj_set_style_bg_image_src(player_menu, NULL, 0);
+			full_backdrop_apply();
+			immersive_blur_apply();
 		}
 
 		// The sleeve's own colour first, and only then the chrome: what
@@ -3695,18 +3744,17 @@ static void apply_cover_result(void) {
 
 		lv_obj_invalidate(cover_panel);
 		lv_obj_invalidate(player_menu);
+
+		coverloader_retire(old_cover, old_backdrop);
+		cover_serial++;
 	}
 	if (!has_cover) {
 		cover_shown_id = 0; // nothing to compare the next track against
-		lyrics_bg_forget(); // no picture, nothing to blur
-		// And the previous sleeve's colour goes with it: reload_cover() held
-		// it over the decode so the controls never sat in the theme's accent
-		// in between, and this -- no artwork after all -- is where the track
-		// it belonged to stops standing for the page.
-		if (album_tone) {
-			album_tone = 0;
-			paint_alt_tint();
-		}
+		// Nothing arrived, so nothing replaced the picture reload_cover() left
+		// standing: this is the one track change that pays for a teardown. Its
+		// sleeve colour goes with it -- everything on the page belonged to it,
+		// and the track it described is not what is playing.
+		cover_clear_now(true);
 	}
 	if (lyrics_progress > 0) {
 		lyrics_look(true); // Studio's backdrop has arrived, or there is none
@@ -3724,9 +3772,12 @@ static void apply_cover_result(void) {
 
 // The artwork the player has already decoded for the loaded track, lent to
 // anything else that wants to draw it (the screensaver). NULL while a track
-// has no cover or its decode is still in flight -- never a stale pointer:
-// refresh_cover() zeroes both before the buffers are freed.
+// has no cover or its decode is still in flight -- never a stale pointer: the
+// buffer behind it is only handed back once every widget has let go, and the
+// descriptor always describes the pixels it points at.
 const lv_image_dsc_t *player_cover_image(void) { return current_cover.pixels ? &current_cover.dsc : NULL; }
+
+uint32_t player_cover_serial(void) { return cover_serial; }
 
 const lv_image_dsc_t *player_backdrop_image(void) {
 	return current_backdrop.pixels ? &current_backdrop.dsc : NULL;

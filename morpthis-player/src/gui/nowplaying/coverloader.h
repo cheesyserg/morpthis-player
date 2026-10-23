@@ -54,6 +54,18 @@ void coverloader_release_all(void);
 // Drops only the player's cover job (the big cover and its blurred backdrop).
 void coverloader_release_player(void);
 
+// Hands decoded pixels back once no widget points at them any more.
+//
+// Releasing a full-screen backdrop is a munmap and a TLB flush on this board,
+// and the interface thread is exactly where that must not happen: a track
+// change would then stall between two repaints. The buffers are freed here, on
+// the worker, which has nothing else to do between pictures. The caller gives up
+// ownership and must have detached them from every widget first.
+//
+// Either argument may be NULL. Safe before coverloader_start(), which is the one
+// case where the calling thread frees them itself.
+void coverloader_retire(uint8_t *first, uint8_t *second);
+
 // Collects a finished image. Returns false while the worker is still busy, or
 // if there was no artwork. `found` says which of the two it was, so a caller
 // can stop asking.
