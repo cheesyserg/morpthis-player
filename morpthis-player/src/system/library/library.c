@@ -1600,6 +1600,41 @@ bool library_album_artist(const char *album, char *out, size_t size) {
 	return found;
 }
 
+bool library_album_art_path(const char *track_path, char *out, size_t size) {
+	if (!out || size == 0) {
+		return false;
+	}
+	out[0] = '\0';
+	if (!track_path || !track_path[0]) {
+		return false;
+	}
+
+	// The same first track and the same ordering as ALBUM_GROUP_FIRST in the
+	// album list, so an album row and its tracks ask for the identical file.
+	pthread_mutex_lock(&db_lock);
+	bool found = false;
+	sqlite3_stmt *stmt = NULL;
+	if (db && sqlite3_prepare_v2(db,
+								 "SELECT (SELECT p.path FROM MEDIA_TABLE p"
+								 " WHERE p.album = m.album"
+								 " AND COALESCE(p.album_key, '') = COALESCE(m.album_key, '')"
+								 " ORDER BY COALESCE(p.disc,1), p.dis_id LIMIT 1)"
+								 " FROM MEDIA_TABLE m WHERE m.path = ?1 AND m.album <> '' LIMIT 1",
+								 -1, &stmt, NULL) == SQLITE_OK) {
+		sqlite3_bind_text(stmt, 1, track_path, -1, SQLITE_TRANSIENT);
+		if (sqlite3_step(stmt) == SQLITE_ROW) {
+			const unsigned char *path = sqlite3_column_text(stmt, 0);
+			if (path && path[0]) {
+				snprintf(out, size, "%s", (const char *)path);
+				found = true;
+			}
+		}
+		sqlite3_finalize(stmt);
+	}
+	pthread_mutex_unlock(&db_lock);
+	return found;
+}
+
 bool library_track_names(const char *path, char *title_out, size_t title_size, char *artist_out, size_t artist_size) {
 	if (!path || !path[0]) {
 		return false;

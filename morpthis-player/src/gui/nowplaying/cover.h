@@ -162,10 +162,10 @@ void cover_set_backdrop_band_brightness(int pct);
 // Returns false when there is no artwork for this path.
 bool cover_thumb_load(const char *path, bool is_dir, int size, cover_image_t *out);
 
-// Like cover_thumb_load, but only looks in the on-disk thumbnail cache --
-// never decodes. For pages that want covers instantly or not at all: the queue
-// list builds a hundred rows in one go, where a hundred small cache reads are
-// affordable and a hundred decodes are not.
+// Like cover_thumb_load, but only looks in the cache -- the RAM copies first,
+// then the card -- and never decodes. For pages that want covers instantly or
+// not at all: the queue list builds a hundred rows in one go, where a hundred
+// cache reads are affordable and a hundred decodes are not.
 bool cover_thumb_cached(const char *path, int size, cover_image_t *out);
 
 // The square the list rows draw their thumbnails in. The rows and the

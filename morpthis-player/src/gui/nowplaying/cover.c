@@ -132,6 +132,11 @@ static void raw_free(raw_image_t *img) {
 #define DECODE_BUDGET_RESERVE_BYTES 0
 #endif
 
+// Set only while the album artwork pass runs (see cover_precache_albums). One
+// image at a time, with the scan's progress page up and nothing else asking
+// for pixels.
+static volatile bool decode_budget_relaxed;
+
 static size_t read_mem_available(void) {
 	FILE *f = fopen("/proc/meminfo", "r");
 	if (!f) {
@@ -155,7 +160,15 @@ static size_t decode_budget_bytes(void) {
 	// free after an hour of playing. /proc/meminfo costs a few microseconds and
 	// this only runs on the worker thread.
 	size_t available = read_mem_available();
-	size_t budget = available / DECODE_BUDGET_DIVISOR;
+	size_t divisor = DECODE_BUDGET_DIVISOR;
+	// The artwork pass runs with the progress page up and nothing else asking
+	// for pixels, so it may take a larger share. It is also the one caller that
+	// cannot retry later: a cover refused here stays uncached until somebody
+	// opens the album, where it is refused again for the same reason.
+	if (decode_budget_relaxed && divisor > 1) {
+		divisor = 2;
+	}
+	size_t budget = available / divisor;
 
 	if (budget > DECODE_BUDGET_RESERVE_BYTES) {
 		budget -= DECODE_BUDGET_RESERVE_BYTES;
@@ -1707,6 +1720,10 @@ void cover_cache_release_memory(void) {
 	pthread_mutex_unlock(&thumb_db_lock);
 }
 
+// Defined with the RAM cache further down; the keys are path based, so moving
+// the cache invalidates every entry.
+static void ram_clear(void);
+
 void cover_set_cache_dir(const char *sd_root) {
 	pthread_mutex_lock(&thumb_db_lock);
 
@@ -1723,6 +1740,8 @@ void cover_set_cache_dir(const char *sd_root) {
 	}
 
 	pthread_mutex_unlock(&thumb_db_lock);
+
+	ram_clear();
 
 	if (!ok) {
 		printf("cover: thumbnail cache disabled\n");
@@ -1760,11 +1779,17 @@ static uint64_t thumb_hash(const char *path, int box, bool is_dir) {
 
 // Builds the cache key. False means this size is not worth caching. Whether the
 // database is open at all is decided under the lock, in load and store.
-static bool thumb_key(char *out, size_t out_size, const char *path, int box, bool is_dir) {
+// `value_out`, when not NULL, receives the same key as a number, which is what
+// the RAM cache compares (a string compare per slot would not be worth it).
+static bool thumb_key(char *out, size_t out_size, uint64_t *value_out, const char *path, int box, bool is_dir) {
 	if (box > THUMB_DISK_MAX_SIZE) {
 		return false;
 	}
-	snprintf(out, out_size, "%016llx", (unsigned long long)thumb_hash(path, box, is_dir));
+	uint64_t h = thumb_hash(path, box, is_dir);
+	snprintf(out, out_size, "%016llx", (unsigned long long)h);
+	if (value_out) {
+		*value_out = h;
+	}
 	return true;
 }
 
@@ -1852,6 +1877,197 @@ static void thumb_db_store(const char *key, const cover_image_t *img, bool has_i
 	pthread_mutex_unlock(&thumb_db_lock);
 }
 
+// Opens or closes a write transaction the following stores join. The scan's
+// artwork pass writes a few hundred entries; one commit each is a journal
+// round-trip on the card for every one of them. Batching by a small number
+// keeps the cost down without risking much on a crash -- and the pass is
+// resumable anyway, since an entry already written is a cache hit next time.
+static void thumb_db_batch(bool begin) {
+	pthread_mutex_lock(&thumb_db_lock);
+	if (thumb_db) {
+		sqlite3_exec(thumb_db, begin ? "BEGIN" : "COMMIT", NULL, NULL, NULL);
+	}
+	pthread_mutex_unlock(&thumb_db_lock);
+}
+
+// ---------------------------------------------------------------------------
+// A small RAM cache in front of the card
+//
+// The disk cache is one SQLite read, but it is still a read from the card: a
+// list row measured at about 16 ms, so a screenful took long enough to notice
+// even when every entry was there. Recently served thumbnails are kept here,
+// so scrolling back over an album list -- and any repeat visit -- costs a
+// memcpy instead.
+//
+// The entries are the finished RGB565 buffers, the same bytes the disk holds.
+// Bounded twice: by bytes, so the cache cannot grow with the library, and by
+// entry size, so a carousel-sized picture cannot evict a screenful of list
+// thumbnails.
+#define THUMB_RAM_BYTES (384 * 1024)
+#define THUMB_RAM_ENTRIES 192
+#define THUMB_RAM_MAX_ENTRY (16 * 1024)
+
+typedef struct {
+	uint64_t key;
+	uint64_t stamp;
+	uint32_t bytes;
+	uint16_t w, h;
+	uint8_t *pixels;
+} ram_thumb_t;
+
+static ram_thumb_t ram_thumbs[THUMB_RAM_ENTRIES];
+static size_t ram_bytes;
+static uint64_t ram_clock;
+static pthread_mutex_t ram_lock = PTHREAD_MUTEX_INITIALIZER;
+
+// Set while the artwork pass runs. The pass walks the album list in display
+// order, so the entries it writes first are the ones at the top of the list --
+// the ones somebody opening the page is about to look at. Evicting in list
+// order would leave the *last* albums in RAM and push the first ones back to
+// the card, which is exactly backwards. In this mode the cache fills and then
+// stops; the pass's own reads are already fast, so nothing is lost.
+static volatile bool ram_fill_only;
+
+// Caller holds ram_lock. Frees the least recently used entry.
+static void ram_evict_oldest(void) {
+	ram_thumb_t *oldest = NULL;
+	for (int i = 0; i < THUMB_RAM_ENTRIES; i++) {
+		if (!ram_thumbs[i].pixels) {
+			continue;
+		}
+		if (!oldest || ram_thumbs[i].stamp < oldest->stamp) {
+			oldest = &ram_thumbs[i];
+		}
+	}
+	if (!oldest) {
+		return;
+	}
+	ram_bytes -= oldest->bytes;
+	free(oldest->pixels);
+	oldest->pixels = NULL;
+	oldest->bytes = 0;
+}
+
+// A copy of the cached picture, or false. A copy rather than a pointer into
+// the cache: the caller owns what it is given and frees it, and a slot may be
+// evicted while it is on screen.
+static bool ram_get(uint64_t key, cover_image_t *out) {
+	bool hit = false;
+
+	pthread_mutex_lock(&ram_lock);
+	for (int i = 0; i < THUMB_RAM_ENTRIES; i++) {
+		ram_thumb_t *e = &ram_thumbs[i];
+		if (!e->pixels || e->key != key) {
+			continue;
+		}
+
+		uint8_t *copy = malloc(e->bytes);
+		if (copy) {
+			memcpy(copy, e->pixels, e->bytes);
+			memset(out, 0, sizeof(*out));
+			out->pixels = copy;
+			out->dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+			out->dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+			out->dsc.header.w = e->w;
+			out->dsc.header.h = e->h;
+			out->dsc.header.stride = (uint32_t)e->w * 2;
+			out->dsc.data_size = e->bytes;
+			out->dsc.data = copy;
+			e->stamp = ++ram_clock;
+			hit = true;
+		}
+		break;
+	}
+	pthread_mutex_unlock(&ram_lock);
+
+	return hit;
+}
+
+static void ram_put(uint64_t key, const cover_image_t *img) {
+	size_t bytes = (size_t)img->dsc.header.w * img->dsc.header.h * 2;
+	if (!img->pixels || bytes == 0 || bytes > THUMB_RAM_MAX_ENTRY || bytes > THUMB_RAM_BYTES) {
+		return;
+	}
+
+	pthread_mutex_lock(&ram_lock);
+
+	// An entry under this key is stale: we only reach here after a fresh read
+	// or decode.
+	for (int i = 0; i < THUMB_RAM_ENTRIES; i++) {
+		if (ram_thumbs[i].pixels && ram_thumbs[i].key == key) {
+			ram_bytes -= ram_thumbs[i].bytes;
+			free(ram_thumbs[i].pixels);
+			ram_thumbs[i].pixels = NULL;
+			ram_thumbs[i].bytes = 0;
+			break;
+		}
+	}
+
+	while (ram_bytes + bytes > THUMB_RAM_BYTES) {
+		if (ram_fill_only) {
+			pthread_mutex_unlock(&ram_lock);
+			return;
+		}
+		ram_evict_oldest();
+	}
+
+	int slot = -1;
+	for (int i = 0; i < THUMB_RAM_ENTRIES; i++) {
+		if (!ram_thumbs[i].pixels) {
+			slot = i;
+			break;
+		}
+	}
+	if (slot < 0) {
+		if (ram_fill_only) {
+			pthread_mutex_unlock(&ram_lock);
+			return;
+		}
+		ram_evict_oldest();
+		for (int i = 0; i < THUMB_RAM_ENTRIES; i++) {
+			if (!ram_thumbs[i].pixels) {
+				slot = i;
+				break;
+			}
+		}
+	}
+	if (slot < 0) {
+		pthread_mutex_unlock(&ram_lock);
+		return;
+	}
+
+	uint8_t *copy = malloc(bytes);
+	if (!copy) {
+		pthread_mutex_unlock(&ram_lock);
+		return;
+	}
+	memcpy(copy, img->pixels, bytes);
+
+	ram_thumb_t *e = &ram_thumbs[slot];
+	e->pixels = copy;
+	e->bytes = (uint32_t)bytes;
+	e->w = (uint16_t)img->dsc.header.w;
+	e->h = (uint16_t)img->dsc.header.h;
+	e->key = key;
+	e->stamp = ++ram_clock;
+	ram_bytes += bytes;
+
+	pthread_mutex_unlock(&ram_lock);
+}
+
+// The keys are built from the file path, so a different card makes every entry
+// a lie. Called when the cache moves.
+static void ram_clear(void) {
+	pthread_mutex_lock(&ram_lock);
+	for (int i = 0; i < THUMB_RAM_ENTRIES; i++) {
+		free(ram_thumbs[i].pixels);
+		ram_thumbs[i].pixels = NULL;
+		ram_thumbs[i].bytes = 0;
+	}
+	ram_bytes = 0;
+	pthread_mutex_unlock(&ram_lock);
+}
+
 // ---------------------------------------------------------------------------
 // browser thumbnails
 // ---------------------------------------------------------------------------
@@ -1861,16 +2077,38 @@ static cover_build_t thumb_load_uncached(const char *path, bool is_dir, int size
 	return build_from_sources(path, is_dir, &req, 1, out);
 }
 
+// The path a thumbnail is keyed and decoded from. A track resolves to the first
+// track of its album, which is the file an album row names; everything else
+// (a directory, a picture, an audiobook) is used as given.
+static const char *thumb_source_path(const char *path, bool is_dir, char *buf, size_t size) {
+	if (!is_dir && path && library_album_art_path(path, buf, size)) {
+		return buf;
+	}
+	return path;
+}
+
 bool cover_thumb_cached(const char *path, int size, cover_image_t *out) {
 	memset(out, 0, sizeof(*out));
 
+	// No album resolution here. The only caller is the carousel, which passes
+	// an album row's own path (that row's first track), so the key is already
+	// the one the worker used -- and this runs on the interface thread, where
+	// an extra query is the last thing to add.
 	char key[32];
-	if (!thumb_key(key, sizeof(key), path, size, false)) {
+	uint64_t value = 0;
+	if (!thumb_key(key, sizeof(key), &value, path, size, false)) {
 		return false;
+	}
+
+	if (ram_get(value, out)) {
+		return true;
 	}
 
 	bool has_image = false;
 	if (thumb_db_load(key, out, &has_image)) {
+		if (has_image) {
+			ram_put(value, out);
+		}
 		return has_image;
 	}
 	return false;
@@ -1879,25 +2117,40 @@ bool cover_thumb_cached(const char *path, int size, cover_image_t *out) {
 bool cover_thumb_load(const char *path, bool is_dir, int size, cover_image_t *out) {
 	memset(out, 0, sizeof(*out));
 
-	// A track answers for itself: its embedded art, or a cover file next to it.
-	// Asking the folder first -- the "an album shares one picture" shortcut --
-	// breaks as soon as a folder holds tracks from different albums, since every
-	// row below the first would show the first track's cover. The per-file disk
-	// cache keeps the cost at one decode per file, ever.
+	// A track is resolved to the first track of its *album* -- the same file an
+	// album row names -- and both the key and the decode use that, so every
+	// track of an album shares one entry and one decode. Using the folder
+	// instead would break as soon as a folder held tracks from two albums;
+	// using the album group does not, because the grouping comes from the tags.
+	// Directories, pictures and anything the index does not know are used as
+	// given.
+	char source[1024];
+	const char *from = thumb_source_path(path, is_dir, source, sizeof(source));
 
 	char key[32];
-	bool cacheable = thumb_key(key, sizeof(key), path, size, is_dir);
+	uint64_t value = 0;
+	bool cacheable = thumb_key(key, sizeof(key), &value, from, size, is_dir);
 
-	// Disk first: a hit costs one small read instead of a decode, which is what
-	// makes scrolling back over a folder cost nothing.
+	// RAM first: an entry already served costs a memcpy instead of a card read.
+	// This is what makes scrolling back over a screen, and reopening a page,
+	// look instant rather than merely quick.
+	if (cacheable && ram_get(value, out)) {
+		return true;
+	}
+
+	// Then disk: a hit costs one small read instead of a decode, which is what
+	// makes the first look at an album cost nothing after the scan.
 	if (cacheable) {
 		bool has_image = false;
 		if (thumb_db_load(key, out, &has_image)) {
+			if (has_image) {
+				ram_put(value, out);
+			}
 			return has_image;
 		}
 	}
 
-	cover_build_t built = thumb_load_uncached(path, is_dir, size, out);
+	cover_build_t built = thumb_load_uncached(from, is_dir, size, out);
 
 	// "There is no artwork here" is worth storing too: a folder without any is
 	// otherwise rescanned from scratch every time it scrolls past.
@@ -1909,6 +2162,9 @@ bool cover_thumb_load(const char *path, bool is_dir, int size, cover_image_t *ou
 	// failure would leave that track without a cover for good.
 	if (cacheable && built != COVER_BUILD_FAILED) {
 		thumb_db_store(key, out, built == COVER_BUILD_OK);
+		if (built == COVER_BUILD_OK) {
+			ram_put(value, out);
+		}
 	}
 
 	return built == COVER_BUILD_OK;
@@ -1923,6 +2179,10 @@ int cover_thumb_size(void) { return bp_pick(36, 72); }
 // How many album paths are held at once while walking the index. Only the
 // working set of one query, not of the library.
 #define PRECACHE_WINDOW 16
+
+// How many entries one transaction covers. The pass writes one row per album;
+// committing each would be a journal round-trip on the card every time.
+#define PRECACHE_COMMIT_EVERY 32
 
 typedef struct {
 	int count;
@@ -1985,6 +2245,16 @@ int cover_precache_albums(bool (*stop)(void), void (*progress)(int done, int tot
 		progress(0, total, user);
 	}
 
+	// One image at a time with the progress page up: half of what is free
+	// rather than a quarter. Without this a progressive cover that needs just
+	// over the stricter budget is refused, not cached, and refused again every
+	// time somebody opens its album.
+	decode_budget_relaxed = true;
+	// Fill the RAM cache in list order and then stop, so what survives is the
+	// top of the list rather than the bottom.
+	ram_fill_only = true;
+	thumb_db_batch(true);
+
 	while (offset < total) {
 		if (stop && stop()) {
 			break;
@@ -2013,13 +2283,22 @@ int cover_precache_albums(bool (*stop)(void), void (*progress)(int done, int tot
 			if (progress) {
 				progress(done, total, user);
 			}
+
+			if (done % PRECACHE_COMMIT_EVERY == 0) {
+				thumb_db_batch(false);
+				thumb_db_batch(true);
+			}
 		}
 
 		offset += got;
 	}
 
+	thumb_db_batch(false);
+
 	free(batch.paths);
 	library_index_close(ix);
+	decode_budget_relaxed = false;
+	ram_fill_only = false;
 
 	// The measurement that matters for deciding whether this stays in the scan:
 	// what it cost, and how much of it was work at all rather than cache hits.

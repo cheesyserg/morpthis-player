@@ -91,8 +91,12 @@ lv_obj_t *medialist_albums_screen;
 // list shows -- see build_panel() for what happens when it is not.
 #define CORNER_MAX_BUTTONS 4
 
-// How often finished artwork is collected while any is pending.
-#define THUMB_POLL_MS 150
+// How often finished artwork is collected while any is pending. The timer is
+// paused whenever nothing is outstanding, so this only sets how quickly a
+// screen fills: with the thumbnails coming out of RAM the work is over in
+// microseconds, and a slower poll would be the visible latency. 40 ms is about
+// two frames, which is what makes a cached screen look instant.
+#define THUMB_POLL_MS 40
 
 // ---------------------------------------------------------------------------
 // The A-Z strip

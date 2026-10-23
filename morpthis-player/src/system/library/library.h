@@ -354,6 +354,15 @@ bool library_track_names(const char *path, char *title_out, size_t title_size, c
 // when the album has no tracks. `album` is an album value (see above).
 bool library_album_artist(const char *album, char *out, size_t size);
 
+// The file a thumbnail for `track_path` should be decoded from: the first track
+// of the album it belongs to, picked the same way an album row picks the track
+// it names. Every track of an album therefore resolves to one file, so the
+// list shares one cache entry and one decode instead of one per track.
+//
+// False when the path is not a track in the index, or carries no album -- the
+// caller then uses the path it was given.
+bool library_album_art_path(const char *track_path, char *out, size_t size);
+
 // --- Audio quality ---
 //
 // Which of four badges a track earns, from what the scan wrote down: the
