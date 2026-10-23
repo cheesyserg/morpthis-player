@@ -178,11 +178,19 @@ static int pending_play_count;
 static bool queue_save_pending;
 static uint32_t bookkeeping_since; // when the oldest unwritten item was noted
 
+// The tags of a track the cache did not have, waiting to be written down. One
+// slot: by the time the poll comes round the player is on the next track, so
+// what is worth keeping is the one just read, and the scan will fill in the rest
+// of the library anyway.
+static bool pending_meta_valid;
+static char pending_meta_path[512];
+static song_metadata_t pending_meta;
+
 // Starts the clock the delay is measured from, if nothing was already waiting:
 // the point is to get past the frame the user's finger drew, not to hold every
 // item for a fixed period of its own.
 static void bookkeeping_note(void) {
-	if (!queue_save_pending && pending_play_count == 0) {
+	if (!queue_save_pending && pending_play_count == 0 && !pending_meta_valid) {
 		bookkeeping_since = mono_ms();
 	}
 }
@@ -509,6 +517,11 @@ static void device_state_bookkeeping_flush(void) {
 	}
 	pending_play_count = 0;
 
+	if (pending_meta_valid) {
+		pending_meta_valid = false;
+		metadata_cache_store(pending_meta_path, &pending_meta);
+	}
+
 	if (queue_save_pending) {
 		queue_save_pending = false;
 		queue_save_now();
@@ -516,7 +529,7 @@ static void device_state_bookkeeping_flush(void) {
 }
 
 void device_state_bookkeeping_tick(void) {
-	if (!queue_save_pending && pending_play_count == 0) {
+	if (!queue_save_pending && pending_play_count == 0 && !pending_meta_valid) {
 		return;
 	}
 	if ((uint32_t)(mono_ms() - bookkeeping_since) < BOOKKEEPING_DELAY_MS) {
@@ -633,7 +646,18 @@ static void load_and_play_at(const char *filepath, double position) {
 		current_metadata_file[sizeof(current_metadata_file) - 1] = '\0';
 	}
 
-	metadata_read(current_metadata_file, &current_metadata);
+	// The tags come from the card, not from the file: the scan parses every track
+	// once and leaves the result in the artwork's database, which is a stat and
+	// one row against the four or five file accesses metadata_read() makes. A
+	// miss reads the file as before and hands the result to the bookkeeping, so
+	// the second play of that track costs the row.
+	if (!metadata_cache_load(current_metadata_file, &current_metadata)) {
+		metadata_read(current_metadata_file, &current_metadata);
+		pending_meta = current_metadata;
+		snprintf(pending_meta_path, sizeof(pending_meta_path), "%s", current_metadata_file);
+		pending_meta_valid = true;
+		bookkeeping_note();
+	}
 	// Whether the loaded file is an audiobook is decided here, once per track
 	// change, and everything that dresses the player for one reads the answer
 	// from it. Every route by which the track can change passes through one of

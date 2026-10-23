@@ -4372,6 +4372,10 @@ static void scan_one_file(const char *child, const char *name, const struct stat
 
 	song_metadata_t tags;
 	metadata_read(child, &tags);
+	// Kept on the card so the player does not have to read it again between two
+	// frames: this is the only place every track's tags are parsed, and the row
+	// is a kilobyte and a half against the picture's hundred. See metadata.h.
+	metadata_cache_store(child, &tags);
 	scan_indexed(child, name, &tags, st);
 }
 
@@ -5807,6 +5811,10 @@ static void *scan_thread_func(void *arg) {
 		full_scan_run();
 		if (!scan_cancel && !scan_db_failed) {
 			playlists_follow_library();
+			// The tags this scan parsed are on the card in the batch they were
+			// written in; close it before the pass below starts writing artwork
+			// into the same database on its own terms.
+			metadata_cache_flush();
 			// The index is final and the progress page is still up: this is where
 			// the artwork is rendered into the cache, so the first visit to the
 			// album list is a read. Stop still works -- the hook polls

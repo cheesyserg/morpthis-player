@@ -72,10 +72,41 @@ void metadata_set_track_artist(bool on);
 char *metadata_read_lyrics(const char *filepath);
 
 // metadata_read(), and the description the file carries as plain text, for
-// an audiobook's summary: a Vorbis or APE DESCRIPTION, SUMMARY or COMMENT, an
-// ID3v2 COMM frame or TXXX:DESCRIPTION, an MP4 ldes, desc or comment atom.
+// an audiobook's summary: a Vorbis or APE DESCRIPTION, SUMMARY or COMMENT,
+// an ID3v2 COMM frame or TXXX:DESCRIPTION, an MP4 ldes, desc or comment atom.
 // HTML is reduced to text and the length capped at 8 KB. malloc'd, NULL when
 // the file has none.
 char *metadata_read_with_description(const char *filepath, song_metadata_t *out);
+
+// ---------------------------------------------------------------------------
+// The parsed tags, kept on the card beside the artwork cache
+//
+// metadata_read() is not one file access but four or five: a .cue beside the
+// track, the header that says what format it is, the tag block itself, and the
+// sidecars that might go with it. Measured at twenty-five milliseconds, and
+// paid on the interface thread between the press of "next" and the frame that
+// shows the new track -- where the whole rest of the change costs thirty.
+//
+// None of it can change unless the file does, and the entry is keyed on the
+// file's own size and modification time exactly as the artwork is, so it is no
+// less trustworthy than the picture beside it. The scan fills it in as it parses
+// every track, which is work it is doing anyway.
+//
+// The cache lives in the artwork's database (cover.c) because that is where the
+// connection, the lock and the key function already are; it is a second table
+// in the same file, not a second file.
+// ---------------------------------------------------------------------------
+
+// False on a miss, or when there is no cache at all (no card, or a build with
+// it disabled). *out untouched then -- call metadata_read().
+bool metadata_cache_load(const char *filepath, song_metadata_t *out);
+
+// Adds or replaces the entry. A write, so not for the interface thread: the
+// player hands its misses to the bookkeeping and lets the poll write them.
+void metadata_cache_store(const char *filepath, const song_metadata_t *meta);
+
+// Closes the batch a run of stores keeps open. Called at the end of a scan, so
+// the last entries are not left in a transaction a power-off would roll back.
+void metadata_cache_flush(void);
 
 #endif // METADATA_H

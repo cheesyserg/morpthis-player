@@ -17,6 +17,7 @@
 #include "src/gui/board_profile.h"
 #include "src/system/library/albumart.h"
 #include "src/system/library/library.h"
+#include "src/system/library/metadata.h"
 #include "src/system/streaming/podcastcache.h"
 #include "src/system/image/jpeg_planes.h"
 #include "src/system/image/jpeg_scaled.h"
@@ -1702,7 +1703,14 @@ static bool thumb_db_prepare_schema(sqlite3 *db) {
 					 " key TEXT PRIMARY KEY,"
 					 " w INTEGER NOT NULL,"
 					 " h INTEGER NOT NULL,"
-					 " pixels BLOB)",
+					 " pixels BLOB)"
+					 // The parsed tags of a track, in the same file and under the
+					 // same key function as the pictures (metadata.h explains why
+					 // they are worth keeping). A table of its own because the
+					 // rows look nothing alike.
+					 ";CREATE TABLE IF NOT EXISTS track_meta("
+					 " key TEXT PRIMARY KEY,"
+					 " blob BLOB)",
 					 NULL, NULL, &err) == SQLITE_OK) {
 		return true;
 	}
@@ -1962,6 +1970,109 @@ static void thumb_db_batch(bool begin) {
 	pthread_mutex_lock(&thumb_db_lock);
 	if (thumb_db) {
 		sqlite3_exec(thumb_db, begin ? "BEGIN" : "COMMIT", NULL, NULL, NULL);
+	}
+	pthread_mutex_unlock(&thumb_db_lock);
+}
+
+// ---------------------------------------------------------------------------
+// The parsed tags of a track, in the same file as the pictures
+//
+// metadata.h explains why they are worth keeping. What matters here is that the
+// key is the artwork's key: same function, same file size and timestamp, so an
+// entry goes stale at exactly the moment a picture of the same track would.
+//
+// Box zero is the mark that says "tags": every picture is asked for at a box of
+// at least one pixel, so no picture was ever written under it.
+// ---------------------------------------------------------------------------
+
+static bool meta_key(char *out, size_t out_size, const char *path) {
+	return thumb_key(out, out_size, NULL, path, 0, false, false);
+}
+
+bool metadata_cache_load(const char *filepath, song_metadata_t *out) {
+	if (!filepath || !filepath[0] || !out) {
+		return false;
+	}
+
+	char key[32];
+	if (!meta_key(key, sizeof(key), filepath)) {
+		return false;
+	}
+
+	bool hit = false;
+	pthread_mutex_lock(&thumb_db_lock);
+	if (thumb_db) {
+		sqlite3_stmt *stmt = NULL;
+		if (sqlite3_prepare_v2(thumb_db, "SELECT blob FROM track_meta WHERE key=?1", -1, &stmt, NULL) == SQLITE_OK) {
+			sqlite3_bind_text(stmt, 1, key, -1, SQLITE_STATIC);
+			if (sqlite3_step(stmt) == SQLITE_ROW) {
+				const void *blob = sqlite3_column_blob(stmt, 0);
+				int size = sqlite3_column_bytes(stmt, 0);
+				// The struct itself, so a build that adds a field finds every
+				// old entry the wrong length and reads nothing out of it.
+				if (blob && size == (int)sizeof(*out)) {
+					memcpy(out, blob, sizeof(*out));
+					hit = true;
+				}
+			}
+			sqlite3_finalize(stmt);
+		}
+	}
+	pthread_mutex_unlock(&thumb_db_lock);
+	return hit;
+}
+
+// A scan parses every track it meets, and one commit each would be a journal
+// round-trip per track -- the very cost this table exists to avoid, moved into
+// the scan. The database is opened synchronous=OFF, so a commit is cheap, but
+// not free: they are grouped.
+#define META_STORE_BATCH 64
+static int meta_uncommitted;
+
+void metadata_cache_store(const char *filepath, const song_metadata_t *meta) {
+	if (!filepath || !filepath[0] || !meta) {
+		return;
+	}
+
+	char key[32];
+	if (!meta_key(key, sizeof(key), filepath)) {
+		return;
+	}
+
+	pthread_mutex_lock(&thumb_db_lock);
+	if (thumb_db) {
+		// Joined rather than opened if something else is already writing --
+		// thumb_db_batch() above is the only other, and never at the same
+		// time, but a nested BEGIN is refused and asking is cheaper than
+		// knowing. A handle that is not in a transaction is also how a reopened
+		// cache starts, so the count goes back to zero with it.
+		if (sqlite3_get_autocommit(thumb_db)) {
+			meta_uncommitted = 0;
+			sqlite3_exec(thumb_db, "BEGIN", NULL, NULL, NULL);
+		}
+
+		sqlite3_stmt *stmt = NULL;
+		if (sqlite3_prepare_v2(thumb_db, "INSERT OR REPLACE INTO track_meta(key, blob) VALUES(?1, ?2)", -1, &stmt,
+							   NULL) == SQLITE_OK) {
+			sqlite3_bind_text(stmt, 1, key, -1, SQLITE_STATIC);
+			sqlite3_bind_blob(stmt, 2, meta, (int)sizeof(*meta), SQLITE_TRANSIENT);
+			sqlite3_step(stmt); // a failure only costs a future re-read
+			sqlite3_finalize(stmt);
+		}
+
+		if (++meta_uncommitted >= META_STORE_BATCH) {
+			sqlite3_exec(thumb_db, "COMMIT", NULL, NULL, NULL);
+			meta_uncommitted = 0;
+		}
+	}
+	pthread_mutex_unlock(&thumb_db_lock);
+}
+
+void metadata_cache_flush(void) {
+	pthread_mutex_lock(&thumb_db_lock);
+	if (thumb_db && meta_uncommitted > 0) {
+		sqlite3_exec(thumb_db, "COMMIT", NULL, NULL, NULL);
+		meta_uncommitted = 0;
 	}
 	pthread_mutex_unlock(&thumb_db_lock);
 }
