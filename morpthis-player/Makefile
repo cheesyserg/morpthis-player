@@ -27,6 +27,12 @@ MORPTHIS_APP_API_MAP := $(CURDIR)/src/system/apps/morpthis.ld
 CC = gcc
 CROSS_CC ?= $(ROCKBOX_TOOLCHAIN_DIR)/bin/mipsel-rockbox-linux-gnu-gcc
 
+# Optional launcher in front of the target compiler, e.g. CROSS_CC_LAUNCH=ccache
+# in CI. It is kept out of CROSS_CC on purpose: that path is a prerequisite that
+# builds the toolchain when it is missing, and a launcher always exists, so
+# folding it in would hide a missing toolchain instead of triggering the build.
+CROSS_CC_LAUNCH ?=
+
 # The interface uses the per-flag object API (lv_obj_set_hidden() and the
 # rest) and lv_text_ap_strlen(), neither of which exists before 9.6. It also
 # includes some of LVGL's private headers (lv_timer_private.h,
@@ -340,11 +346,11 @@ FORCE:
 
 build_target/%.o: src/%.c $(TARGET_FLAGS_STAMP)
 	@mkdir -p $(dir $@)
-	$(CROSS_CC) $(TARGET_CFLAGS) -c $< -o $@
+	$(CROSS_CC_LAUNCH) $(CROSS_CC) $(TARGET_CFLAGS) -c $< -o $@
 
 build_target/lvgl/%.o: $(LVGL_DIR)/%.c $(TARGET_FLAGS_STAMP)
 	@mkdir -p $(dir $@)
-	$(CROSS_CC) $(TARGET_CFLAGS) -c $< -o $@
+	$(CROSS_CC_LAUNCH) $(CROSS_CC) $(TARGET_CFLAGS) -c $< -o $@
 
 # For the Zed/clangd LSP: autofill and hover popups.
 compile_commands.json:

@@ -1,5 +1,8 @@
 .DS_Store
 
+# ccache, as the CI workflow keeps it inside the workspace.
+.ccache/
+
 morpthis-player/morpthis_player
 morpthis-player/morpthis_player_debug
 morpthis-player/morpthis_player_host

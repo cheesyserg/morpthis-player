@@ -33,6 +33,28 @@ on:
         description: Release tag to upload the built image to, replacing its assets (v1.upt, v1_md5.txt). Empty publishes nothing.
         required: false
         type: string
+      # The way out when a cache is what is wrong. Every restore step checks
+      # this input, so nothing is reused: the toolchain, the static libraries,
+      # the compiler objects and the stock download are all built or fetched
+      # again. What the run produces is saved under a run-specific key (see
+      # CACHE_SUFFIX). Delete the suspect entries from the repository's Caches
+      # page if they should be replaced for good: a later run whose own key
+      # matches one of them keeps restoring it.
+      fresh_build:
+        description: Ignore every cache and rebuild from scratch (toolchain, libraries, objects and stock download)
+        required: false
+        type: boolean
+        default: false
+      # The middle ground: what a cache reset is for, minus the compiler. The
+      # toolchain keeps its cache, so the 20-35 minute rebuild does not happen;
+      # the stock download, the static libraries and the compiler objects are
+      # all fetched or built again. Ignored when fresh_build is set, which
+      # already drops every cache.
+      fresh_keep_toolchain:
+        description: Ignore every cache except the MIPS toolchain (re-download the stock image, rebuild libraries and objects)
+        required: false
+        type: boolean
+        default: false
   pull_request:
     paths:
       - .github/workflows/build-tempotec-v1.yml
@@ -72,6 +94,27 @@ env:
   # The app API headers. The player implements the SDK; the checkout below puts
   # the sibling repository inside the workspace and this is its absolute path.
   MORPTHIS_SDK: ${{ github.workspace }}/morpthis-sdk
+  # ccache for the target compile, restored and saved around the build. The
+  # directory sits in the workspace so the cache steps can name it without a
+  # step-local variable; .gitignore keeps it out of the tree.
+  #
+  # COMPILERCHECK=content is required: the cross compiler itself comes from an
+  # Actions cache, and its mtime differs between restores. The default check
+  # hashes that mtime, which would turn every lookup into a miss.
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_COMPILERCHECK: content
+  CCACHE_MAXSIZE: 750M
+  CCACHE_COMPRESS: 'true'
+  # Empty on a normal run, so every cache key stays exactly what it was. Either
+  # reset input appends the run id: the affected restore steps are skipped and
+  # what the run produces is saved under a key of its own instead of colliding
+  # with an entry that already exists.
+  CACHE_SUFFIX: ${{ (inputs.fresh_build || inputs.fresh_keep_toolchain) && format('-fresh-{0}', github.run_id) || '' }}
+  # Only a full fresh build skips the toolchain, so only that input puts a
+  # suffix on its key. fresh_keep_toolchain restores the compiler under its
+  # normal key, so an exact hit costs nothing and a partial one still refreshes
+  # the entry after a miss.
+  TOOLCHAIN_CACHE_SUFFIX: ${{ inputs.fresh_build && format('-fresh-{0}', github.run_id) || '' }}
 
 jobs:
   firmware:
@@ -116,6 +159,7 @@ jobs:
           sdk_sha="$(git -C morpthis-sdk rev-parse HEAD)"
           sdk_subject="$(git -C morpthis-sdk log -1 --format=%s)"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "sdk_sha=$sdk_sha" >> "$GITHUB_OUTPUT"
           echo "Building $sha"
           echo "  $subject"
           echo "SDK $sdk_sha"
@@ -130,20 +174,69 @@ jobs:
 
       - name: Install build and firmware tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential git pkg-config wget curl ca-certificates \
+          set -euo pipefail
+          # The runner image already carries most of these. Install only what is
+          # missing and only then refresh the package lists: `apt-get update` is
+          # the expensive half of this step and it is pure waste when the tools
+          # are there.
+          packages="build-essential git pkg-config wget curl ca-certificates \
             texinfo bison flex gawk gperf patch xz-utils bzip2 gzip \
             autoconf automake libtool libtool-bin \
             libgmp-dev libmpfr-dev libmpc-dev \
-            p7zip-full squashfs-tools genisoimage python3 python3-venv
-          python3 -m venv "$RUNNER_TEMP/gdown-venv"
-          "$RUNNER_TEMP/gdown-venv/bin/pip" install --disable-pip-version-check gdown
+            p7zip-full squashfs-tools genisoimage python3 python3-venv ccache"
+          missing=""
+          for package in $packages; do
+            status="$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)"
+            case "$status" in
+              *"install ok installed"*) ;;
+              *) missing="$missing $package" ;;
+            esac
+          done
+          if [ -z "$missing" ]; then
+            echo "All build and firmware tools are already on the runner image."
+            exit 0
+          fi
+          echo "Installing:$missing"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $missing
 
+      # The stock image is the same file from run to run, and it is the slowest
+      # network dependency here. The URL is what identifies it, so the download
+      # directory is cached under a hash of the URL and fetched once. Actions
+      # caches cannot be overwritten: if the folder behind the URL is replaced,
+      # delete the entry (or point stock_firmware_url at the new file) to fetch
+      # it again.
+      - name: Compute the stock-firmware cache key
+        id: stock-key
+        run: |
+          set -euo pipefail
+          digest="$(printf '%s' "$STOCK_FIRMWARE_URL" | sha256sum | cut -c1-16)"
+          echo "url_hash=$digest" >> "$GITHUB_OUTPUT"
+          echo "Firmware URL hash: $digest"
+
+      - name: Restore the official firmware download
+        id: stock-cache
+        # Either reset re-downloads even when the entry is there. The key stays
+        # the same, so its save step below is a no-op when it already exists.
+        if: inputs.fresh_build != true && inputs.fresh_keep_toolchain != true
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ runner.temp }}/v1-stock-download
+          key: v1-stock-${{ runner.os }}-${{ steps.stock-key.outputs.url_hash }}
+
+      # Only on a miss. gdown lives in a throwaway venv, which is not worth
+      # installing when the download is already there.
       - name: Download official TempoTec V1 firmware
+        if: steps.stock-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/v1-stock-download"
+          case "$STOCK_FIRMWARE_URL" in
+            *drive.google.com*)
+              python3 -m venv "$RUNNER_TEMP/gdown-venv"
+              "$RUNNER_TEMP/gdown-venv/bin/pip" install --disable-pip-version-check gdown
+              ;;
+          esac
           case "$STOCK_FIRMWARE_URL" in
             *drive.google.com/drive/folders/*)
               "$RUNNER_TEMP/gdown-venv/bin/gdown" --folder "$STOCK_FIRMWARE_URL" \
@@ -158,7 +251,9 @@ jobs:
                 "$STOCK_FIRMWARE_URL" -o "$RUNNER_TEMP/v1-stock-download/download"
               ;;
           esac
-          find "$RUNNER_TEMP/v1-stock-download" -type f -printf '%P  %s bytes\n'
+
+      - name: Show the firmware download
+        run: find "$RUNNER_TEMP/v1-stock-download" -type f -printf '%P  %s bytes\n'
 
       - name: Prepare and validate stock image
         id: stock
@@ -173,8 +268,66 @@ jobs:
           test -n "$kernel_sha256"
           echo "kernel_sha256=$kernel_sha256" >> "$GITHUB_OUTPUT"
 
-      - name: Restore MIPS toolchain and target-library cache
-        uses: actions/cache@v5
+      # Saved only after prepare_v1_stock.sh and verify_upt.sh accepted the
+      # download, so a wrong or corrupt file is not what the next run restores.
+      # Another run may have written the same key first; that is not a failure.
+      - name: Save the official firmware download
+        if: steps.stock-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/v1-stock-download
+          key: v1-stock-${{ runner.os }}-${{ steps.stock-key.outputs.url_hash }}
+
+      # The toolchain is cached apart from the libraries it was once bundled
+      # with. It is the expensive part (binutils, GCC and glibc take 20-35
+      # minutes), it changes only when rockboxdev does, and fresh_keep_toolchain
+      # has to be able to keep it while dropping everything else.
+      - name: Restore the MIPS toolchain
+        id: toolchain-cache
+        if: inputs.fresh_build != true
+        uses: actions/cache/restore@v5
+        with:
+          path: morpthis-player/rockbox-toolchain
+          # The directory name is part of the key on purpose. The cross
+          # compiler is configured with --with-sysroot pointing at an absolute
+          # path inside this tree, so a cache written for another directory
+          # name cannot be used from here.
+          key: v3-mips-toolchain-${{ runner.os }}-${{ hashFiles('morpthis-player/rockboxdev/**') }}${{ env.TOOLCHAIN_CACHE_SUFFIX }}
+          restore-keys: |
+            v3-mips-toolchain-${{ runner.os }}-
+
+      # The compiler answers for itself. One restored under another directory
+      # name finds no sysroot and would fail the build in a way that looks like
+      # a compiler problem, so it is checked before anything uses it.
+      - name: Check the restored toolchain
+        id: toolchain-check
+        if: inputs.fresh_build != true
+        run: |
+          set -euo pipefail
+          gcc="morpthis-player/rockbox-toolchain/bin/mipsel-rockbox-linux-gnu-gcc"
+          usable=false
+          if [ -x "$gcc" ]; then
+            sysroot="$("$gcc" -print-sysroot 2>/dev/null || true)"
+            case "$sysroot" in
+              "$GITHUB_WORKSPACE"/*) usable=true ;;
+              *)
+                echo "::warning::The cached toolchain expects ${sysroot:-an unknown sysroot}; discarding it."
+                rm -rf morpthis-player/rockbox-toolchain
+                ;;
+            esac
+          fi
+          echo "usable=$usable" >> "$GITHUB_OUTPUT"
+
+      # Before this cache was split, the toolchain and the libraries lived in
+      # one entry, which has a different path list and therefore a different
+      # cache version: the split restore above cannot see it. This picks it up
+      # once, when no toolchain came back, so the split itself costs no rebuild.
+      # It restores the old libraries along with the compiler; after that first
+      # run the split entries exist and this step never runs again.
+      - name: Restore the pre-split toolchain cache
+        if: inputs.fresh_build != true && steps.toolchain-check.outputs.usable != 'true'
+        uses: actions/cache/restore@v5
         with:
           path: |
             morpthis-player/rockbox-toolchain
@@ -183,15 +336,43 @@ jobs:
             morpthis-player/*.tar.gz
             morpthis-player/*.tar.bz2
             morpthis-player/*.tar.xz
-          # The directory name is part of the key on purpose. The cross
-          # compiler is configured with --with-sysroot pointing at an absolute
-          # path inside this tree, so a cache written for another directory
-          # name cannot be used from here. Without it, restore-keys would
-          # restore the old tree under its old name, the build would not find
-          # it, and the whole toolchain would be rebuilt anyway.
           key: v3-mips-target-${{ runner.os }}-morpthis-${{ hashFiles('morpthis-player/Makefile', 'morpthis-player/rockboxdev/**') }}
           restore-keys: |
             v3-mips-target-${{ runner.os }}-morpthis-
+
+      # FreeType and the audio libraries, rebuilt from their pinned tarballs in
+      # a few minutes. Apart from the compiler so the reset toggles can throw
+      # these away without throwing the compiler away. No restore-keys: the key
+      # covers the Makefile's versions and LIB_CFLAGS, so a mismatch means these
+      # have to be rebuilt, and a fallback would silently keep stale objects.
+      - name: Restore the target libraries
+        id: libs-cache
+        if: inputs.fresh_build != true && inputs.fresh_keep_toolchain != true
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            morpthis-player/freetype-target
+            morpthis-player/audio-target
+            morpthis-player/*.tar.gz
+            morpthis-player/*.tar.bz2
+            morpthis-player/*.tar.xz
+          key: v3-mips-libs-${{ runner.os }}-${{ hashFiles('morpthis-player/Makefile') }}${{ env.CACHE_SUFFIX }}
+
+      # The target objects, through ccache. 483 of the 689 translation units are
+      # LVGL and never change between commits; without this every run compiles
+      # all of them again. Actions caches are immutable, so the key carries the
+      # player and SDK commits and restore-keys take the newest previous entry as
+      # the starting point; ccache itself hashes the compiler options and the
+      # preprocessed source, so an entry is only reused when it really matches.
+      - name: Restore the compiler cache
+        id: ccache-cache
+        if: inputs.fresh_build != true && inputs.fresh_keep_toolchain != true
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-v1-${{ steps.source.outputs.sha }}-${{ steps.source.outputs.sdk_sha }}${{ env.CACHE_SUFFIX }}
+          restore-keys: |
+            ccache-${{ runner.os }}-v1-
 
       - name: Build TempoTec V1 target binaries
         working-directory: morpthis-player
@@ -213,7 +394,41 @@ jobs:
           ) &
           watcher=$!
           trap 'kill "$watcher" 2>/dev/null || true' EXIT
-          make target -j"$(nproc)"
+          make target -j"$(nproc)" CROSS_CC_LAUNCH=ccache
+          ccache --show-stats || true
+
+      # Saved after the build, so a failed build leaves the caches as they were.
+      # A restore-keys match counts as a miss (`cache-hit` is false), so the
+      # entry is rewritten under the key this run computed. A concurrent run may
+      # have written the same key first; that is not a failure.
+      - name: Save the MIPS toolchain
+        if: steps.toolchain-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: morpthis-player/rockbox-toolchain
+          key: v3-mips-toolchain-${{ runner.os }}-${{ hashFiles('morpthis-player/rockboxdev/**') }}${{ env.TOOLCHAIN_CACHE_SUFFIX }}
+
+      - name: Save the target libraries
+        if: steps.libs-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            morpthis-player/freetype-target
+            morpthis-player/audio-target
+            morpthis-player/*.tar.gz
+            morpthis-player/*.tar.bz2
+            morpthis-player/*.tar.xz
+          key: v3-mips-libs-${{ runner.os }}-${{ hashFiles('morpthis-player/Makefile') }}${{ env.CACHE_SUFFIX }}
+
+      - name: Save the compiler cache
+        if: steps.ccache-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ runner.os }}-v1-${{ steps.source.outputs.sha }}-${{ steps.source.outputs.sdk_sha }}${{ env.CACHE_SUFFIX }}
 
       - name: Check the exported SDK surface
         env:
