@@ -173,6 +173,10 @@ If a PC does attach while the Apps feature holds the card, the player asks
 whether to use USB storage mode. Confirming closes the running app through its
 normal teardown (the optional `morpthis_app_shutdown()` hook runs first, so it
 can stop its threads and audio), leaves the Apps page and exports the card.
+The handover waits longer than an ordinary close: a force-closed app keeps its
+package mounted, the squashfs loop then holds the card, and the export could
+never unmount it. An app with a slow stop (a network read, a DAC write) is
+given that time to finish cleanly.
 The USB controller holds one gadget at a time, so confirming also switches ADB
 off; turning ADB back on in Developer options takes the controller back.
 Cancelling leaves the card with the player and ADB as it was; the PC sees a

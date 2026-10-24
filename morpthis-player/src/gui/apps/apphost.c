@@ -76,6 +76,11 @@ static bool is_shared_object(const char *path) {
 // long enough for a socket shutdown and a thread join, short enough that a
 // hung app does not freeze the switch.
 #define APPS_CLOSE_TIMEOUT_MS 3000
+// A mass-storage handover is different. A force-closed app keeps its package
+// mounted, and the squashfs loop then holds the card: the export can never
+// unmount it. Waiting longer is the lesser failure, and this only happens after
+// the user has confirmed the handover. The screen is already on the USB path.
+#define APPS_STORAGE_CLOSE_TIMEOUT_MS 15000
 #define APPS_ZOMBIES_MAX 4
 
 typedef struct {
@@ -101,7 +106,7 @@ static void *shutdown_thread(void *arg) {
 // False means the worker did not return in time; the caller must then leave the
 // shared object and its screens mapped. The detached worker owns `job` on that
 // path, which is deliberately leaked rather than freed under it.
-static bool run_shutdown_bounded(void (*fn)(void)) {
+static bool run_shutdown_bounded(void (*fn)(void), uint32_t timeout_ms) {
 	if (!fn) {
 		return true;
 	}
@@ -134,8 +139,8 @@ static bool run_shutdown_bounded(void (*fn)(void)) {
 
 	struct timespec deadline;
 	clock_gettime(CLOCK_REALTIME, &deadline);
-	deadline.tv_sec += APPS_CLOSE_TIMEOUT_MS / 1000;
-	deadline.tv_nsec += (long)(APPS_CLOSE_TIMEOUT_MS % 1000) * 1000000L;
+	deadline.tv_sec += (time_t)(timeout_ms / 1000);
+	deadline.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
 	if (deadline.tv_nsec >= 1000000000L) {
 		deadline.tv_sec++;
 		deadline.tv_nsec -= 1000000000L;
@@ -197,8 +202,14 @@ static void apphost_teardown(morpthis_app_t *app) {
 	app->quitting = true;
 	bool clean = true;
 	if (app->shutdown) {
-		clean = run_shutdown_bounded(app->shutdown);
+		uint32_t timeout = close_for_mass_storage ? APPS_STORAGE_CLOSE_TIMEOUT_MS
+												 : APPS_CLOSE_TIMEOUT_MS;
+		uint32_t started = lv_tick_get();
+		clean = run_shutdown_bounded(app->shutdown, timeout);
+		uint32_t took = lv_tick_get() - started;
 		app->shutdown = NULL;
+		fprintf(stderr, "apps: %s shutdown %s in %u ms (bound %u ms)\n", app->id,
+				clean ? "returned" : "did not return", took, timeout);
 	}
 
 	app->alive = false;
@@ -230,8 +241,7 @@ static void apphost_teardown(morpthis_app_t *app) {
 		// deleting its screens under a thread that is still in there is worse
 		// than leaving them allocated. Its package stays mounted for the same
 		// reason. Release the DAC so the next app can take it.
-		fprintf(stderr, "apps: %s did not stop within %d ms; force-closing it\n", app->id,
-				APPS_CLOSE_TIMEOUT_MS);
+		fprintf(stderr, "apps: %s did not stop in time; force-closing it\n", app->id);
 		// The screens stay, but their back guards must not: the next app needs
 		// those slots, and the guard table has no idea the app behind them is
 		// gone. Clearing is safe; the guard only dispatches BACK.

@@ -328,8 +328,13 @@ bool pkgmerp_unmount(const char *mount_point, char *error, size_t error_size) {
 
 	if (released) {
 		// AUTOCLEAR would do this on close; doing it explicitly keeps a
-		// failed status ioctl from leaking the device.
-		ioctl(slot->loop_fd, LOOP_CLR_FD, 0);
+		// failed status ioctl from leaking the device. A failure here is worth
+		// saying out loud: a loop still attached keeps the card's block device
+		// busy, and USB mass storage then cannot unmount the card either.
+		if (ioctl(slot->loop_fd, LOOP_CLR_FD, 0) != 0) {
+			fprintf(stderr, "pkgmerp: LOOP_CLR_FD %s failed: %s\n",
+					slot->loop_device[0] ? slot->loop_device : "?", strerror(errno));
+		}
 		close(slot->loop_fd);
 		slot->loop_fd = -1;
 		slot->refs = 0;
