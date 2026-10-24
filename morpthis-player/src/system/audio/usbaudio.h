@@ -56,6 +56,16 @@ void usbaudio_card_name(char *out, size_t out_size);
 // some do not, and then the level belongs to whatever is on the far end.
 void usbaudio_apply_volume(int percent);
 
+// A DoP (DSD over PCM) stream is playing. Its frames carry a DSD bitstream
+// with a marker byte, so scaling them would turn the stream into noise; the
+// level has to go to the device's own control for as long as this is set.
+// Cleared when the stream ends, which puts the control back at its 0 dB step
+// and returns the level to the samples.
+//
+// Nothing happens without a card, and a device with no control cannot be
+// attenuated this way: the level is then left alone and said so in the log.
+void usbaudio_set_passthrough(bool on);
+
 // Whether the device on the port has such a control. False also when the port
 // is empty. When it is false and the port is busy, nothing in the chain holds
 // the level any more and the software volume takes it over -- see swvolume.c.

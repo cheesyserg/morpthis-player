@@ -1,10 +1,9 @@
 build_host/system/audio/audio.o: src/system/audio/audio.c \
  src/system/audio/audio.h src/system/audio/alsa-controls.h \
- src/system/bluetooth/bluetooth.h src/system/decode/decode.h \
- src/system/decode/growfile.h src/system/streaming/subsonicstream.h \
- src/system/streaming/subsonic.h src/system/streaming/streambridge.h \
- src/system/library/metadata.h src/system/decode/sndfile.h \
- src/system/audio/replaygain.h src/system/audio/speed.h \
+ src/system/audio/usbaudio.h src/system/bluetooth/bluetooth.h \
+ src/system/decode/decode.h src/system/decode/growfile.h \
+ src/system/decode/sndfile.h src/system/audio/replaygain.h \
+ src/system/library/metadata.h src/system/audio/speed.h \
  src/system/audio/swvolume.h src/system/audio/eq.h \
  src/system/audio/decimate.h src/system/core/config.h \
  src/system/device/power.h lvgl/lvgl.h lvgl/include/lvgl/lvgl.h \
@@ -393,15 +392,13 @@ build_host/system/audio/audio.o: src/system/audio/audio.c \
  lvgl/include/lvgl/api_map/lv_api_map_v9_5.h src/system/core/utils.h
 src/system/audio/audio.h:
 src/system/audio/alsa-controls.h:
+src/system/audio/usbaudio.h:
 src/system/bluetooth/bluetooth.h:
 src/system/decode/decode.h:
 src/system/decode/growfile.h:
-src/system/streaming/subsonicstream.h:
-src/system/streaming/subsonic.h:
-src/system/streaming/streambridge.h:
-src/system/library/metadata.h:
 src/system/decode/sndfile.h:
 src/system/audio/replaygain.h:
+src/system/library/metadata.h:
 src/system/audio/speed.h:
 src/system/audio/swvolume.h:
 src/system/audio/eq.h:

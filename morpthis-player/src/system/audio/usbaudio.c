@@ -55,6 +55,10 @@ static char active_name[64];			// its id, for the interface
 static char volume_control[64];			// the control the level is written to
 static long volume_min, volume_max;
 static unsigned int volume_count = 1; // how many channels that control carries
+// A DoP stream is playing: its samples carry the DSD bitstream and its marker
+// byte, so they cannot be scaled. The level goes to the control instead.
+static bool passthrough_mode;
+static bool warned_dop_no_control;
 // The control's dB scale, read from its TLV; volume_has_db is false when the
 // device publishes none, and it is dropped again below when what the device
 // publishes cannot be a volume control's scale at all.
@@ -578,11 +582,27 @@ void usbaudio_apply_volume(int percent) {
 	long target = mute ? 0 : alsa_volume_gain_db100(percent);
 
 	if (!volume_control[0] || volume_max <= volume_min) {
-		swvolume_set_usb_gain(target, mute);
+		if (passthrough_mode) {
+			// DoP over USB can be attenuated in one place only, and this device
+			// has not got it. The stream still plays; say once why the level
+			// will not move.
+			if (!warned_dop_no_control) {
+				warned_dop_no_control = true;
+				fprintf(stderr, "usbaudio: DoP needs the device's own volume control; this one has none, so the "
+								"level stays where the device has it\n");
+			}
+		}
+		swvolume_set_usb_gain(passthrough_mode ? 0 : target, mute);
 		return;
 	}
 
 	bool hardware = volume_has_db && config_get_int("usb", "hardware_volume", 0);
+	// A DoP stream cannot be scaled here, so the control is the only place its
+	// level can go. That is hardware mode whatever the setting says.
+	bool hardware_only = passthrough_mode;
+	if (hardware_only) {
+		hardware = true;
+	}
 	long value = volume_max;
 	long hw_db = 0;
 	if (mute) {
@@ -602,6 +622,10 @@ void usbaudio_apply_volume(int percent) {
 			hw_db <= SND_CTL_TLV_DB_GAIN_MUTE) {
 			hw_db = 0;
 		}
+	} else if (hardware_only) {
+		// No scale to convert through. The index is spread linearly over the
+		// control's range; its range is all there is to go on.
+		value = volume_min + (volume_max - volume_min) * percent / 100;
 	}
 	long rest = hardware ? target - hw_db : target;
 	// ...and only hardware mode splits the level with the control at all.
@@ -611,7 +635,9 @@ void usbaudio_apply_volume(int percent) {
 	// attenuation against a gain the device does not have, and the index
 	// would stop meaning anything. Hardware mode is where the scale is
 	// followed -- and then only after find_volume_control() has believed it.
-	swvolume_set_usb_gain(rest < 0 ? rest : 0, mute);
+	// In DoP mode the samples get no share at all, mute aside: a scaled DoP
+	// word is no longer DoP.
+	swvolume_set_usb_gain(hardware_only ? 0 : (rest < 0 ? rest : 0), mute);
 
 	snd_ctl_t *ctl;
 	char card[32];
@@ -656,6 +682,15 @@ void usbaudio_apply_volume(int percent) {
 	}
 	bool stuck = value <= volume_max - slack && back >= volume_max - slack;
 	if (wrote < 0 || stuck) {
+		if (hardware_only) {
+			// No samples to fall back on: a DoP stream cannot be scaled. Keep the
+			// control so the next volume change tries it again.
+			fprintf(stderr,
+					"usbaudio: '%s' did not take %d%% (asked %ld, reads %ld); DoP cannot be scaled, so the "
+					"level stays where the control left it\n",
+					volume_control, percent, value, back);
+			return;
+		}
 		fprintf(stderr,
 				"usbaudio: '%s' did not take %d%% (asked %ld, reads %ld); the level goes to the samples "
 				"instead\n",
@@ -663,6 +698,17 @@ void usbaudio_apply_volume(int percent) {
 		volume_control[0] = '\0';
 		swvolume_set_usb_gain(target, mute);
 	}
+}
+
+void usbaudio_set_passthrough(bool on) {
+	if (passthrough_mode == on) {
+		return;
+	}
+	if (on) {
+		warned_dop_no_control = false;
+	}
+	passthrough_mode = on;
+	usbaudio_apply_volume(get_volume_percent());
 }
 
 // Who the port belongs to.

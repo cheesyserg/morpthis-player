@@ -1,5 +1,6 @@
 #include "audio.h"
 #include "src/system/audio/alsa-controls.h"
+#include "src/system/audio/usbaudio.h"
 #include "src/system/bluetooth/bluetooth.h"
 #include "src/system/decode/decode.h"
 #include "src/system/decode/growfile.h"
@@ -16,6 +17,7 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -3255,6 +3257,10 @@ static void play_decoded_file(const char *filepath, decode_format_t format) {
 		// have the previous track's PCM tail queued.
 		gapless_release();
 		set_dac_dop(1);
+		// Over a USB DAC that switch is not the built-in codec's: the samples
+		// carry DoP and cannot be scaled, so the device's own control has to
+		// hold the level until this track ends.
+		usbaudio_set_passthrough(true);
 	}
 
 	snd_pcm_uframes_t period_size;
@@ -3293,6 +3299,7 @@ static void play_decoded_file(const char *filepath, decode_format_t format) {
 	}
 	if (!pcm_handle) {
 		set_dac_dop(0);
+		usbaudio_set_passthrough(false);
 		decoder_close(dec);
 		pthread_mutex_lock(&audio_mutex);
 		audio_command = AUDIO_CMD_STOP;
@@ -3315,6 +3322,7 @@ static void play_decoded_file(const char *filepath, decode_format_t format) {
 		fprintf(stderr, "Audio: Out of memory for period buffer\n");
 		snd_pcm_close(pcm_handle);
 		set_dac_dop(0);
+		usbaudio_set_passthrough(false);
 		decoder_close(dec);
 		pthread_mutex_lock(&audio_mutex);
 		audio_command = AUDIO_CMD_STOP;
@@ -3937,6 +3945,7 @@ static void play_decoded_file(const char *filepath, decode_format_t format) {
 	// tidy one.
 	if (!keep_open) {
 		set_dac_dop(0);
+		usbaudio_set_passthrough(false);
 	}
 	free(buffer);
 	speed_close(stretch);
@@ -4723,6 +4732,12 @@ bool audio_external_begin_latency(int sample_rate, int channels, int bits, int b
 	// or the emulator plays out of a muted DAC.
 	alsa_track_unmute();
 
+	// Taking the output from a local DoP track: its mode kept the level on the
+	// USB device's control. Every source that comes through here writes PCM
+	// (USB DAC mode's DSD goes to the built-in card, where this is inactive),
+	// so the samples hold the level again.
+	usbaudio_set_passthrough(false);
+
 	pthread_mutex_lock(&external_lock);
 
 	if (external_pcm) {
@@ -4860,6 +4875,69 @@ static bool external_wait_room(long *last_progress_ms) {
 	return true;
 }
 
+// The player's level on the external path.
+//
+// The two local playback loops apply swvolume themselves: on a device on the
+// USB-C port the CS43198 is out of the path, and in the default split the
+// device's own control is parked at its 0 dB step, so the samples are the only
+// place the level can go. An external source -- an app's raw output, AirPlay,
+// the Bluetooth receiver -- has no decode loop to do that in, and without this
+// a USB DAC plays it at full scale wherever the player's volume is set. On
+// every other route swvolume_active() is false and this is one comparison: the
+// built-in DAC's attenuation is global and already covers those sources.
+//
+// These sources hand over PCM only. USB DAC mode (the one source that can pass
+// DoP) plays to the built-in card, where this is inactive.
+//
+// The samples are copied before they are scaled. The buffer belongs to the
+// caller, and the write below can hand the same chunk in again after an
+// underrun. NULL only when the copy cannot be had, and then the chunk goes out
+// unscaled rather than not at all.
+static unsigned char *external_volume_buf;
+static size_t external_volume_capacity;
+
+static const void *external_apply_volume(const void *buf, size_t frames) {
+	if (!swvolume_active() || frames == 0) {
+		return buf;
+	}
+	if (external_bits != 16 && external_bits != 24 && external_bits != 32) {
+		return buf; // no depth this knows how to scale
+	}
+	size_t samples = frames * (size_t)external_channels;
+	size_t sample_bytes = external_bits == 24 ? 3 : (size_t)external_bits / 8;
+	if (sample_bytes == 0 || samples > SIZE_MAX / sample_bytes) {
+		return buf;
+	}
+	size_t bytes = samples * sample_bytes;
+	if (bytes > external_volume_capacity) {
+		unsigned char *grown = realloc(external_volume_buf, bytes);
+		if (!grown) {
+			return buf;
+		}
+		external_volume_buf = grown;
+		external_volume_capacity = bytes;
+	}
+	memcpy(external_volume_buf, buf, bytes);
+
+	size_t done = 0;
+	while (done < samples) {
+		size_t n = samples - done;
+		if (n > (size_t)INT_MAX) {
+			n = (size_t)INT_MAX;
+		}
+		unsigned char *chunk = external_volume_buf + done * sample_bytes;
+		if (external_bits == 16) {
+			swvolume_apply_s16((short *)chunk, (int)n);
+		} else if (external_bits == 24) {
+			swvolume_apply_s24_3le(chunk, (int)n);
+		} else {
+			swvolume_apply_s32((int32_t *)chunk, (int)n);
+		}
+		done += n;
+	}
+	return external_volume_buf;
+}
+
 int audio_external_write(const void *frames, int count) {
 	pthread_mutex_lock(&external_lock);
 
@@ -4879,11 +4957,15 @@ int audio_external_write(const void *frames, int count) {
 	int written = 0;
 	long last_progress_ms = log_ms();
 	while (written < count) {
+		size_t left = (size_t)(count - written);
 		const void *chunk = (const char *)frames + (size_t)written * external_frame_bytes;
+		// The player's level first, then the built-in card's S32 -> S24
+		// container, so the scaling sees the samples at the source's own depth.
+		chunk = external_apply_volume(chunk, left);
 		if (pcm_takes_s24(external_pcm, external_bits)) {
-			chunk = s24_from_s32(&external_s24, chunk, (size_t)(count - written) * (size_t)external_channels);
+			chunk = s24_from_s32(&external_s24, chunk, left * (size_t)external_channels);
 		}
-		snd_pcm_sframes_t got = chunk ? snd_pcm_writei(external_pcm, chunk, (snd_pcm_uframes_t)(count - written)) : -ENOMEM;
+		snd_pcm_sframes_t got = chunk ? snd_pcm_writei(external_pcm, chunk, (snd_pcm_uframes_t)left) : -ENOMEM;
 		if (got > 0) {
 			written += (int)got;
 			last_progress_ms = log_ms();
