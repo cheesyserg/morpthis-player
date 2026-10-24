@@ -66,8 +66,9 @@ bool usb_vbus_present(void);
 // Around a system suspend. The storage gadget stays bound to the USB
 // controller for as long as the player runs, and a bound gadget is something
 // this SoC will not suspend past -- the board reset instead of resuming.
-// prepare() hands the controller back before the SoC goes down; restore()
-// rebuilds and rebinds the gadget afterwards.
+// prepare() hands the controller back before the SoC goes down. restore() does
+// not bind anything: a reader bound before the next cable leaves dwc2's setup
+// queue stalled, so the watcher builds it when the host actually turns up.
 void usb_suspend_prepare(void);
 void usb_resume_restore(void);
 

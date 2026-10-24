@@ -1222,8 +1222,9 @@ static void suspend_to_ram(void) {
 		headset_keys_wake();
 		// The route was parked and the DAC muted for a sleep that never began.
 		audio_force_output_reinit_after_resume();
-		// The gadget was unbound for a sleep that never began; put the reader
-		// back or mass storage stays invisible until the next reboot.
+		// The gadget was unbound for a sleep that never began. The reader is not
+		// bound here: after a suspend attempt it must wait for the first cable
+		// (see usb_resume_restore()).
 		usb_resume_restore();
 		return;
 	}
@@ -1248,10 +1249,11 @@ static void suspend_to_ram(void) {
 	// And the LED back, as a fade-in from the dark it was left in.
 	led_resume();
 
-	// The USB controller is back. Rebind the card reader (or leave the
-	// controller to ADB, which its own watcher poll takes care of). On a
-	// refused suspend the gadget was unbound all the same, so this runs either
-	// way. The watcher sees the bound reader and resumes asking as usual.
+	// The USB controller is back. Nothing is bound yet: a reader bound before
+	// the next cable leaves dwc2's setup queue stalled, so usb_resume_restore()
+	// only arms the deferral and the watcher rebuilds on the first cable. On a
+	// refused suspend the gadget was unbound all the same, and the same deferral
+	// applies.
 	usb_resume_restore();
 
 	// There is no "one suspend per dark-screen spell" rule: the countdown simply

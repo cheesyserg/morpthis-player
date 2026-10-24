@@ -220,6 +220,19 @@ static volatile bool dac_owns_usb;
 // opposed to a charger) and offer to close the app and share the card.
 static volatile bool apps_own_usb;
 
+// After mem the reader is not bound until a cable appears; binding before the
+// host does stalls dwc2's setup queue (see usb_resume_restore()). Set on wake,
+// cleared by the watcher's first-cable rebuild. Every transition that would
+// otherwise bind the reader has to leave it alone while this is set.
+static volatile bool rebind_on_cable;
+
+// Set across the suspend hand-off, from the unbind in usb_suspend_prepare() to
+// usb_resume_restore(). The watcher stands down meanwhile: it sleeps for up to
+// a poll interval, and a rebind landing between the unbind and the write to
+// /sys/power/state leaves a gadget on the controller, which is what makes this
+// SoC reset instead of suspending.
+static volatile bool suspend_in_progress;
+
 // Entering and leaving DAC mode moves the card back and forth exactly the way
 // a cable being plugged in does, which would announce "Memoria di nuovo
 // disponibile" or "Collegato al PC" for something the user did not do and
@@ -259,7 +272,9 @@ void usb_set_dac_mode(bool on) {
 		// later.
 		if (adb_owns_controller()) {
 			fprintf(stderr, "usb: ADB is on; its gadget gets the controller back\n");
-		} else {
+		} else if (!rebind_on_cable) {
+			// After mem the reader waits for the first cable; the watcher does the
+			// full UDC toggle there. Binding it here is the stall all over again.
 			ensure_storage_gadget();
 		}
 	}
@@ -290,11 +305,13 @@ void usb_set_apps_mode(bool on) {
 		// host has to come back. Only when it was exported: a restore with
 		// nothing exported still unmounts and remounts the card.
 		take_card_back("apps are using the card");
-	} else if (!dac_owns_usb && !adb_owns_controller()) {
+	} else if (!dac_owns_usb && !adb_owns_controller() && !rebind_on_cable) {
 		// Put the empty-medium reader back on the controller; the watcher
 		// exports on its next poll if a host is still there. With ADB on the
 		// controller is its gadget's, and mass storage is a separate choice
-		// that turns ADB off (see apphost).
+		// that turns ADB off (see apphost). While rebind_on_cable is set the
+		// reader is deliberately off the bus: opening and closing an app after
+		// mem must not bind it a poll before the cable arrives.
 		ensure_storage_gadget();
 	}
 	suppress_popups = false;
@@ -629,7 +646,14 @@ void usb_gadget_reclaim_from_adb(void) {
 		}
 	}
 	owner_changed();
-	ensure_storage_gadget();
+	if (!rebind_on_cable) {
+		ensure_storage_gadget();
+	} else {
+		// Still waiting for the first cable after mem; the watcher does the full
+		// UDC toggle then. Binding here would put the reader back before the
+		// host and leave dwc2's setup queue stalled again.
+		fprintf(stderr, "usb: ADB stopped; the reader waits for the first cable after resume\n");
+	}
 }
 
 // ADB switched on and adbd up, and yet its gadget is not on the controller:
@@ -648,6 +672,12 @@ void usb_gadget_reclaim_from_adb(void) {
 // mounted, which adbd needs before it can write its descriptors).
 static void adb_keep_controller(void) {
 	if (!adb_switched_on() || adb_gadget_bound() || access(ADB_GADGET "/functions/ffs.adb", F_OK) != 0) {
+		return;
+	}
+	if (rebind_on_cable) {
+		// After mem nothing is bound to the controller until a cable turns up;
+		// the watcher's first-cable path clears the flag, and the next poll binds
+		// ADB's gadget with the host already attached.
 		return;
 	}
 	if (!adb_is_running()) {
@@ -703,6 +733,9 @@ void usb_suspend_prepare(void) {
 	if (!sd_device[0]) {
 		return; // USB mode was never started (host build, or no card)
 	}
+	// Stand the watcher down first: setting this after the unbind leaves the
+	// window this flag exists to close.
+	suspend_in_progress = true;
 	// Every gadget, not just ours: with ADB on it is adbd's gadget that holds
 	// the controller. Hold the same lock the builder uses, or the watcher can
 	// rebind the reader from under the suspend.
@@ -717,14 +750,24 @@ void usb_resume_restore(void) {
 	if (!sd_device[0]) {
 		return;
 	}
+
+	// Do not bind the reader here. A gadget bound before a cable is present
+	// comes back from mem with dwc2's setup queue stalled: the host attaches,
+	// dwc2_hsotg_enqueue_setup fails with -EAGAIN every few seconds, and no
+	// configuration is ever reached. The ADB toggle that used to fix it was
+	// really a full gadget rebuild. Defer that rebuild to the first cable
+	// instead (see the watcher), where the UDC is toggled with the host
+	// already watching.
+	rebind_on_cable = true;
+	suspend_in_progress = false;
+
 	if (adb_owns_controller()) {
-		// adb_keep_controller() binds ADB's gadget on the next poll. Building the
-		// reader here first would take the one controller from it.
-		fprintf(stderr, "usb: ADB is on; leaving it the controller after resume\n");
+		// ADB's gadget is bound by its own poll. If the user then chooses
+		// storage, ADB lets go and usb_set_apps_mode() builds the reader.
+		fprintf(stderr, "usb: ADB is on; the reader waits for the first cable after resume\n");
 		return;
 	}
-	ensure_storage_gadget();
-	fprintf(stderr, "usb: storage gadget rebound after resume\n");
+	fprintf(stderr, "usb: reader waits for the first cable after resume\n");
 }
 
 // Adds the mass-storage function to the ADB gadget and rebinds it, giving the
@@ -1219,6 +1262,14 @@ static void *usb_thread(void *arg) {
 			continue;
 		}
 
+		// The power thread is between unbinding the gadget and writing mem.
+		// Anything this loop did now could put a gadget back on the controller
+		// and turn the suspend into a reset.
+		if (suspend_in_progress) {
+			sleep(1);
+			continue;
+		}
+
 		// And the same for a DAC or a pair of headphones on the port: the
 		// controller is the host's then, and everything below ends in a write
 		// to a gadget that has no business existing while it is.
@@ -1321,6 +1372,12 @@ static void *usb_thread(void *arg) {
 				parked = true;
 				fprintf(stderr, "usb: no cable and the screen is dark; gadget unbound\n");
 			} else if (parked && power_screen_is_on()) {
+				// After mem the reader must stay off until a cable turns up; see
+				// usb_resume_restore(). Binding it now is exactly what stalled
+				// dwc2 for the next host.
+				if (rebind_on_cable) {
+					continue;
+				}
 				// Unless ADB has been switched on meanwhile: the controller is
 				// its gadget's now, and adb_keep_controller() sees to it.
 				if (!adb_owns_controller() && !gadget_rebind()) {
@@ -1330,6 +1387,25 @@ static void *usb_thread(void *arg) {
 				fprintf(stderr, "usb: awake again; gadget rebound\n");
 			}
 			continue;
+		}
+
+		// The first cable after mem: build the reader now, with the host already
+		// watching. A UDC toggle at this moment is what the old ADB workaround
+		// was doing by hand, and it is what gets dwc2 out of the stalled setup
+		// queue it had when the gadget was bound before the cable.
+		if (rebind_on_cable) {
+			rebind_on_cable = false;
+			if (adb_owns_controller()) {
+				fprintf(stderr, "usb: cable after resume with ADB on; ADB keeps the controller\n");
+				continue;
+			}
+			fprintf(stderr, "usb: first cable after resume; building the reader\n");
+			typec_force_sink();
+			gadget_unbind(); // clear any stale UDC binding from before mem
+			usleep(120 * 1000);
+			ensure_storage_gadget();
+			parked = false;
+			continue; // one poll for the host to enumerate
 		}
 
 		// A bound empty reader is what the host enumerates while we decide
