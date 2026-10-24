@@ -1188,6 +1188,13 @@ static void suspend_to_ram(void) {
 	//    towards it.
 	sync();
 
+	// 4-bis. The USB controller loses its state too. Unbind the gadget before
+	//        the SoC goes down; after the wake the reader is rebound below. A
+	//        gadget left bound across mem comes back with an empty UDC and the
+	//        host never re-enumerates it, which is why mass storage used to be
+	//        dead after a standby until ADB was toggled or the cable replugged.
+	usb_suspend_prepare();
+
 	// 4-ter. The RTC alarm: if the automatic shutdown deadline falls during the
 	//        sleep, it is what wakes the device to actually shut down.
 	rtc_alarm_arm_for_auto_off();
@@ -1215,6 +1222,9 @@ static void suspend_to_ram(void) {
 		headset_keys_wake();
 		// The route was parked and the DAC muted for a sleep that never began.
 		audio_force_output_reinit_after_resume();
+		// The gadget was unbound for a sleep that never began; put the reader
+		// back or mass storage stays invisible until the next reboot.
+		usb_resume_restore();
 		return;
 	}
 	// The status LED faded out before the sleep, so the light is gone with the
@@ -1237,6 +1247,12 @@ static void suspend_to_ram(void) {
 
 	// And the LED back, as a fade-in from the dark it was left in.
 	led_resume();
+
+	// The USB controller is back. Rebind the card reader (or leave the
+	// controller to ADB, which its own watcher poll takes care of). On a
+	// refused suspend the gadget was unbound all the same, so this runs either
+	// way. The watcher sees the bound reader and resumes asking as usual.
+	usb_resume_restore();
 
 	// There is no "one suspend per dark-screen spell" rule: the countdown simply
 	// starts again, like any other countdown, and the instant-wake counter below
