@@ -223,7 +223,10 @@ bool morpthis_app_background(void) {
 	// Player-owned chrome must not outlive the app on screen: a popover, dialog,
 	// prompt or screen hold belongs to the page that is being put away.
 	sdk_ui_app_reset(false);
-	sdk_system_app_reset();
+	// Only the SCREEN hold is released here. AWAKE and NETWORK describe what the
+	// app is still doing while it is away -- a station playing, a download in
+	// flight -- and power.h promises that holds survive backgrounding.
+	sdk_system_app_background();
 	return apphost_background();
 }
 

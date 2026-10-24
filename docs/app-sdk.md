@@ -125,7 +125,9 @@ The API started small and grew by version:
   mixer writing silence and still let the player suspend. A download that has
   no audio can hold NETWORK on its own and use `set_holds_for()` to bound it.
   The app SCREEN hold is separate from the player's own page holds, so closing
-  a player page cannot release it.
+  a player page cannot release it. Backgrounding the app releases SCREEN (its
+  pages are hidden) but keeps AWAKE, NETWORK, a timed hold's deadline and the
+  power callback; a streaming app that is put away keeps the device awake.
 - `fs`: the package root, the writable data folder, read/write helpers, card
   root, and a resolve call for libraries that open files themselves.
 - `log`: one line to the player's log.

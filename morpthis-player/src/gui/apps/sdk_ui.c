@@ -491,7 +491,10 @@ static const lv_image_dsc_t *icon_for(morpthis_icon_t icon) {
 	case MORPTHIS_ICON_PLAYLIST:
 		return &icon_menu_playlist;
 	case MORPTHIS_ICON_HEART:
-		return &icon_heart;
+		// The 32 px outline, not icon_heart: that one is the 160 px Easter-egg
+		// artwork, and an icon button does not scale its source. Centred in a
+		// 56 px button it shows only the middle of a white heart -- a square.
+		return &icon_heart_outline;
 	case MORPTHIS_ICON_HEART_FILLED:
 		return &icon_heart_filled;
 	case MORPTHIS_ICON_STAR:

@@ -282,6 +282,28 @@ void sdk_system_tick(void) {
 	app_power_log(old_holds, deadline, 0, 0);
 }
 
+// Called when the app is put in the background. Its pages are hidden, so a
+// SCREEN hold from a page must not keep the panel lit; AWAKE and NETWORK say
+// what the app is still doing (playing, downloading) and survive, as power.h
+// promises. The deadline and the event callback are part of that promise: an
+// app that asked for a timed hold or wants SUSPENDING must still get it while
+// it is away.
+void sdk_system_app_background(void) {
+	pthread_mutex_lock(&app_power_lock);
+	uint32_t old_holds = app_power_holds;
+	uint64_t deadline = app_power_deadline_ms;
+	if (old_holds & MORPTHIS_POWER_SCREEN) {
+		app_power_holds &= ~MORPTHIS_POWER_SCREEN;
+		power_hold_screen_for_app(false);
+	}
+	uint32_t holds = app_power_holds;
+	pthread_mutex_unlock(&app_power_lock);
+
+	if ((old_holds & MORPTHIS_POWER_SCREEN) != 0) {
+		app_power_log(old_holds, deadline, holds, deadline);
+	}
+}
+
 // Called from the host's teardown. An app force-closed while it was holding the
 // screen must not leave the panel lit for ever, and a stale power hold or
 // callback must not survive into the next app.

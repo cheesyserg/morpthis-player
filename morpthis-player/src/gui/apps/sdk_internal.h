@@ -204,6 +204,7 @@ void sdk_audio_resume_after_suspend(void);
 void sdk_playback_app_reset(void);
 
 // sdk_system.c
+void sdk_system_app_background(void);
 void sdk_system_app_reset(void);
 bool sdk_system_app_awake(void);
 bool sdk_system_app_network(void);
