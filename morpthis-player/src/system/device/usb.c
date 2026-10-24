@@ -64,6 +64,13 @@ static const char *const VBUS_CANDIDATES[] = {
 // does nothing.
 #define POLL_SECONDS_STANDBY 1
 
+// How long a host that is on the cable gets to enumerate the reader before the
+// watcher rebuilds it once. A reader left bound across a host detach can come
+// back with dwc2's setup queue armed for the old attach: the host sends SETUP,
+// the kernel logs enqueue_setup -EAGAIN, and no configuration is ever reached.
+// The ADB on/off workaround was really this UDC toggle, done by hand.
+#define ENUM_REBUILD_MS 3000
+
 static char sd_device[128];
 static char sd_mount[256];
 
@@ -245,6 +252,17 @@ static bool gadget_rebind(void);
 static bool first_udc(char *out, size_t out_size);
 static void storage_restore(void);
 static void take_card_back(const char *why);
+
+// Monotonic milliseconds for the enumeration watchdog. time() is not used: the
+// clock can be set while the device runs, and a jump must not look like a host
+// that has been waiting.
+static uint32_t monotonic_ms(void) {
+	struct timespec ts;
+	if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+		return 0;
+	}
+	return (uint32_t)ts.tv_sec * 1000u + (uint32_t)(ts.tv_nsec / 1000000u);
+}
 
 void usb_set_dac_mode(bool on) {
 	// The flag goes up before anything else: setting it afterwards leaves a
@@ -1250,6 +1268,13 @@ static void *usb_thread(void *arg) {
 	// away, and that is a new session even if a PMIC node still says VBUS.
 	bool was_configured = false;
 
+	// The enumeration watchdog. vbus_since is the moment of the last rising
+	// edge of the cable, and enum_rebuild_tried makes the rebuild one shot per
+	// attach: a charger never enumerates and must not be toggled forever.
+	bool vbus_last = false;
+	uint32_t vbus_since = 0;
+	bool enum_rebuild_tried = false;
+
 	unsigned seen_owner = __atomic_load_n(&owner_serial, __ATOMIC_SEQ_CST);
 
 	for (;;) {
@@ -1334,6 +1359,11 @@ static void *usb_thread(void *arg) {
 		}
 		was_configured = configured;
 		bool vbus = vbus_present() || configured;
+		if (vbus && !vbus_last) {
+			vbus_since = monotonic_ms();
+			enum_rebuild_tried = false;
+		}
+		vbus_last = vbus;
 
 		if (!vbus) {
 			if (exported) {
@@ -1405,6 +1435,7 @@ static void *usb_thread(void *arg) {
 			usleep(120 * 1000);
 			ensure_storage_gadget();
 			parked = false;
+			enum_rebuild_tried = true; // this was the plug-in's one try
 			continue; // one poll for the host to enumerate
 		}
 
@@ -1491,6 +1522,23 @@ static void *usb_thread(void *arg) {
 		// exactly the "track would not start while charging" bug. Only a host
 		// that has enumerated the gadget counts.
 		if (!configured) {
+			// The host is talking to a reader that it cannot enumerate. Rebuild
+			// it once, with the host already attached; that UDC toggle is what the
+			// ADB on/off workaround was doing by hand, and it clears the stale
+			// setup queue a reattach can leave behind. A charger simply never
+			// enumerates, so the one-shot limit is what keeps this from becoming a
+			// toggle loop. Never while ADB owns the controller: the reader would
+			// be bound over its gadget.
+			if (!enum_rebuild_tried && !adb_owns_controller() &&
+				(uint32_t)(monotonic_ms() - vbus_since) >= ENUM_REBUILD_MS) {
+				enum_rebuild_tried = true;
+				fprintf(stderr, "usb: host on the cable but not enumerated; rebuilding the reader\n");
+				typec_force_sink();
+				gadget_unbind();
+				usleep(120 * 1000);
+				ensure_storage_gadget();
+				parked = false;
+			}
 			continue;
 		}
 
