@@ -470,6 +470,12 @@ build_one() {
 		# been wrong often enough to owe us a trace. The trace file is what the
 		# player's Developer options page shows after a boot.
 		#
+		# The size is parsed with shell parameter expansion, not sed. This block
+		# is spliced into a vendor script by the packer, and a regex's
+		# backslashes do not survive that splice reliably (awk's -v assignment
+		# eats them); the result here was an empty boot_size and every custom
+		# picture falling through to the stock chain.
+		#
 		# A custom picture is not a file the boot script can read: the rootfs
 		# is read-only and /usr/data is not mounted yet. The player writes it
 		# into the same erase block as the marker, two pages in, and the marker
@@ -486,7 +492,11 @@ boot_rest=\${boot_raw#* }
 boot_sel=\${boot_rest%% *}
 echo \"sel=\$boot_sel raw=\$boot_raw\" > /tmp/.bootlogo_trace 2>/dev/null
 if [ \"\$boot_sel\" = \"logo:2\" ]; then
-    boot_size=\$(echo \"\$boot_raw\" | sed -n 's/.*size:\\([0-9][0-9]*\\).*/\\1/p')
+    boot_size=\${boot_raw#*size:}
+    boot_size=\${boot_size%% *}
+    case \"\$boot_size\" in
+        ''|*[!0-9]*) boot_size= ;;
+    esac
     if [ -n \"\$boot_size\" ] && [ \"\$boot_size\" -gt 0 ] && [ \"\$boot_size\" -le 57344 ]; then
         nanddump -q -s 0x22000 -l \"\$boot_size\" /dev/mtd5 -a > /tmp/.bootscreen.jpg 2>/dev/null
         if [ -s /tmp/.bootscreen.jpg ]; then
@@ -513,13 +523,22 @@ fi
 		[ -n "$ANCHOR" ] || ANCHOR="$(grep -nE 'logo[0-9a-z_]*\.jpeg' "$BOOT_SCRIPT" | head -1 | cut -d: -f1)"
 		[ -n "$ANCHOR" ] || ANCHOR=1
 
-		awk -v block="$BOOT_BLOCK" -v at="$ANCHOR" '
-			NR == at { printf "%s", block }
-			{ print }
-		' "$BOOT_SCRIPT" > "$BOOT_SCRIPT.packer.tmp"
+		# Splice by line, not with `awk -v block=...`: awk interprets backslash
+		# escapes in a -v assignment, and an earlier version of this block held
+		# a sed group \(...\)/\1. It reached the image as (...) and an invisible
+		# control byte, so boot_size was always empty and every custom picture
+		# fell through to the stock chain. The block now parses with parameter
+		# expansion as well, but the splice must stay escape-free.
+		{
+			head -n "$((ANCHOR - 1))" "$BOOT_SCRIPT"
+			printf '%s' "$BOOT_BLOCK"
+			tail -n +"$ANCHOR" "$BOOT_SCRIPT"
+		} > "$BOOT_SCRIPT.packer.tmp"
 
 		grep -q "morpthis boot screen choice" "$BOOT_SCRIPT.packer.tmp" ||
 			die "the choice block was not inserted into $(basename "$BOOT_SCRIPT")."
+		grep -q 'boot_size=${boot_raw#\*size:}' "$BOOT_SCRIPT.packer.tmp" ||
+			die "the boot-size parse was mangled while inserting the choice block."
 
 		# cat onto the file rather than mv over it: the init script's mode and
 		# owner are the stock ones and the image boots through them.
