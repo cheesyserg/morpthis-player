@@ -120,12 +120,25 @@ void swvolume_clear_usb_gain(void) {
 	usb_gain_q31 = 2147483648LL;
 }
 
+// A `plughw:` output that usbaudio.c has not routed. The name is the one the
+// player uses for a card on the USB-C port (the internal card is "default" and
+// Bluetooth is bluealsa), so a plughw device with no card in view is a route
+// that has not caught up -- for an app opened in the second between the plug
+// and the poll. The state should last no longer than that; until it clears the
+// index curve is the only level there is, and leaving the samples alone would
+// play the app at full scale.
+static bool unrouted_usb_output(void) {
+	char device[160];
+	audio_get_output_device(device, sizeof(device));
+	return strncmp(device, "plughw:", 7) == 0;
+}
+
 bool swvolume_active(void) {
 	if (audio_output_is_bluetooth()) {
 		return false;
 	}
 	if (!usbaudio_active()) {
-		return false;
+		return unrouted_usb_output();
 	}
 	if (usb_gain_set) {
 		return usb_gain_q31 < 2147483648LL;
@@ -151,7 +164,7 @@ static sw_action_t gain_now(int64_t *gain) {
 		return SW_PASS;
 	}
 
-	if (usb_gain_set) {
+	if (usb_gain_set && usbaudio_active()) {
 		int64_t q31 = usb_gain_q31;
 		if (q31 == 0) {
 			return SW_MUTE;

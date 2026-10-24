@@ -23,10 +23,12 @@
 static bool stub_bluetooth_active = false;
 static bool stub_usbaudio_active = true;
 static bool stub_usbaudio_has_volume_control = false;
+static const char *stub_output_device = "default";
 
 bool audio_output_is_bluetooth(void) { return stub_bluetooth_active; }
 bool usbaudio_active(void) { return stub_usbaudio_active; }
 bool usbaudio_has_volume_control(void) { return stub_usbaudio_has_volume_control; }
+void audio_get_output_device(char *out, size_t out_size) { snprintf(out, out_size, "%s", stub_output_device); }
 
 static int failures;
 
@@ -195,6 +197,30 @@ static void test_active_only_on_the_usb_route(void) {
 	CHECK(!swvolume_active()); // unity: nothing to apply
 }
 
+static void test_unrouted_usb_output_uses_the_index(void) {
+	// The second between a DAC being plugged in and the poll routing it: the
+	// external stream is already on the plughw device, so a stale USB gain
+	// must not be trusted and the level must come from the index curve.
+	stub_usbaudio_active = false;
+	stub_output_device = "plughw:1,0";
+	swvolume_set_usb_gain(-600, false); // stale, and not in force
+	swvolume_set_index(50);
+	CHECK(swvolume_active());
+
+	short s = 16384;
+	swvolume_apply_s16(&s, 1);
+	int64_t q31 = swvolume_coefficient(50);
+	int32_t want = (int32_t)(((int64_t)16384 * q31) >> 31);
+	CHECK(abs((int)s - want) <= 2);
+
+	// The internal card is not this route and stays untouched.
+	stub_output_device = "default";
+	CHECK(!swvolume_active());
+	stub_output_device = "plughw:1,0";
+	stub_usbaudio_active = true;
+	stub_output_device = "default";
+}
+
 static void test_index_curve_matches_its_own_coefficients(void) {
 	// The stock curve's fallback (a card in play before usbaudio.c has set a
 	// gain, on a device with no control of its own): the coefficient for an
@@ -219,6 +245,7 @@ int main(void) {
 	test_s32_rounds_and_keeps_depth();
 	test_s24_3le_stays_inside_the_three_bytes();
 	test_active_only_on_the_usb_route();
+	test_unrouted_usb_output_uses_the_index();
 	test_index_curve_matches_its_own_coefficients();
 
 	if (failures) {

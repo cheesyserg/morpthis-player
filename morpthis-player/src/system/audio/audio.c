@@ -4710,6 +4710,12 @@ static bool external_open_locked(void) {
 	external_route = alsa_output_key();
 	audio_get_output_device(external_device, sizeof(external_device));
 
+	// One line per open, and the only place that says what the level is doing
+	// for somebody else's audio. "nothing" on the USB card is the answer that
+	// matters: it means the route is plughw but usbaudio.c has not taken it.
+	fprintf(stderr, "audio: external route '%s'; USB card %s; software volume %s (%d%%)\n", external_device,
+			usbaudio_active() ? "active" : "not routed", swvolume_active() ? "on" : "off", get_volume_percent());
+
 	// A fresh PCM: everything that opened before this no longer owns it. Zero is
 	// never handed out, so a caller's initialised-to-zero id never matches.
 	if (++external_id == 0) {
