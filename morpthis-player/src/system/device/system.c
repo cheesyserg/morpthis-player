@@ -889,6 +889,14 @@ void storage_recheck_card(void) {
 	}
 
 	pthread_mutex_lock(&card_lock);
+	// Re-check under the lock: an export that started between the check above
+	// and this lock holds it across setting usb_storage_active(), so a
+	// supervisor that was waiting here must not mount over the raw device the
+	// host is about to receive.
+	if (usb_storage_active()) {
+		pthread_mutex_unlock(&card_lock);
+		return;
+	}
 
 	if (card_released || (sd_root[0] && is_mounted(sd_root) && mount_is_alive(sd_root))) {
 		pthread_mutex_unlock(&card_lock); // nothing to do, the common case
@@ -916,6 +924,10 @@ void storage_recheck_card(void) {
 
 	pthread_mutex_unlock(&card_lock);
 }
+
+void storage_card_lock(void) { pthread_mutex_lock(&card_lock); }
+
+void storage_card_unlock(void) { pthread_mutex_unlock(&card_lock); }
 
 // Every descriptor of this process that points into the card, for the log
 // when the card cannot be released.

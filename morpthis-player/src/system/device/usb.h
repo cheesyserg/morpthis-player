@@ -14,10 +14,9 @@
 // in the right order.
 //
 // Detection polls /sys/class/power_supply/usb/online from a small background
-// thread. A wall charger raises the same signal; exporting the gadget then is
-// harmless (nothing enumerates it) but unmounting the card for a power brick
-// would not be, so the thread waits for a USB *host* -- the UDC state leaves
-// "not attached" only when something on the other end actually talks.
+// thread. A wall charger raises the same signal; the reader is bound while the
+// cable is in, but nothing is exported until the UDC reports that a host has
+// actually enumerated it.
 
 // Starts the watcher thread. Pass the SD block device (e.g. /dev/mmcblk0p1)
 // and the mount point it lives on; either NULL disables the whole feature
@@ -52,10 +51,10 @@ bool usb_dac_mode(void);
 void usb_set_apps_mode(bool on);
 
 // Coordination with ADB, whose init script needs the one USB controller for
-// its own gadget: yield unbinds the storage gadget before adbd starts, reclaim
-// rebuilds and rebinds it after adbd stops (its stop script tears the whole
-// configfs down). Both take a card handed to the host back first. Called by
-// adb.c around the init scripts.
+// its own gadget: yield takes the card back and unbinds the reader before adbd
+// starts; reclaim releases ADB's gadget and lets the watcher rebuild the
+// reader if a host is still on the cable. Called by adb.c around the init
+// scripts.
 void usb_gadget_yield_to_adb(void);
 void usb_gadget_reclaim_from_adb(void);
 
@@ -63,12 +62,11 @@ void usb_gadget_reclaim_from_adb(void);
 // from the power-supply nodes, so it is current rather than cached.
 bool usb_vbus_present(void);
 
-// Around a system suspend. The storage gadget stays bound to the USB
-// controller for as long as the player runs, and a bound gadget is something
-// this SoC will not suspend past -- the board reset instead of resuming.
-// prepare() hands the controller back before the SoC goes down. restore() does
-// not bind anything: a reader bound before the next cable leaves dwc2's setup
-// queue stalled, so the watcher builds it when the host actually turns up.
+// Around a system suspend. The reader may be pre-positioned while the screen
+// is on, so prepare() takes a card a host still has and unbinds every gadget; a
+// gadget left on the controller makes this SoC answer with a reset instead of a
+// resume. restore() only clears the stand-down and defers building anything
+// until the first cable.
 void usb_suspend_prepare(void);
 void usb_resume_restore(void);
 

@@ -96,6 +96,18 @@ void storage_card_files_recheck(void);
 // under the export) and hardening each of them one at a time has not worked.
 void storage_recheck_card(void);
 
+// Serialises the card supervisor with a USB export. usb.c holds this across
+// setting its "exported" flag, closing the on-card services, the unmount and
+// the medium insertion. Without it the supervisor's check of that flag is a
+// time-of-check/time-of-use race: it can pass just before the export starts and
+// mount the filesystem after the export unmounted it, while the raw device is
+// being handed to the host.
+//
+// Lock order: a caller may hold the USB storage lock while taking this one.
+// Nothing here takes the USB lock.
+void storage_card_lock(void);
+void storage_card_unlock(void);
+
 // Before the machine is powered off or rebooted: playback stops, everything
 // kept open on the card is closed, and the card is unmounted, or remounted
 // read-only when something still holds it. From then on nothing mounts it

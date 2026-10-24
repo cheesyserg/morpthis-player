@@ -721,8 +721,9 @@ void usbdac_stop(void) {
 
 	gadget_teardown();
 
-	// Give the controller back. usb.c rebuilds and rebinds the mass-storage
-	// gadget itself, so the computer sees the card again instead of nothing.
+	// Give the controller back. usb.c's watcher rebuilds and rebinds the
+	// mass-storage gadget on its next poll, so the computer sees the card again
+	// within a second instead of nothing.
 	usb_set_dac_mode(false);
 
 	pthread_mutex_lock(&lock);

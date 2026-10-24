@@ -1188,11 +1188,12 @@ static void suspend_to_ram(void) {
 	//    towards it.
 	sync();
 
-	// 4-bis. The USB controller loses its state too. Unbind the gadget before
-	//        the SoC goes down; after the wake the reader is rebound below. A
+	// 4-bis. The USB controller loses its state too. Unbind every gadget and give
+	//        the card back if a host still has it, before the SoC goes down. A
 	//        gadget left bound across mem comes back with an empty UDC and the
 	//        host never re-enumerates it, which is why mass storage used to be
 	//        dead after a standby until ADB was toggled or the cable replugged.
+	//        The watcher rebuilds on the first cable after the wake, not here.
 	usb_suspend_prepare();
 
 	// 4-ter. The RTC alarm: if the automatic shutdown deadline falls during the
@@ -1222,9 +1223,9 @@ static void suspend_to_ram(void) {
 		headset_keys_wake();
 		// The route was parked and the DAC muted for a sleep that never began.
 		audio_force_output_reinit_after_resume();
-		// The gadget was unbound for a sleep that never began. The reader is not
-		// bound here: after a suspend attempt it must wait for the first cable
-		// (see usb_resume_restore()).
+		// The gadget was unbound for a sleep that never began. Nothing is bound
+		// here: after a suspend attempt both the reader and ADB wait for the
+		// first cable (see usb_resume_restore()).
 		usb_resume_restore();
 		return;
 	}
@@ -1249,11 +1250,11 @@ static void suspend_to_ram(void) {
 	// And the LED back, as a fade-in from the dark it was left in.
 	led_resume();
 
-	// The USB controller is back. Nothing is bound yet: a reader bound before
-	// the next cable leaves dwc2's setup queue stalled, so usb_resume_restore()
-	// only arms the deferral and the watcher rebuilds on the first cable. On a
-	// refused suspend the gadget was unbound all the same, and the same deferral
-	// applies.
+	// The USB controller is back. Nothing is bound yet: usb_resume_restore()
+	// sets the wait-for-cable flag, and the watcher rebuilds both the reader and
+	// ADB's gadget when a cable appears. A gadget bound before the host is what
+	// leaves dwc2's setup queue stalled. On a refused suspend the gadgets were
+	// unbound all the same, and the same wait applies.
 	usb_resume_restore();
 
 	// There is no "one suspend per dark-screen spell" rule: the countdown simply
