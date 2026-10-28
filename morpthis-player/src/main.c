@@ -2413,39 +2413,38 @@ static lv_indev_read_cb_t touch_raw_read_cb;
 // ---------------------------------------------------------------------------
 // Touch panel seam compensation
 //
-// The panel is hysteretic at one Y position: across a band of about 22 counts
-// it reports one of two plateaus, and which one depends on the direction the
-// band was entered from.  The reports either side are smooth, so a crossing
-// shows up as a single step of about 20 counts from one plateau to the other,
-// in either direction and at any finger speed.
+// The panel is hysteretic around one Y position: across a band of about 28
+// counts it stops following the finger and holds the coordinate it entered
+// with.  When the finger leaves the far side, the coordinate jumps by the width
+// of the band -- from about 140 to about 168, or the other way round, depending
+// on direction.  The reports on either side are smooth.
 //
-// The cure is to treat that step as a change of coordinate frame.  Folding the
-// plateau spacing into an offset keeps the output continuous, and the offset is
-// walked back to zero afterwards so the finger and the content do not stay out
-// of step.  Relaxing at a couple of counts per report spreads the correction
-// over the next few reports instead of turning it into a second jump.
+// A crossing is therefore a step that starts on one side of the band and ends
+// on the other, at any finger speed.  The step carries up to a band's worth of
+// motion the panel did not report while it was holding, so the correction folds
+// no more than the band width into an offset and lets the rest of the step
+// through: beyond the band is the finger's own movement.  The offset is then
+// walked back to zero, so the finger and the content do not stay out of step.
 //
-// Detection is by the two plateau values, not by how slowly the finger was
-// moving.  Requiring a run of small reports first (as the first version did)
-// works for a slow drag but misses the fast back-and-forth crossings that look
-// worst on screen: there the raw signal alternates between the plateaus with no
-// small reports in between.  A fast swipe elsewhere on the glass does not step
-// from one plateau value to the other in a single report, so it is not
-// mistaken for the seam.
+// Detecting the band rather than exact plateau values matters.  At speed the
+// reported position can overshoot the far plateau by ten counts or more, and a
+// detector that insists on landing on the plateau misses exactly those
+// crossings.  Requiring two small reports first (the first version) missed
+// them too.
 //
 // Only Y is compensated: the capture shows the discontinuity there and nowhere
 // in X.
 // ---------------------------------------------------------------------------
 
-// Plateau positions in calibrated coordinates with the display unrotated.  The
-// 180-degree calibration mirrors Y around the last row, so touch_seam_reset()
-// mirrors these too when the screen is turned over.
-#define TOUCH_SEAM_PLATEAU_LO 141
-#define TOUCH_SEAM_PLATEAU_HI 163
-#define TOUCH_SEAM_BAND 6       // captured endpoints stay within 4 counts
-#define TOUCH_SEAM_MIN_STEP 16  // the plateaus are 22 apart ...
-#define TOUCH_SEAM_MAX_STEP 28  // ... and a crossing lands within a few counts
-#define TOUCH_SEAM_RELAX 2      // counts per report back toward the true position
+// Band edges in calibrated coordinates with the display unrotated.  Observed
+// crossings run from 127..143 to 161..178, so these edges sit inside the band
+// and outside the plateau values.  The 180-degree calibration mirrors Y around
+// the last row, so touch_seam_reset() mirrors these too.
+#define TOUCH_SEAM_BAND_LO 146
+#define TOUCH_SEAM_BAND_HI 160
+#define TOUCH_SEAM_MIN_STEP 16 // a crossing is at least the gap plus a report
+#define TOUCH_SEAM_FOLD 28     // the band's own width
+#define TOUCH_SEAM_RELAX 2     // counts per report back toward the true position
 
 typedef struct {
 	int32_t prev_raw;
@@ -2468,9 +2467,9 @@ static void touch_seam_relax(touch_seam_t *s) {
 	}
 }
 
-// Starts a press on `y`, and fixes which two values this panel reports its seam
-// with.  Turning the screen over also mirrors the touch calibration (see
-// display_set_rotated()), so the plateaus move with it.
+// Starts a press on `y`, and fixes which side of the seam this panel is
+// holding.  Turning the screen over also mirrors the touch calibration (see
+// display_set_rotated()), so the band moves with it.
 static void touch_seam_reset(touch_seam_t *s, int32_t y) {
 	memset(s, 0, sizeof(*s));
 	s->prev_raw = y;
@@ -2482,45 +2481,50 @@ static void touch_seam_reset(touch_seam_t *s, int32_t y) {
 		last = (int32_t)lv_display_get_vertical_resolution(disp) - 1;
 	}
 	if (display_get_rotated()) {
-		s->lo = last - TOUCH_SEAM_PLATEAU_HI;
-		s->hi = last - TOUCH_SEAM_PLATEAU_LO;
+		s->lo = last - TOUCH_SEAM_BAND_HI;
+		s->hi = last - TOUCH_SEAM_BAND_LO;
 	} else {
-		s->lo = TOUCH_SEAM_PLATEAU_LO;
-		s->hi = TOUCH_SEAM_PLATEAU_HI;
+		s->lo = TOUCH_SEAM_BAND_LO;
+		s->hi = TOUCH_SEAM_BAND_HI;
 	}
 
-	// Once per orientation, so a hardware report shows the two values this
-	// build is looking for without logging on every press.
+	// Once per orientation, so a hardware report shows the band this build is
+	// looking for without logging on every press.
 	if (debug_enabled() && (s->lo != touch_seam_logged_lo || s->hi != touch_seam_logged_hi)) {
 		touch_seam_logged_lo = s->lo;
 		touch_seam_logged_hi = s->hi;
-		DEBUG_ERR("input: seam plateaus %d/%d (rotated=%d)\n", s->lo, s->hi, display_get_rotated());
+		DEBUG_ERR("input: seam band %d..%d (rotated=%d)\n", s->lo, s->hi, display_get_rotated());
 	}
-}
-
-static bool touch_seam_near(int32_t v, int32_t plateau) {
-	int32_t d = v - plateau;
-	return d >= -TOUCH_SEAM_BAND && d <= TOUCH_SEAM_BAND;
 }
 
 static int32_t touch_seam_axis(touch_seam_t *s, int32_t raw) {
 	int32_t delta = raw - s->prev_raw;
 	int32_t adelta = delta < 0 ? -delta : delta;
 
-	bool crossed = adelta >= TOUCH_SEAM_MIN_STEP && adelta <= TOUCH_SEAM_MAX_STEP &&
-				   ((touch_seam_near(s->prev_raw, s->lo) && touch_seam_near(raw, s->hi)) ||
-					(touch_seam_near(s->prev_raw, s->hi) && touch_seam_near(raw, s->lo)));
+	// A crossing starts on one side of the band and ends on the other.  The
+	// previous report is the held plateau when the panel was stuck, which is
+	// exactly what the two inequalities ask for.
+	bool crossed = adelta >= TOUCH_SEAM_MIN_STEP &&
+				   ((s->prev_raw < s->lo && raw > s->hi) ||
+					(s->prev_raw > s->hi && raw < s->lo));
 	if (crossed) {
-		// Subtracting the whole step leaves the output where the previous report
-		// put it.  The band is then walked out by touch_seam_relax().
-		s->offset -= delta;
-		if (s->offset > TOUCH_SEAM_MAX_STEP) {
-			s->offset = TOUCH_SEAM_MAX_STEP;
-		} else if (s->offset < -TOUCH_SEAM_MAX_STEP) {
-			s->offset = -TOUCH_SEAM_MAX_STEP;
+		// Only the band's width is folded away: that is the motion the panel
+		// did not report while it held the coordinate.  Anything past the far
+		// side is the finger's own movement and passes through in this report.
+		int32_t fold = delta;
+		if (fold > TOUCH_SEAM_FOLD) {
+			fold = TOUCH_SEAM_FOLD;
+		} else if (fold < -TOUCH_SEAM_FOLD) {
+			fold = -TOUCH_SEAM_FOLD;
+		}
+		s->offset -= fold;
+		if (s->offset > TOUCH_SEAM_FOLD) {
+			s->offset = TOUCH_SEAM_FOLD;
+		} else if (s->offset < -TOUCH_SEAM_FOLD) {
+			s->offset = -TOUCH_SEAM_FOLD;
 		}
 		touch_seam_fixes++;
-		DEBUG_ERR("input: seam Y raw=%d delta=%d offset=%d\n", raw, delta, s->offset);
+		DEBUG_ERR("input: seam Y raw=%d delta=%d fold=%d offset=%d\n", raw, delta, fold, s->offset);
 	}
 
 	s->prev_raw = raw;
