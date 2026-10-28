@@ -2410,6 +2410,137 @@ typedef struct {
 static touch_filter_t touch_filter;
 static lv_indev_read_cb_t touch_raw_read_cb;
 
+// ---------------------------------------------------------------------------
+// Touch panel seam compensation
+//
+// This panel reports a discontinuity of 18-22 counts at one Y position.  It is
+// in the direction of travel -- moving down it jumps down, moving up it jumps
+// up -- and the reports either side are smooth.  That is hysteresis in the
+// controller, not a finger: the same spot on the glass maps to two coordinates
+// depending on which side it was approached from.
+//
+// The cure is to treat the jump as a change of coordinate frame.  Hold the
+// sample in which it appears, and if the next report stays on the new side,
+// fold the jump into an offset.  The filtered coordinate then continues from
+// where it was instead of snapping.  Crossing back folds the offset out again.
+// Only a jump after at least two small deltas is considered: a real fast flick
+// has a run of large deltas and is never mistaken for the seam.
+// ---------------------------------------------------------------------------
+
+#define TOUCH_SEAM_MIN_STEP 14   // observed seam is 18-22 counts
+#define TOUCH_SEAM_MAX_STEP 28
+#define TOUCH_SEAM_SLOW_STEP 4   // this is what a slow drag looks like
+#define TOUCH_SEAM_SLOW_RUN 2
+#define TOUCH_SEAM_CONFIRM_PX 10 // the next report stayed on the new side
+// A fold leaves the coordinate frame shifted by the jump size. Keeping it would
+// make the finger and the content disagree for the rest of the press, so the
+// offset is walked back to zero. Two counts per report is below the panel's own
+// step size, so the correction disappears without a visible second jump.
+#define TOUCH_SEAM_RELAX 2
+// The captured seam sits at Y about 153 (pre-jump 161, post-jump 141-165).
+// The window is wide enough for the 180-degree calibration too, without
+// treating a fast flick elsewhere on the glass as the seam.
+#define TOUCH_SEAM_Y_MIN 115
+#define TOUCH_SEAM_Y_MAX 195
+
+typedef struct {
+	bool have_prev;
+	int32_t prev_raw;
+	int32_t prev_out;
+	int32_t offset;
+	int32_t slow_run;
+	bool pending;
+	int32_t pending_raw;
+	int32_t pending_delta;
+} touch_seam_t;
+
+static touch_seam_t touch_seam_y;
+static uint32_t touch_seam_fixes;
+
+static void touch_seam_relax(touch_seam_t *s) {
+	if (s->offset > 0) {
+		s->offset = s->offset > TOUCH_SEAM_RELAX ? s->offset - TOUCH_SEAM_RELAX : 0;
+	} else if (s->offset < 0) {
+		s->offset = s->offset < -TOUCH_SEAM_RELAX ? s->offset + TOUCH_SEAM_RELAX : 0;
+	}
+}
+
+static int32_t touch_seam_axis(touch_seam_t *s, int32_t raw, char axis, bool allow_detect) {
+	if (!s->have_prev) {
+		s->have_prev = true;
+		s->prev_raw = raw;
+		s->prev_out = raw;
+		s->offset = 0;
+		s->slow_run = 0;
+		s->pending = false;
+		return raw;
+	}
+
+	int32_t delta = raw - s->prev_raw;
+
+	if (s->pending) {
+		int32_t after = raw - s->pending_raw;
+		int32_t after_px = after < 0 ? -after : after;
+		if (after_px <= TOUCH_SEAM_CONFIRM_PX) {
+			// The panel stayed on the far side: this was the seam.  Fold the
+			// jump into the mapping.  Subtracting the delta keeps the output
+			// continuous; crossing back folds it out again, with the small
+			// asymmetry between the two jump sizes left as the residual that
+			// touch_seam_relax() walks off over the next few reports.
+			s->offset -= s->pending_delta;
+			if (s->offset > TOUCH_SEAM_MAX_STEP) {
+				s->offset = TOUCH_SEAM_MAX_STEP;
+			} else if (s->offset < -TOUCH_SEAM_MAX_STEP) {
+				s->offset = -TOUCH_SEAM_MAX_STEP;
+			}
+			int32_t out = raw + s->offset;
+			s->pending = false;
+			s->prev_raw = raw;
+			s->prev_out = out;
+			s->slow_run = 0;
+			touch_seam_fixes++;
+			DEBUG_ERR("input: seam %c corrected raw=%d delta=%d offset=%d\n", axis, raw, s->pending_delta,
+					  s->offset);
+			touch_seam_relax(s);
+			return out;
+		}
+
+		// It kept moving: a real fast movement, not the seam.  Let it through.
+		s->pending = false;
+		s->prev_raw = raw;
+		int32_t out = raw + s->offset;
+		s->prev_out = out;
+		s->slow_run = 0;
+		touch_seam_relax(s);
+		return out;
+	}
+
+	int32_t adelta = delta < 0 ? -delta : delta;
+	if (allow_detect && s->slow_run >= TOUCH_SEAM_SLOW_RUN && adelta >= TOUCH_SEAM_MIN_STEP &&
+		adelta <= TOUCH_SEAM_MAX_STEP) {
+		s->pending = true;
+		s->pending_raw = raw;
+		s->pending_delta = delta;
+		s->prev_raw = raw;
+		s->slow_run = 0;
+		// prev_out is returned unchanged here on purpose: relaxing the offset
+		// now would insert a step between the held sample and the report that
+		// confirms it, which is exactly what the hold exists to avoid.
+		return s->prev_out; // hold this one sample
+	}
+
+	if (adelta <= TOUCH_SEAM_SLOW_STEP) {
+		s->slow_run++;
+	} else {
+		s->slow_run = 0;
+	}
+
+	s->prev_raw = raw;
+	s->prev_out = raw + s->offset;
+	touch_seam_relax(s);
+	return s->prev_out;
+}
+
 // What the panel actually delivered during one press. The point handed to the
 // filter is already calibrated by lv_evdev; this is what LVGL would have seen
 // without any smoothing. max_step against max_gap says whether a jump came from
@@ -2481,6 +2612,10 @@ static void touch_filter_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
 				touch_diag.last_tick = read_tick;
 				touch_diag.last_read_tick = read_tick;
 			}
+			memset(&touch_seam_y, 0, sizeof(touch_seam_y));
+			touch_seam_y.have_prev = true;
+			touch_seam_y.prev_raw = touch_seam_y.prev_out = data->point.y;
+			touch_seam_fixes = 0;
 		} else {
 			if (debug_enabled() && touch_diag.active) {
 				int32_t dx = data->point.x - touch_diag.last.x;
@@ -2509,8 +2644,14 @@ static void touch_filter_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
 
 			int32_t raw_x = data->point.x;
 			int32_t raw_y = data->point.y;
+
+			// The seam correction comes before the smoothing: the filter should
+			// see one continuous coordinate, not a step. Only Y is compensated:
+			// the capture shows the discontinuity there and nowhere in X.
+			bool seam_zone = raw_y >= TOUCH_SEAM_Y_MIN && raw_y <= TOUCH_SEAM_Y_MAX;
+			int32_t seam_y = touch_seam_axis(&touch_seam_y, raw_y, 'Y', seam_zone);
 			data->point.x = touch_filter_axis(raw_x, &touch_filter.x_q8);
-			data->point.y = touch_filter_axis(raw_y, &touch_filter.y_q8);
+			data->point.y = touch_filter_axis(seam_y, &touch_filter.y_q8);
 
 			if (debug_enabled() && touch_diag.active) {
 				int32_t lag_x = raw_x - data->point.x;
@@ -2532,10 +2673,10 @@ static void touch_filter_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
 		if (debug_enabled() && touch_diag.active) {
 			if (touch_diag.moves > 0) {
 				DEBUG_ERR("input: touch %u moves in %u reads, first move %u ms, max step %u px at %u ms, "
-						  "max move gap %u ms, max read gap %u ms, filter snaps %u, max lag %u px\n",
+						  "max move gap %u ms, max read gap %u ms, filter snaps %u, seam fixes %u, max lag %u px\n",
 						  touch_diag.moves, touch_diag.reads, touch_diag.first_move_at, touch_diag.max_step,
 						  touch_diag.max_step_at, touch_diag.max_gap, touch_diag.max_read_gap, touch_diag.snaps,
-						  touch_diag.max_lag);
+						  touch_seam_fixes, touch_diag.max_lag);
 			}
 			touch_diag.active = false;
 		}
