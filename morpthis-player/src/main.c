@@ -971,6 +971,15 @@ static void install_signal_guards(void) {
 #define SCROLL_THROW_DECAY_PCT 5
 #define SCROLL_START_LIMIT_PX 4
 
+// The display refreshes at LV_DEF_REFR_PERIOD (16 ms), but the pointer is read
+// faster while a finger is down. lv_evdev drains every queued event and exposes
+// only the latest point; at one read per display frame a controller that reports
+// in bursts loses the positions in between and a slow scroll moves in visible
+// steps. Sampling at 8 ms keeps those points apart; idle returns to 16 ms so the
+// device does not wake twice as often with nothing to read.
+#define POINTER_ACTIVE_READ_PERIOD_MS 8
+#define POINTER_IDLE_READ_PERIOD_MS 16
+
 // ---------------------------------------------------------------------------
 // A drag is not a tap.
 // ---------------------------------------------------------------------------
@@ -1022,11 +1031,36 @@ static void tune_kinetic_scroll(lv_indev_t *indev) {
 }
 
 // Kinetic scrolling and the tap guard, for the touch panel and the simulator mouse.
+// Speed the pointer reads up only while a press is active. The read timer is
+// what drains evdev, so the press has to raise the rate before the gesture can
+// become a scroll.
+static void pointer_pace_cb(lv_event_t *e) {
+	lv_indev_t *indev = lv_indev_active();
+	if (!indev || lv_indev_get_type(indev) != LV_INDEV_TYPE_POINTER) {
+		return;
+	}
+	lv_timer_t *read_timer = lv_indev_get_read_timer(indev);
+	if (!read_timer) {
+		return;
+	}
+	lv_event_code_t code = lv_event_get_code(e);
+	if (code == LV_EVENT_PRESSED) {
+		lv_timer_set_period(read_timer, POINTER_ACTIVE_READ_PERIOD_MS);
+	} else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+		lv_timer_set_period(read_timer, POINTER_IDLE_READ_PERIOD_MS);
+	}
+}
+
 static void tune_pointer(lv_indev_t *indev) {
 	if (!indev) {
 		return;
 	}
 	tune_kinetic_scroll(indev);
+	lv_timer_t *read_timer = lv_indev_get_read_timer(indev);
+	if (read_timer) {
+		lv_timer_set_period(read_timer, POINTER_IDLE_READ_PERIOD_MS);
+	}
+	lv_indev_add_event_cb(indev, pointer_pace_cb, LV_EVENT_ALL, NULL);
 	lv_indev_add_event_cb(indev, tap_guard_cb, LV_EVENT_ALL, NULL);
 }
 
