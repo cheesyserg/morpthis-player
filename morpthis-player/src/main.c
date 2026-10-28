@@ -1,4 +1,7 @@
 #include "lvgl/lvgl.h"
+// Read-only diagnostics: the pressed object's focus flag and the release throw
+// vector. Both are what LVGL itself acts on; neither is changed here.
+#include "lvgl/src/indev/lv_indev_private.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -1083,6 +1086,10 @@ static void pointer_pace_cb(lv_event_t *e) {
 		if (!debug_enabled()) {
 			return;
 		}
+		lv_obj_t *pressed = indev->pointer.act_obj;
+		if (pressed && lv_obj_is_click_focusable(pressed) && lv_obj_is_scroll_on_focus(pressed)) {
+			DEBUG_ERR("input: pressed object still has scroll_on_focus set\n");
+		}
 		drag_stats.active = true;
 		lv_indev_get_point(indev, &drag_stats.press_at);
 		drag_stats.last_point = drag_stats.press_at;
@@ -1096,6 +1103,13 @@ static void pointer_pace_cb(lv_event_t *e) {
 		drag_stats.presented_start = presented_frames;
 	} else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
 		lv_timer_set_period(read_timer, POINTER_IDLE_READ_PERIOD_MS);
+		if (debug_enabled() && indev->pointer.scroll_obj) {
+			int32_t throw_x = lv_indev_scroll_throw_predict(indev, LV_DIR_HOR);
+			int32_t throw_y = lv_indev_scroll_throw_predict(indev, LV_DIR_VER);
+			if (throw_x > 8 || throw_x < -8 || throw_y > 8 || throw_y < -8) {
+				DEBUG_ERR("input: release throw predict x=%d y=%d\n", (int)throw_x, (int)throw_y);
+			}
+		}
 		if (!drag_stats.active) {
 			return;
 		}
@@ -2287,6 +2301,37 @@ static bool input_bit(const unsigned long *bits, int bit) {
 	return (bits[bit / (8 * (int)sizeof(long))] >> (bit % (8 * (int)sizeof(long)))) & 1UL;
 }
 
+// What the panel actually reports for its axes. A controller whose native range
+// is only a few hundred counts has a coarser grid than the 240x320 glass; a
+// low-resolution axis walks in steps no filter can turn into 1:1 motion, and a
+// wrong min/max turns a scale error into a diagonal one after calibration.
+static void log_touch_abs(const char *node) {
+	int fd = open(node, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+	if (fd < 0) {
+		return;
+	}
+
+	static const struct {
+		int code;
+		const char *name;
+	} axes[] = {
+		{ABS_X, "ABS_X"},
+		{ABS_Y, "ABS_Y"},
+		{ABS_PRESSURE, "ABS_PRESSURE"},
+		{ABS_MT_POSITION_X, "ABS_MT_POSITION_X"},
+		{ABS_MT_POSITION_Y, "ABS_MT_POSITION_Y"},
+		{ABS_MT_PRESSURE, "ABS_MT_PRESSURE"},
+	};
+	for (size_t i = 0; i < sizeof(axes) / sizeof(axes[0]); i++) {
+		struct input_absinfo info;
+		if (ioctl(fd, EVIOCGABS(axes[i].code), &info) == 0) {
+			printf("input: %s %s min=%d max=%d fuzz=%d flat=%d resolution=%d\n", node, axes[i].name, (int)info.minimum,
+				   (int)info.maximum, (int)info.fuzz, (int)info.flat, (int)info.resolution);
+		}
+	}
+	close(fd);
+}
+
 static bool find_touch_node(char *out, size_t out_size) {
 	for (int waited = 0; waited <= TOUCH_PROBE_WAIT_MS; waited += 100) {
 		int fallback = -1;
@@ -2349,7 +2394,11 @@ static bool find_touch_node(char *out, size_t out_size) {
 #define TOUCH_FILTER_SLOW 160 // 0.625 of the remaining distance per report
 #define TOUCH_FILTER_FAST 232 // 0.906, for a deliberate movement
 #define TOUCH_FILTER_FAST_PX 8
-#define TOUCH_FILTER_SNAP_PX 18
+// A jump this large is a discontinuity, not a finger moving: a lift and a new
+// press, a palm, or a driver reset. It was 18 px; that is inside the range a
+// normal swipe reaches when the panel reports in bursts, and snapping there is
+// itself a visible jump. Keep the escape hatch for a real discontinuity.
+#define TOUCH_FILTER_SNAP_PX 64
 #define TOUCH_FILTER_ROUND 64 // quarter-pixel bias, so a 1 px step still moves
 
 typedef struct {
@@ -2361,6 +2410,24 @@ typedef struct {
 static touch_filter_t touch_filter;
 static lv_indev_read_cb_t touch_raw_read_cb;
 
+// What the panel actually delivered during one press. The point handed to the
+// filter is already calibrated by lv_evdev; this is what LVGL would have seen
+// without any smoothing. max_step against max_gap says whether a jump came from
+// the panel (large step in a short gap) or from the UI having been busy (large
+// gap). snaps says whether the smoothing itself jumped.
+static struct {
+	bool active;
+	lv_point_t last;
+	uint32_t started_tick;
+	uint32_t last_tick;
+	uint32_t moves;
+	uint32_t max_step;
+	uint32_t max_step_at;
+	uint32_t max_gap;
+	uint32_t snaps;
+	uint32_t max_lag;
+} touch_diag;
+
 static int32_t touch_filter_axis(int32_t raw, int32_t *q8) {
 	int32_t want = raw << TOUCH_FILTER_Q;
 	int32_t diff = want - *q8;
@@ -2369,6 +2436,9 @@ static int32_t touch_filter_axis(int32_t raw, int32_t *q8) {
 
 	if (distance_px >= TOUCH_FILTER_SNAP_PX) {
 		*q8 = want;
+		if (debug_enabled()) {
+			touch_diag.snaps++;
+		}
 	} else {
 		int32_t alpha = distance_px >= TOUCH_FILTER_FAST_PX ? TOUCH_FILTER_FAST : TOUCH_FILTER_SLOW;
 		*q8 += (diff * alpha) >> TOUCH_FILTER_Q;
@@ -2386,9 +2456,50 @@ static void touch_filter_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
 			touch_filter.pressed = true;
 			touch_filter.x_q8 = data->point.x << TOUCH_FILTER_Q;
 			touch_filter.y_q8 = data->point.y << TOUCH_FILTER_Q;
+
+			if (debug_enabled()) {
+				memset(&touch_diag, 0, sizeof(touch_diag));
+				touch_diag.active = true;
+				touch_diag.last = data->point;
+				touch_diag.started_tick = lv_tick_get();
+				touch_diag.last_tick = touch_diag.started_tick;
+			}
 		} else {
-			data->point.x = touch_filter_axis(data->point.x, &touch_filter.x_q8);
-			data->point.y = touch_filter_axis(data->point.y, &touch_filter.y_q8);
+			if (debug_enabled() && touch_diag.active) {
+				int32_t dx = data->point.x - touch_diag.last.x;
+				int32_t dy = data->point.y - touch_diag.last.y;
+				uint32_t step_x = (uint32_t)(dx < 0 ? -dx : dx);
+				uint32_t step_y = (uint32_t)(dy < 0 ? -dy : dy);
+				uint32_t step = step_x > step_y ? step_x : step_y;
+				if (step > 0) {
+					uint32_t now = lv_tick_get();
+					uint32_t gap = now - touch_diag.last_tick;
+					touch_diag.moves++;
+					if (step > touch_diag.max_step) {
+						touch_diag.max_step = step;
+						touch_diag.max_step_at = now - touch_diag.started_tick;
+					}
+					if (gap > touch_diag.max_gap) {
+						touch_diag.max_gap = gap;
+					}
+					touch_diag.last = data->point;
+					touch_diag.last_tick = now;
+				}
+			}
+
+			int32_t raw_x = data->point.x;
+			int32_t raw_y = data->point.y;
+			data->point.x = touch_filter_axis(raw_x, &touch_filter.x_q8);
+			data->point.y = touch_filter_axis(raw_y, &touch_filter.y_q8);
+
+			if (debug_enabled() && touch_diag.active) {
+				int32_t lag_x = raw_x - data->point.x;
+				int32_t lag_y = raw_y - data->point.y;
+				uint32_t lag = (uint32_t)((lag_x < 0 ? -lag_x : lag_x) + (lag_y < 0 ? -lag_y : lag_y));
+				if (lag > touch_diag.max_lag) {
+					touch_diag.max_lag = lag;
+				}
+			}
 		}
 	} else if (touch_filter.pressed) {
 		// Finish on the filtered position rather than snapping to the last raw
@@ -2397,6 +2508,15 @@ static void touch_filter_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
 		data->point.x = (touch_filter.x_q8 + TOUCH_FILTER_ROUND) >> TOUCH_FILTER_Q;
 		data->point.y = (touch_filter.y_q8 + TOUCH_FILTER_ROUND) >> TOUCH_FILTER_Q;
 		touch_filter.pressed = false;
+
+		if (debug_enabled() && touch_diag.active) {
+			if (touch_diag.moves > 0) {
+				DEBUG_ERR("input: touch %u moves, max step %u px at %u ms, max gap %u ms, filter snaps %u, max lag %u px\n",
+						  touch_diag.moves, touch_diag.max_step, touch_diag.max_step_at, touch_diag.max_gap,
+						  touch_diag.snaps, touch_diag.max_lag);
+			}
+			touch_diag.active = false;
+		}
 	}
 }
 
@@ -2459,6 +2579,9 @@ static lv_display_t *init_target_display(void) {
 		tune_pointer(touch);
 		touch_filter_install(touch);
 		fb_touch = touch;
+		if (fb_touch_node[0]) {
+			log_touch_abs(fb_touch_node);
+		}
 		printf("Touch screen input driver successfully registered.\n");
 	} else {
 		fprintf(stderr, "Warning: No touch input device found.\n");

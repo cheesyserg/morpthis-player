@@ -21,6 +21,7 @@
 #include "src/gui/shell/settingsrow.h"
 #include "src/gui/nowplaying/trackmenu.h"
 #include "src/system/core/config.h"
+#include "src/system/core/debug.h"
 #include "src/system/playback/device_state.h"
 #include "src/system/core/lang.h"
 #include "src/system/playback/playlist.h"
@@ -251,6 +252,15 @@ typedef struct {
 	// the strip's rather than the page's. Until it has, nothing moves.
 	lv_point_t index_press;
 	bool index_engaged;
+
+	// Debug tracing: the scroll position seen at the previous scroll event of
+	// a press, and the A-Z strip's own gesture state. Used only by the
+	// diagnostics below; see scroll_cb() and index_bar_cb().
+	int trace_scroll;
+	bool trace_valid;
+	uint32_t trace_log_at;
+	bool index_pressed;
+	bool index_trace_reported;
 
 	// Selection mode, on the lists panel_selectable() allows: a long press on
 	// a row starts it, taps then choose rows, and the corner holds the way out
@@ -513,7 +523,9 @@ static void panel_refresh_stale(panel_t *p) {
 	library_index_close(p->ix);
 	p->ix = fresh;
 	p->play_counts_rev = library_play_counts_revision();
+	int old_count = p->count;
 	p->count = library_index_count(fresh);
+	DEBUG_ERR("medialist: index reload %d -> %d rows\n", old_count, p->count);
 	p->window_first = -1;
 	p->window_count = 0;
 
@@ -1634,6 +1646,9 @@ static void window_update(panel_t *p) {
 	}
 
 	int first = pool_first_for(p);
+	if (debug_enabled() && p->pool_first >= 0 && first != p->pool_first) {
+		DEBUG_ERR("medialist: band %d -> %d at scroll %d\n", p->pool_first, first, lv_obj_get_scroll_y(p->list));
+	}
 
 	// index -> widget index % ROW_POOL, so a one-step slide of the band
 	// rebinds exactly one row instead of renaming all of them.
@@ -1953,6 +1968,13 @@ static void index_go(panel_t *p, int slot) {
 		return;
 	}
 
+	// One line per press on the strip: this is the only place in the player
+	// that moves a list by a fixed number of rows on its own.
+	if (p->index_pressed && !p->index_trace_reported) {
+		p->index_trace_reported = true;
+		DEBUG_ERR("medialist: A-Z jump slot=%d row=%d scroll=%d\n", slot, row, lv_obj_get_scroll_y(p->list));
+	}
+
 	lv_obj_scroll_to_y(p->list, row * ROW_PITCH, LV_ANIM_OFF);
 	p->saved_scroll = lv_obj_get_scroll_y(p->list);
 	window_update(p);
@@ -2025,6 +2047,7 @@ static void index_bar_cb(lv_event_t *e) {
 		}
 		p->index_hint_at = lv_tick_get(); // from here the big letter fades out
 		p->index_engaged = false;
+		p->index_pressed = false;
 		return;
 	}
 
@@ -2040,6 +2063,9 @@ static void index_bar_cb(lv_event_t *e) {
 	if (code == LV_EVENT_PRESSED) {
 		p->index_press = point;
 		p->index_engaged = false;
+		p->index_pressed = true;
+		p->index_trace_reported = false;
+		DEBUG_ERR("medialist: A-Z press x=%d y=%d\n", point.x, point.y);
 		return;
 	}
 	if (code != LV_EVENT_PRESSING) {
@@ -2056,6 +2082,7 @@ static void index_bar_cb(lv_event_t *e) {
 			return; // not enough to tell yet
 		}
 		p->index_engaged = true;
+		DEBUG_ERR("medialist: A-Z engaged x=%d y=%d dx=%d dy=%d\n", point.x, point.y, dx, dy);
 	}
 
 	index_go_at(p, point);
@@ -2282,9 +2309,63 @@ static void index_build(panel_t *p, gui_config_t *cfg) {
 	index_guard_note(p);
 }
 
+// Bookends for the diagnostic in scroll_cb(): a gesture starts with a known
+// scroll position, so a change that does not match the finger can be named.
+static void scroll_state_cb(lv_event_t *e) {
+	panel_t *p = lv_event_get_user_data(e);
+	lv_event_code_t code = lv_event_get_code(e);
+
+	p->trace_valid = false;
+	p->index_trace_reported = false;
+	if (!debug_enabled()) {
+		return;
+	}
+
+	int scroll = lv_obj_get_scroll_y(p->list);
+	if (code == LV_EVENT_SCROLL_BEGIN) {
+		lv_point_t point = {0, 0};
+		lv_indev_t *indev = lv_indev_active();
+		if (indev) {
+			lv_indev_get_point(indev, &point);
+		}
+		DEBUG_ERR("medialist: scroll begin x=%d y=%d scroll=%d count=%d\n", point.x, point.y, scroll, p->count);
+	} else {
+		DEBUG_ERR("medialist: scroll end scroll=%d\n", scroll);
+	}
+}
+
 static void scroll_cb(lv_event_t *e) {
 	panel_t *p = lv_event_get_user_data(e);
-	p->saved_scroll = lv_obj_get_scroll_y(p->list);
+	int scroll = lv_obj_get_scroll_y(p->list);
+
+	// If the list moved by anything other than the finger's own delta while the
+	// finger is down, say so. The usual innocent answer is a clamp at an edge;
+	// a scrolling jump is the other. lv_indev_get_vect() is the vector that
+	// LVGL just applied, so the two should agree to the pixel.
+	if (debug_enabled()) {
+		lv_indev_t *indev = lv_indev_active();
+		if (indev && lv_indev_get_state(indev) == LV_INDEV_STATE_PRESSED) {
+			lv_point_t vect;
+			lv_indev_get_vect(indev, &vect);
+			if (p->trace_valid) {
+				int dy = scroll - p->trace_scroll;
+				if (dy != 0 && (dy > vect.y + 2 || dy < vect.y - 2)) {
+					if (lv_tick_elaps(p->trace_log_at) > 150) {
+						p->trace_log_at = lv_tick_get();
+						DEBUG_ERR("medialist: scroll anomaly y=%d dy=%d vect=%d top=%d bottom=%d first=%d\n", scroll,
+								  dy, vect.y, lv_obj_get_scroll_top(p->list), lv_obj_get_scroll_bottom(p->list),
+								  p->pool_first);
+					}
+				}
+			}
+			p->trace_scroll = scroll;
+			p->trace_valid = true;
+		} else {
+			p->trace_valid = false;
+		}
+	}
+
+	p->saved_scroll = scroll;
 	index_flash(p);
 
 	// The rows are on a fixed canvas and move with the list, so nothing has to
@@ -3395,6 +3476,8 @@ static void build_panel(panel_t *p, gui_config_t *cfg, bool is_tracks, int slot_
 	lv_obj_set_style_pad_ver(p->list, 0, 0);
 	lv_obj_set_scroll_dir(p->list, LV_DIR_VER);
 	lv_obj_set_scrollbar_mode(p->list, LV_SCROLLBAR_MODE_AUTO);
+	lv_obj_add_event_cb(p->list, scroll_state_cb, LV_EVENT_SCROLL_BEGIN, p);
+	lv_obj_add_event_cb(p->list, scroll_state_cb, LV_EVENT_SCROLL_END, p);
 	lv_obj_add_event_cb(p->list, scroll_cb, LV_EVENT_SCROLL, p);
 
 	p->body = lv_obj_create(p->list);
