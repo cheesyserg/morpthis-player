@@ -2432,6 +2432,16 @@ static lv_indev_read_cb_t touch_raw_read_cb;
 // crossings.  Requiring two small reports first (the first version) missed
 // them too.
 //
+// A press has two jobs, and the seam means they want different maps.  While it
+// moves it scrolls, and only the deltas matter: an absolute error of half a band
+// is invisible.  When it lifts as a tap, the point itself picks the row, and a
+// held coordinate would pick a row up to a band away from the finger.  So the
+// crossing above is compensated in the delta domain, and the press point is
+// additionally placed at the middle of the band: a tap that lands on either
+// held value is then at most half a band from the finger, not a whole one.  The
+// offset is held for the whole gesture so the filtered point does not drift
+// back toward the plateau and turn a tap into a drag.
+//
 // Only Y is compensated: the capture shows the discontinuity there and nowhere
 // in X.
 // ---------------------------------------------------------------------------
@@ -2446,12 +2456,22 @@ static lv_indev_read_cb_t touch_raw_read_cb;
 #define TOUCH_SEAM_FOLD 28     // the band's own width
 #define TOUCH_SEAM_RELAX 2     // counts per report back toward the true position
 
+// The two values the panel holds while the finger is inside the band.  They are
+// what a tap lands on when the finger happens to be in the seam, so both are
+// treated as the middle of the band.
+#define TOUCH_SEAM_PLATEAU_LO 140
+#define TOUCH_SEAM_PLATEAU_HI 166
+#define TOUCH_SEAM_TAP_SNAP 4 // captured held values stay within 3 of these
+
 typedef struct {
 	int32_t prev_raw;
 	int32_t prev_out;
 	int32_t offset;
 	int32_t lo;
 	int32_t hi;
+	int32_t tap_lo;
+	int32_t tap_hi;
+	int32_t tap_offset;
 } touch_seam_t;
 
 static touch_seam_t touch_seam_y;
@@ -2483,9 +2503,13 @@ static void touch_seam_reset(touch_seam_t *s, int32_t y) {
 	if (display_get_rotated()) {
 		s->lo = last - TOUCH_SEAM_BAND_HI;
 		s->hi = last - TOUCH_SEAM_BAND_LO;
+		s->tap_lo = last - TOUCH_SEAM_PLATEAU_HI;
+		s->tap_hi = last - TOUCH_SEAM_PLATEAU_LO;
 	} else {
 		s->lo = TOUCH_SEAM_BAND_LO;
 		s->hi = TOUCH_SEAM_BAND_HI;
+		s->tap_lo = TOUCH_SEAM_PLATEAU_LO;
+		s->tap_hi = TOUCH_SEAM_PLATEAU_HI;
 	}
 
 	// Once per orientation, so a hardware report shows the band this build is
@@ -2495,6 +2519,20 @@ static void touch_seam_reset(touch_seam_t *s, int32_t y) {
 		touch_seam_logged_hi = s->hi;
 		DEBUG_ERR("input: seam band %d..%d (rotated=%d)\n", s->lo, s->hi, display_get_rotated());
 	}
+}
+
+// The offset that puts a held value at the middle of the band.  Zero for a
+// press that did not land on a plateau, which is most of them.
+static int32_t touch_seam_tap_offset(const touch_seam_t *s, int32_t y) {
+	int32_t d = y - s->tap_lo;
+	if (d >= -TOUCH_SEAM_TAP_SNAP && d <= TOUCH_SEAM_TAP_SNAP) {
+		return (s->tap_lo + s->tap_hi) / 2 - y;
+	}
+	d = y - s->tap_hi;
+	if (d >= -TOUCH_SEAM_TAP_SNAP && d <= TOUCH_SEAM_TAP_SNAP) {
+		return (s->tap_lo + s->tap_hi) / 2 - y;
+	}
+	return 0;
 }
 
 static int32_t touch_seam_axis(touch_seam_t *s, int32_t raw) {
@@ -2528,7 +2566,7 @@ static int32_t touch_seam_axis(touch_seam_t *s, int32_t raw) {
 	}
 
 	s->prev_raw = raw;
-	s->prev_out = raw + s->offset;
+	s->prev_out = raw + s->offset + s->tap_offset;
 	touch_seam_relax(s);
 	return s->prev_out;
 }
@@ -2591,6 +2629,22 @@ static void touch_filter_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
 		}
 
 		if (!touch_filter.pressed) {
+			int32_t raw_press_y = data->point.y;
+
+			// A tap has no direction to disambiguate the seam with, so a press
+			// that landed on a held value is placed at the middle of the band.
+			// The offset stays for the whole gesture; touch_seam_axis() adds it
+			// to every report so the point cannot ease back to the plateau.
+			touch_seam_reset(&touch_seam_y, raw_press_y);
+			touch_seam_fixes = 0;
+			touch_seam_y.tap_offset = touch_seam_tap_offset(&touch_seam_y, raw_press_y);
+			data->point.y = raw_press_y + touch_seam_y.tap_offset;
+			touch_seam_y.prev_out = data->point.y;
+			if (debug_enabled() && touch_seam_y.tap_offset != 0) {
+				DEBUG_ERR("input: tap Y raw=%d mapped=%d (held %d/%d)\n", raw_press_y, data->point.y,
+						  touch_seam_y.tap_lo, touch_seam_y.tap_hi);
+			}
+
 			// The press point is the tap point; do not ease into it.
 			touch_filter.pressed = true;
 			touch_filter.x_q8 = data->point.x << TOUCH_FILTER_Q;
@@ -2600,12 +2654,11 @@ static void touch_filter_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
 				memset(&touch_diag, 0, sizeof(touch_diag));
 				touch_diag.active = true;
 				touch_diag.last = data->point;
+				touch_diag.last.y = raw_press_y; // diagnostics measure the panel
 				touch_diag.started_tick = read_tick;
 				touch_diag.last_tick = read_tick;
 				touch_diag.last_read_tick = read_tick;
 			}
-			touch_seam_reset(&touch_seam_y, data->point.y);
-			touch_seam_fixes = 0;
 		} else {
 			if (debug_enabled() && touch_diag.active) {
 				int32_t dx = data->point.x - touch_diag.last.x;
