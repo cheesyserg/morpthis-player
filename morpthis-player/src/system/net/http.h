@@ -44,7 +44,7 @@ bool http_get(const char *url, char **out, size_t *out_len, size_t limit, int ti
 // The same, for callers talking to an API rather than a radio station.
 //
 //   extra_headers   lines already terminated with "\r\n", one per header, or
-//                   NULL. Qobuz wants the app credentials in there.
+//                   NULL. APIs that need credentials put them in there.
 //   want_error_body true keeps the body of a 4xx instead of discarding it: that
 //                   is where an API says why it refused, which is what should
 //                   be shown instead of a generic failure. 5xx and empty bodies
@@ -64,8 +64,8 @@ const char *http_last_final_url(void);
 // ---------------------------------------------------------------------------
 // Requests that are not GET
 //
-// Qobuz gets by with GET alone -- even adding a favourite is a GET with query
-// parameters, which is their choice. Tidal does not: login is a POST with a
+// Some APIs get by with GET alone -- even a write may be a GET with query
+// parameters, which is their choice. Others do not: login is a POST with a
 // form body, favourites are written with POST and removed with DELETE, and a
 // successful DELETE answers 204 with no body.
 //
@@ -88,7 +88,7 @@ typedef struct {
 	size_t body_len;
 
 	// The body's type. NULL with a body present means
-	// "application/x-www-form-urlencoded", which is what both Tidal's login
+	// "application/x-www-form-urlencoded", which is what a form login
 	// endpoint and its writes expect.
 	const char *content_type;
 

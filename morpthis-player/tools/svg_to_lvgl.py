@@ -15,11 +15,14 @@ Two kinds of icon come out of this:
   * SVGs are emitted as ARGB8888 *white* shapes. The colour comes from LVGL at
     draw time via `lv_obj_set_style_image_recolor()`, so the same bitmap serves
     an active and an inactive button.
-  * PNGs are emitted with their own colours intact, for artwork that is not a
-    single-colour glyph -- the main menu tiles.
+  * The main menu and section tiles keep their own colours, listed separately
+    below with the ink each one is drawn in. They use the same source SVGs with
+    `currentColor` replaced by that ink before rasterising.
 """
 
+import io
 import os
+import re
 import sys
 
 try:
@@ -69,8 +72,8 @@ ICONS = [
     ("repeat-off.svg", "repeat_off", 30),
     ("play.svg", "play", 40),
     ("pause.svg", "pause", 40),
-    # A live stream has no position to come back to, so on a radio the same
-    # button stops. Smaller than play/pause: a solid square of the same side
+    # App audio has no position to come back to, so the SDK's stop control uses
+    # the same button. Smaller than play/pause: a solid square of the same side
     # reads heavier than either of them.
     ("stop.svg", "stop", 34),
     # The status bar's playback indicator, from its own outlined glyphs: the
@@ -93,9 +96,8 @@ ICONS = [
     ("skip-back.svg", "skip_back_large", 42),
     ("skip-forward.svg", "skip_forward_large", 42),
     ("music-note.svg", "music_note", 128),
-    # Placeholders that swap in for the music note in the same box: a radio
-    # station, an AirPlay sender and a DLNA renderer are not tracks.
-    ("radio-player.svg", "radio_player", 128),
+    # Placeholders that swap in for the music note in the same box: an AirPlay
+    # sender and a DLNA renderer are not tracks.
     ("airplay-page-icon.svg", "airplay_page", 128),
     ("dlna-page-icon.svg", "dlna_page", 128),
     # Status bar. The charging shell and its bolt are separate bitmaps so the
@@ -116,10 +118,7 @@ ICONS = [
     # not there: they ride inside the 72 px thumbnail box on a library row and
     # the 56 px one on a search hit.
     ("music-2.svg", "music2", 32),
-    ("tidal-mark.svg", "tidal_mark", 32),  # Tokyo Night's letter-only streaming mark
-    ("qobuz-mark.svg", "qobuz_mark", 32),
     ("artist.svg", "artist", 32),
-    ("podcast-list.svg", "podcast_list", 40), # 40 px for the 60 px podcast rows
     ("artist-album.svg", "artist_album", 32),
     ("genre.svg", "genre", 32),
     ("album.svg", "album", 32),
@@ -154,7 +153,6 @@ ICONS = [
     ("list-x.svg", "list_x", 34),
     ("star-x.svg", "star_x", 34),
     ("search.svg", "search", 34),
-    ("podcast-downloaded.svg", "podcast_downloaded", 34), # podcasts corner: the downloaded episodes
     ("wifi.svg", "wifi", 46),
     ("bluetooth.svg", "bluetooth", 46),
     # Status bar radios. The wifi glyph is the same arc with none, one, two or
@@ -213,7 +211,6 @@ ICONS = [
     # stopping one from the control centre must not stop another.
     ("sleep-timer-music.svg", "sleep_music_quick", 46),
     ("sleep-timer-audiobook.svg", "sleep_audiobook_quick", 46),
-    ("sleep-timer-podcast.svg", "sleep_podcast_quick", 46),
     # Gapless: two drawings and not one recoloured, because what changes is
     # the gap itself -- the two halves apart while off, closed up while on.
     ("gapless-on-quick.svg", "gapless_on_quick", 46),
@@ -245,9 +242,6 @@ ICONS = [
     ("circle-alert.svg", "circle_alert", 64), # ...and what a failure shows instead
     ("book-headphones.svg", "book_headphones", 128),
     ("book-headphones.svg", "book_headphones_row", 64), # audiobook rows with no cover
-    # The same glyph the podcast rows use, at the size the three the player
-    # stands in with are drawn: an episode with no artwork gets this one.
-    ("podcast-list.svg", "podcast_cover", 128),
     # Player extras. Shuffle and shuffle-repeat share a button.
     ("shuffle.svg", "shuffle", 30),
     ("shuffle-repeat.svg", "shuffle_repeat", 30),
@@ -262,12 +256,6 @@ ICONS = [
     ("heart-outline.svg", "heart_outline", 32),
     ("heart.svg", "heart_filled", 32),
     ("star.svg", "star_corner", 34),
-    ("radio-recent.svg", "radio_recent", 34), # stations played most recently
-    ("custom-radio.svg", "radio_custom", 34), # the stations written into radio.txt
-    # Under a station's name: the stream's quality, one glyph in four colours
-    # that follow the theme, so white like the rest of this list and tinted by
-    # the page (radiopage.c). The size of the track rows' quality badges.
-    ("radio-quality.svg", "radio_quality", 26),
     ("refresh.svg", "refresh", 34), # the Processes page's refresh
     # Audiobook transport: the four jumps the two buttons can be set to, plus
     # the chapter list. Which pair is on screen follows Settings -> Audiobooks
@@ -278,17 +266,12 @@ ICONS = [
     ("next_30.svg", "next_30", 50),
     ("prev_60.svg", "prev_60", 50),
     ("next_60.svg", "next_60", 50),
-    ("chapter.svg", "chapter", 34),
-    # The same place on a podcast, where the queue is the episode list.
-    ("podcast-episodes.svg", "podcast_episodes", 34),
     # The playback-speed gauge, in the repeat button's place while a book plays.
     ("play-speed.svg", "play_speed", 34),
     # The DAC page's charging toggle.
     ("zap.svg", "zap", 34),
     ("zap-off.svg", "zap_off", 34),
-    # Corner buttons: Qobuz quality and sign-out, the remap page's side swap,
-    # and Gearboy's two save states.
-    ("qobuz-quality.svg", "qobuz_quality", 34),
+    # Corner buttons: the remap page's side swap, and Gearboy's two save states.
     ("log-out.svg", "log_out", 34),
     ("swap-remap.svg", "swap_remap", 34),
     ("save-state.svg", "save_state", 34),
@@ -366,61 +349,50 @@ SECTION_ICON_SIZE = 112
 COLOR_ICONS = [
     # The quality badges under a track's title. Here rather than above because
     # the four are one shape in four colours -- teal, olive, amber, magenta --
-    # and the white rendering would make them one icon repeated.
-    ("lossy-quality.svg", "quality_lossy", 26),
-    ("cd-quality.svg", "quality_cd", 26),
-    ("hifi-quality.svg", "quality_hifi", 26),
-    ("dsd-quality.svg", "quality_dsd", 26),
+    # and the white rendering would make them one icon repeated. Their SVGs
+    # carry the ink themselves.
+    ("lossy-quality.svg", "quality_lossy", 26, None),
+    ("cd-quality.svg", "quality_cd", 26, None),
+    ("hifi-quality.svg", "quality_hifi", 26, None),
+    ("dsd-quality.svg", "quality_dsd", 26, None),
 
     # The three pages where the player stops being a player.
-    ("dac-icon-page.png", "dac_page", 200),
-    ("sonixlink-icon-page.png", "sonixlink_page", 200),
-    ("bluetooth-receiver-icon-page.png", "bluetooth_receiver_page", 200),
+    ("usb-audio-out.svg", "dac_page", 200, "#00b0d6"),
+    ("sonixlink-status.svg", "sonixlink_page", 200, "#e5a50a"),
+    ("bluetooth-receiver.svg", "bluetooth_receiver_page", 200, "#9141ac"),
 
-    ("music.png", "menu_music", MAIN_MENU_ICON_SIZE),
-    # The Musica section's own grid.
-    ("all.png", "menu_all", SECTION_ICON_SIZE),
-    ("album.png", "menu_album", SECTION_ICON_SIZE),
-    ("artist.png", "menu_artist", SECTION_ICON_SIZE),
-    ("album_artist.png", "menu_album_artist", SECTION_ICON_SIZE),
-    ("genre.png", "menu_genre", SECTION_ICON_SIZE),
-    ("explorer.png", "menu_explorer", SECTION_ICON_SIZE),
+    # Main menu and section tiles. One simple line glyph per destination, drawn
+    # in the destination's own semantic ink.
+    ("music-2.svg", "menu_music", MAIN_MENU_ICON_SIZE, "#e5a50a"),
+    # The Music section's own grid.
+    ("list-music.svg", "menu_all", SECTION_ICON_SIZE, "#00b0d6"),
+    ("album.svg", "menu_album", SECTION_ICON_SIZE, "#9141ac"),
+    ("artist.svg", "menu_artist", SECTION_ICON_SIZE, "#2ec27e"),
+    ("artist-album.svg", "menu_album_artist", SECTION_ICON_SIZE, "#3584e4"),
+    ("genre.svg", "menu_genre", SECTION_ICON_SIZE, "#e5a50a"),
+    ("folder.svg", "menu_explorer", SECTION_ICON_SIZE, "#2ec27e"),
     # The tile Explorer swaps with when playlists are put first.
-    ("playlist.png", "menu_playlist", SECTION_ICON_SIZE),
-    ("year.png", "menu_year", SECTION_ICON_SIZE),
-    ("most_played.png", "menu_most_played", SECTION_ICON_SIZE),
-    ("streaming.png", "menu_streaming", MAIN_MENU_ICON_SIZE),
-    ("wireless.png", "menu_wireless", MAIN_MENU_ICON_SIZE),
+    ("files-playlist.svg", "menu_playlist", SECTION_ICON_SIZE, "#00b0d6"),
+    ("year.svg", "menu_year", SECTION_ICON_SIZE, "#e5a50a"),
+    ("most-played.svg", "menu_most_played", SECTION_ICON_SIZE, "#9141ac"),
+    ("wifi-high.svg", "menu_wireless", MAIN_MENU_ICON_SIZE, "#3584e4"),
     # The Wireless section's own grid.
-    ("wifi-settings.png", "menu_wifi_settings", SECTION_ICON_SIZE),
-    ("bluetooth.png", "menu_bluetooth", SECTION_ICON_SIZE),
-    ("airplay.png", "menu_airplay", SECTION_ICON_SIZE),
-    ("wifi-transfer.png", "menu_wifi_transfer", SECTION_ICON_SIZE),
-    ("sonixlink.png", "menu_sonixlink", SECTION_ICON_SIZE),
-    ("dlna.png", "menu_dlna", SECTION_ICON_SIZE),
-    # The Streaming section's own grid.
-    ("tidal.png", "menu_tidal", SECTION_ICON_SIZE),
-    ("qobuz.png", "menu_qobuz", SECTION_ICON_SIZE),
-    ("radio.png", "menu_radio", SECTION_ICON_SIZE),
-    ("podcast.png", "menu_podcast", SECTION_ICON_SIZE),
-    ("audiobooks.png", "menu_audiobooks", MAIN_MENU_ICON_SIZE),
-    ("audiobook-library.png", "menu_audiobook_library", SECTION_ICON_SIZE),
-    ("audiobook-series.png", "menu_audiobook_series", SECTION_ICON_SIZE),
-    ("audiobook-author.png", "menu_audiobook_author", SECTION_ICON_SIZE),
-    ("audiobook-continue.png", "menu_audiobook_continue", SECTION_ICON_SIZE),
-    ("settings.png", "menu_settings", MAIN_MENU_ICON_SIZE),
-    ("more.png", "menu_more", MAIN_MENU_ICON_SIZE),
+    ("wifi.svg", "menu_wifi_settings", SECTION_ICON_SIZE, "#3584e4"),
+    ("bluetooth.svg", "menu_bluetooth", SECTION_ICON_SIZE, "#9141ac"),
+    ("airplay-page-icon.svg", "menu_airplay", SECTION_ICON_SIZE, "#00b0d6"),
+    ("wifi-transfer-quick.svg", "menu_wifi_transfer", SECTION_ICON_SIZE, "#2ec27e"),
+    ("sonixlink-status.svg", "menu_sonixlink", SECTION_ICON_SIZE, "#e5a50a"),
+    ("dlna-quick.svg", "menu_dlna", SECTION_ICON_SIZE, "#3584e4"),
+    ("files-audiobook.svg", "menu_audiobooks", MAIN_MENU_ICON_SIZE, "#e5a50a"),
+    ("book-headphones.svg", "menu_audiobook_library", SECTION_ICON_SIZE, "#e5a50a"),
+    ("book-finished.svg", "menu_audiobook_series", SECTION_ICON_SIZE, "#9141ac"),
+    ("artist.svg", "menu_audiobook_author", SECTION_ICON_SIZE, "#3584e4"),
+    ("history.svg", "menu_audiobook_continue", SECTION_ICON_SIZE, "#2ec27e"),
+    ("music-settings.svg", "menu_settings", MAIN_MENU_ICON_SIZE, "#8b8e94"),
+    ("ellipsis-vertical.svg", "menu_more", MAIN_MENU_ICON_SIZE, "#9141ac"),
     # What lives inside "More", at section size.
-    ("dac.png", "menu_dac", SECTION_ICON_SIZE),
-    ("file-explorer.png", "menu_file_explorer", SECTION_ICON_SIZE),
-
-    # The service badges in the player's top right corner, where the radio puts
-    # its LIVE mark. They sit over the cover art, so these are the outlined
-    # versions rather than the menu ones, which would vanish on a dark cover.
-    # One size for all three: they replace each other in the same place.
-    ("qobuz-badge.png", "qobuz_badge", 52),
-    ("tidal-badge.png", "tidal_badge", 52),
-    ("podcast-badge.png", "podcast_badge", 52),
+    ("usb-audio-out.svg", "menu_dac", SECTION_ICON_SIZE, "#00b0d6"),
+    ("folder.svg", "menu_file_explorer", SECTION_ICON_SIZE, "#3584e4"),
 ]
 
 
@@ -442,13 +414,18 @@ def render(svg_path, size):
     return bytes(out), img.width, img.height
 
 
-def render_color(path, size):
-    """PNG or SVG -> list of BGRA bytes with the original colours kept."""
-    if path.lower().endswith(".svg"):
-        png = cairosvg.svg2png(url=path, output_width=size, output_height=size)
-        img = Image.open(io.BytesIO(png)).convert("RGBA")
-    else:
-        img = Image.open(path).convert("RGBA")
+def render_color(path, size, color=None):
+    """SVG -> list of BGRA bytes with the icon's own ink kept.
+
+    `color` replaces the source's `currentColor`, which is how the menu tiles
+    take their per-destination ink from one shared glyph set.
+    """
+    with open(path, "r", encoding="utf-8") as source:
+        svg = source.read()
+    if color:
+        svg = re.sub(r"currentColor", color, svg)
+    png = cairosvg.svg2png(bytestring=svg.encode("utf-8"), output_width=size, output_height=size)
+    img = Image.open(io.BytesIO(png)).convert("RGBA")
     if img.size != (size, size):
         img = img.resize((size, size), Image.LANCZOS)
 
@@ -472,15 +449,15 @@ def main():
     parts_c = []
     parts_h = []
 
-    entries = [(f, n, s, False) for f, n, s in ICONS]
-    entries += [(f, n, size, True) for f, n, size in COLOR_ICONS]
+    entries = [(f, n, s, False, None) for f, n, s in ICONS]
+    entries += [(f, n, size, True, color) for f, n, size, color in COLOR_ICONS]
 
-    for filename, name, size, keep_colour in entries:
+    for filename, name, size, keep_colour, color in entries:
         path = os.path.join(ICON_DIR, filename)
         if not os.path.exists(path):
             sys.exit("missing icon: %s" % path)
 
-        data, w, h = render_color(path, size) if keep_colour else render(path, size)
+        data, w, h = render_color(path, size, color) if keep_colour else render(path, size)
 
         parts_c.append(
             "// %s, %dx%d\n"
@@ -505,7 +482,8 @@ def main():
         " * GENERATED FILE -- do not edit by hand.\n"
         " * Produced from the SVGs in assets/icons by tools/svg_to_lvgl.py.\n"
         " *\n"
-        " * White ARGB8888 bitmaps: tint them with lv_obj_set_style_image_recolor().\n"
+        " * White and coloured ARGB8888 bitmaps. The white ones are tinted with\n"
+        " * lv_obj_set_style_image_recolor().\n"
         " */\n\n"
     )
 

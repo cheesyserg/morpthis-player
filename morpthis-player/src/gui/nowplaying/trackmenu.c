@@ -145,10 +145,9 @@ static void queue_row_bind(queue_row_t *row, int index) {
 
 	char title[256];
 	if (!library_track_title(path, title, sizeof(title))) {
-		// Not in the library: it may be a Qobuz track, which is kept out of the
-		// library on purpose. The title is still there, in the sidecar file next
-		// to the track. Without this the queue showed a column of numbers, which
-		// were the file names.
+		// Not in the library: it may be a track the library skips. The title is
+		// still there, in the sidecar file next to the track. Without this the
+		// queue showed a column of numbers, which were the file names.
 		song_metadata_t meta;
 		metadata_read(path, &meta);
 		if (meta.title[0]) {

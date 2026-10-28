@@ -58,10 +58,10 @@ void keyboard_refresh_layout(void);
 // the moment the field is touched.
 void keyboard_style_caret(lv_obj_t *field);
 
-// Turns a field's caret on or off. Needed where there are two fields (the
-// Qobuz login page): LVGL blinks every textarea's caret from the moment it is
-// created -- focus has nothing to do with it -- and two carets blinking
-// together do not say which field is being typed into.
+// Turns a field's caret on or off. Needed where there are two fields: LVGL
+// blinks every textarea's caret from the moment it is created -- focus has
+// nothing to do with it -- and two carets blinking together do not say which
+// field is being typed into.
 void keyboard_show_caret(lv_obj_t *field, bool on);
 
 // Puts a field into password mode (bullets, with the last character readable

@@ -6,11 +6,11 @@
 
 // Reading a file while someone else is still writing it.
 //
-// Needed for Qobuz playback: the track downloads to the card and must start
-// immediately, not once the download has finished. The decoder is the usual one
-// (dr_flac, dr_mp3) opening a path as usual -- except that instead of the
-// default read functions it gets these, which on reaching the end wait for the
-// next piece instead of answering "done".
+// Needed for playback from a download: the track downloads to the card and
+// must start immediately, not once the download has finished. The decoder is
+// the usual one (dr_flac, dr_mp3) opening a path as usual -- except that
+// instead of the default read functions it gets these, which on reaching the
+// end wait for the next piece instead of answering "done".
 //
 // The writer announces the file (growfile_announce), reports how much has
 // arrived (growfile_progress) and closes at the end (growfile_finish). The
@@ -18,9 +18,9 @@
 // an ordinary file and nothing is waited for, so opening a track already in the
 // cache costs no more than a plain fopen.
 //
-// This module deliberately knows nothing about Qobuz: it knows about growing
-// files. qobuzcache.c ties one end and decode.c the other, and neither depends
-// on the other.
+// This module deliberately knows nothing about the cache: it knows about
+// growing files. The download code ties one end and decode.c the other, and
+// neither depends on the other.
 
 // How many downloads can be in flight together. Two suffice (the playing one
 // and the prefetch), four leave margin.

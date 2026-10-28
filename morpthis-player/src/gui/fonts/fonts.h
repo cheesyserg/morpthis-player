@@ -55,10 +55,6 @@ extern lv_font_t font_ui_24_bold;
 extern lv_font_t font_ui_26;
 extern lv_font_t font_ui_28;
 extern lv_font_t font_ui_32;
-// A bold face at a size that reads at a glance, because the regular weight
-// gets lost on the objects it is used for: the Tidal sign-in code, read off
-// one screen and typed into another.
-extern lv_font_t font_ui_36_bold;
 // The letter shown in the middle of the screen while the A-Z list index is in
 // use: one letter at a time, and it has to read from a distance.
 extern lv_font_t font_ui_64_bold;

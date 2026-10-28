@@ -43,8 +43,8 @@ described in [app-sdk.md](app-sdk.md) and [apps-repo.md](apps-repo.md).
   regular file with the execute bit set.
 - `icon` is optional. When present it is copied out of the mounted package and
   decoded to the tile size; a missing or unreadable icon falls back to the
-  generic apps glyph. The tiles follow the player's menu layout in Dark, Light
-  and Tokyo Night.
+  generic apps glyph. The tiles follow the player's menu layout in both the
+  Classic and Morpthis styles.
 - `Apps/merp_data/<id>/` is the app's writable folder. The SDK reads from it
   first and falls back to the package, and sends every write there, so a
   package update never overwrites a save or a setting. The folder is created
@@ -187,8 +187,8 @@ again, the same way DAC mode does.
 
 The device has 64 MB, and with the player running `MemAvailable` is around
 18 MB. That is the budget a light app has to fit in. The player's own caches are
-the first thing to reclaim before a large app: the streaming pages' static
-arrays alone are several megabytes.
+the first thing to reclaim before a large app: the icon and font arrays alone are
+several megabytes.
 
 A package is uncompressed squashfs: data, inode, fragment and xattr blocks are
 all stored as-is. The superblock still names a compressor, and the device

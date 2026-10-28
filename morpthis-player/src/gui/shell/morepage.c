@@ -27,7 +27,7 @@ static void more_action_cb(lv_event_t *e) {
 	}
 }
 
-static bool more_tokyo_icon(const char *label, const lv_image_dsc_t **icon, theme_semantic_t *tone) {
+static bool more_morpthis_icon(const char *label, const lv_image_dsc_t **icon, theme_semantic_t *tone) {
 	if (!label || !icon || !tone) {
 		return false;
 	}
@@ -52,7 +52,7 @@ static void more_list_add_entry(const grid_entry_t *entry) {
 	lv_obj_t *row = settingsrow_add(more_list, entry->label, NULL, callback, user_data);
 	const lv_image_dsc_t *icon = NULL;
 	theme_semantic_t tone;
-	if (more_tokyo_icon(entry->label, &icon, &tone)) {
+	if (more_morpthis_icon(entry->label, &icon, &tone)) {
 		settingsrow_add_icon(row, icon, tone);
 	}
 }
@@ -86,12 +86,12 @@ static void more_list_build(gui_config_t *cfg, const grid_entry_t *entries, int 
 #define MORE_GRID_ROWS 3
 
 static void more_refresh_theme(void) {
-	bool tokyo_v1 = bp_is_tempotec_v1() && theme_uses_function_glyphs();
+	bool morpthis_v1 = bp_is_tempotec_v1() && theme_uses_function_glyphs();
 	if (more_grid) {
-		lv_obj_set_hidden(more_grid, tokyo_v1);
+		lv_obj_set_hidden(more_grid, morpthis_v1);
 	}
 	if (more_list) {
-		lv_obj_set_hidden(more_list, !tokyo_v1);
+		lv_obj_set_hidden(more_list, !morpthis_v1);
 	}
 }
 
@@ -108,7 +108,7 @@ void morepage_init(gui_config_t *cfg) {
 		{"file_explorer", &icon_menu_file_explorer, NULL, filespage_open},
 	};
 
-	// Dark and Light retain the established two-column grid. Tokyo Night uses a
+	// Dark and Light retain the established two-column grid. Morpthis uses a
 	// compact, single-column list whose rows share the Settings list styling.
 	int count = (int)(sizeof(entries) / sizeof(entries[0]));
 	more_grid = gridpage_build(morepage_screen, cfg, entries, count, 2, MORE_GRID_ROWS, true);

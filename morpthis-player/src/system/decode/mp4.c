@@ -1484,7 +1484,7 @@ int mp4_audio_bitrate_kbps(const mp4_file_t *m) {
 	const track_t *t = &m->tracks[m->audio];
 	// The average when present, the maximum when the average is zero: many
 	// encoders fill in only the latter, and for a constant-bitrate stream --
-	// which is what streaming services send -- the two are the same number.
+	// which is what service APIs send -- the two are the same number.
 	uint32_t bps = t->avg_bitrate ? t->avg_bitrate : t->max_bitrate;
 	if (bps == 0) {
 		return 0;

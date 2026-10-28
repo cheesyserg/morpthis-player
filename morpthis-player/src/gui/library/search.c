@@ -138,9 +138,9 @@ static void art_drop_pictures(void) {
 	}
 }
 
-// Same wait as the streaming pages, and for the same reason: tapping a hit goes
-// to the player, and coming straight back must not cost a dozen decodes off the
-// card.
+// Same wait as the other media pages, and for the same reason: tapping a hit
+// goes to the player, and coming straight back must not cost a dozen decodes off
+// the card.
 #define ART_DROP_DELAY_MS 20000
 
 static lv_timer_t *art_drop_timer;

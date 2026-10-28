@@ -49,7 +49,7 @@ typedef struct {
 	lv_obj_t **target;
 } wireless_action_item_t;
 
-static const wireless_action_item_t tokyo_actions[WIRELESS_ACTION_COUNT] = {
+static const wireless_action_item_t morpthis_actions[WIRELESS_ACTION_COUNT] = {
 	{"airplay", &icon_airplay_quick, THEME_SEMANTIC_CYAN, &airplay_screen},
 	{"transfer", &icon_wifi_transfer_quick, THEME_SEMANTIC_GREEN, &wifitransfer_screen},
 	{"sonixlink", &icon_sonixlink_quick, THEME_SEMANTIC_AMBER, &sonixlink_screen},
@@ -58,7 +58,7 @@ static const wireless_action_item_t tokyo_actions[WIRELESS_ACTION_COUNT] = {
 
 static gui_config_t *wireless_cfg;
 static lv_obj_t *wireless_grid;
-static lv_obj_t *tokyo_wireless_panel;
+static lv_obj_t *morpthis_wireless_panel;
 static lv_timer_t *wireless_timer;
 static radio_row_t wifi_row;
 static radio_row_t bluetooth_row;
@@ -337,7 +337,7 @@ static lv_obj_t *wireless_action_grid(lv_obj_t *parent) {
 	lv_obj_set_flex_flow(card, LV_FLEX_FLOW_ROW_WRAP);
 	lv_obj_set_flex_align(card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 	for (int i = 0; i < WIRELESS_ACTION_COUNT; i++) {
-		const wireless_action_item_t *item = &tokyo_actions[i];
+		const wireless_action_item_t *item = &morpthis_actions[i];
 		lv_obj_t *button = lv_btn_create(card);
 		wireless_remove_edges(button);
 		lv_obj_set_size(button, tile_width, tile_height);
@@ -377,44 +377,44 @@ static lv_obj_t *wireless_action_grid(lv_obj_t *parent) {
 	return card;
 }
 
-static void tokyo_panel_build(gui_config_t *cfg) {
+static void morpthis_panel_build(gui_config_t *cfg) {
 	if (!bp_is_tempotec_v1()) {
 		return;
 	}
 
 	int top = settingsrow_content_top(cfg);
-	tokyo_wireless_panel = lv_obj_create(wireless_screen);
-	wireless_remove_edges(tokyo_wireless_panel);
-	lv_obj_set_size(tokyo_wireless_panel, lv_pct(100), cfg->screen_height - top);
-	lv_obj_align(tokyo_wireless_panel, LV_ALIGN_TOP_LEFT, 0, top);
-	lv_obj_set_style_bg_opa(tokyo_wireless_panel, LV_OPA_TRANSP, 0);
-	lv_obj_set_style_border_width(tokyo_wireless_panel, 0, 0);
-	lv_obj_set_style_outline_width(tokyo_wireless_panel, 0, 0);
-	lv_obj_set_style_radius(tokyo_wireless_panel, 0, 0);
-	lv_obj_set_style_pad_hor(tokyo_wireless_panel, cfg->padding, 0);
-	lv_obj_set_style_pad_ver(tokyo_wireless_panel, 0, 0);
-	lv_obj_set_style_pad_gap(tokyo_wireless_panel, 2, 0);
-	lv_obj_set_flex_flow(tokyo_wireless_panel, LV_FLEX_FLOW_COLUMN);
-	lv_obj_set_flex_align(tokyo_wireless_panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-	lv_obj_set_scroll_dir(tokyo_wireless_panel, LV_DIR_VER);
-	lv_obj_set_scrollbar_mode(tokyo_wireless_panel, LV_SCROLLBAR_MODE_AUTO);
-	lv_obj_set_hidden(tokyo_wireless_panel, true);
+	morpthis_wireless_panel = lv_obj_create(wireless_screen);
+	wireless_remove_edges(morpthis_wireless_panel);
+	lv_obj_set_size(morpthis_wireless_panel, lv_pct(100), cfg->screen_height - top);
+	lv_obj_align(morpthis_wireless_panel, LV_ALIGN_TOP_LEFT, 0, top);
+	lv_obj_set_style_bg_opa(morpthis_wireless_panel, LV_OPA_TRANSP, 0);
+	lv_obj_set_style_border_width(morpthis_wireless_panel, 0, 0);
+	lv_obj_set_style_outline_width(morpthis_wireless_panel, 0, 0);
+	lv_obj_set_style_radius(morpthis_wireless_panel, 0, 0);
+	lv_obj_set_style_pad_hor(morpthis_wireless_panel, cfg->padding, 0);
+	lv_obj_set_style_pad_ver(morpthis_wireless_panel, 0, 0);
+	lv_obj_set_style_pad_gap(morpthis_wireless_panel, 2, 0);
+	lv_obj_set_flex_flow(morpthis_wireless_panel, LV_FLEX_FLOW_COLUMN);
+	lv_obj_set_flex_align(morpthis_wireless_panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+	lv_obj_set_scroll_dir(morpthis_wireless_panel, LV_DIR_VER);
+	lv_obj_set_scrollbar_mode(morpthis_wireless_panel, LV_SCROLLBAR_MODE_AUTO);
+	lv_obj_set_hidden(morpthis_wireless_panel, true);
 
-	radio_card(tokyo_wireless_panel, "wi_fi", &icon_wifi, THEME_SEMANTIC_BLUE, wifisettings_screen, &wifi_row);
-	radio_card(tokyo_wireless_panel, "bluetooth", &icon_bluetooth, THEME_SEMANTIC_PURPLE, btsettings_screen,
+	radio_card(morpthis_wireless_panel, "wi_fi", &icon_wifi, THEME_SEMANTIC_BLUE, wifisettings_screen, &wifi_row);
+	radio_card(morpthis_wireless_panel, "bluetooth", &icon_bluetooth, THEME_SEMANTIC_PURPLE, btsettings_screen,
 			   &bluetooth_row);
-	wireless_action_grid(tokyo_wireless_panel);
-	player_sheet_attach_drag(tokyo_wireless_panel, true);
-	switcher_attach_back_gesture(tokyo_wireless_panel);
+	wireless_action_grid(morpthis_wireless_panel);
+	player_sheet_attach_drag(morpthis_wireless_panel, true);
+	switcher_attach_back_gesture(morpthis_wireless_panel);
 }
 
 static void wireless_refresh_theme(void) {
-	bool tokyo_v1 = bp_is_tempotec_v1() && theme_uses_function_glyphs();
+	bool morpthis_v1 = bp_is_tempotec_v1() && theme_uses_function_glyphs();
 	if (wireless_grid) {
-		lv_obj_set_hidden(wireless_grid, tokyo_v1);
+		lv_obj_set_hidden(wireless_grid, morpthis_v1);
 	}
-	if (tokyo_wireless_panel) {
-		lv_obj_set_hidden(tokyo_wireless_panel, !tokyo_v1);
+	if (morpthis_wireless_panel) {
+		lv_obj_set_hidden(morpthis_wireless_panel, !morpthis_v1);
 	}
 	for (int i = 0; i < WIRELESS_ACTION_COUNT; i++) {
 		if (action_icons[i].icon) {
@@ -440,7 +440,7 @@ static void wireless_refresh_theme(void) {
 static void wireless_screen_loaded_cb(lv_event_t *e) {
 	(void)e;
 	wireless_refresh_theme();
-	if (tokyo_wireless_panel) {
+	if (morpthis_wireless_panel) {
 		radios_refresh();
 	}
 }
@@ -463,11 +463,11 @@ void wireless_init(gui_config_t *cfg) {
 		{"dlna", &icon_menu_dlna, &dlna_screen, NULL},
 	};
 
-	// Dark and Light keep their established six-tile page. Tokyo Night on the
+	// Dark and Light keep their established six-tile page. Morpthis on the
 	// V1 adds live Wi-Fi/Bluetooth state and keeps every service destination.
 	wireless_grid = gridpage_build(wireless_screen, cfg, entries, (int)(sizeof(entries) / sizeof(entries[0])), 2, 3, true);
 	settingsrow_title(wireless_screen, cfg, "wireless");
-	tokyo_panel_build(cfg);
+	morpthis_panel_build(cfg);
 	wireless_refresh_theme();
 	theme_register_refresh(wireless_refresh_theme);
 	lv_obj_add_event_cb(wireless_screen, wireless_screen_loaded_cb, LV_EVENT_SCREEN_LOADED, NULL);

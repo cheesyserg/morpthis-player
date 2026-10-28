@@ -13,12 +13,13 @@ secondary pages, status bars and the mini-player.
 Render SVGs directly at their final size, NOT by enlarging the 30-34 px toolbar
 bitmaps. A8 preserves the artwork's alpha (including the faint outer Wi-Fi
 arc), costs one byte/pixel, and takes the theme color through LVGL recoloring.
-Dark/Light illustrations are resized once, directly from the original PNGs.
+The coloured illustrations are rendered from the same simple SVG glyphs with
+their own ink.
 
 The V1's glyphs can shrink with the mini-player's font-dependent height, hence
-all integer sizes 1..47. The maximum comes from its header-free OLED grid and
+all integer sizes 1..47. The maximum comes from its header-free compact grid and
 includes both requested reductions. The two regular-panel glyph sizes are
-138 (OLED) and 173 (other themes); colored art is 74 (V1) or 173 (regular).
+138 (compact) and 173 (other themes); colored art is 74 (V1) or 173 (regular).
 UI tests assert native-size coverage after theme and font reflows. The lookup
 returns NULL for an unknown future layout, allowing the existing scaled art
 as a fallback rather than a missing image.
@@ -26,6 +27,8 @@ as a fallback rather than a missing image.
 
 import argparse
 import io
+import os
+import tempfile
 from pathlib import Path
 
 try:
@@ -39,14 +42,15 @@ ASSETS = ROOT / "assets" / "icons"
 OUTPUT = ROOT / "src" / "gui" / "shell" / "main_menu_icons.c"
 GLYPH_SIZES = (*range(1, 48), 138, 173)
 COLOR_SIZES = (74, 173)
-# Tile order: Music, Streaming, Wireless, Audiobooks, More, Settings.
+# Tile order: Music, Wireless, Apps, More, Settings.
 GLYPHS = (
-    "music-2.svg", "radio-player.svg", "wifi-high.svg",
-    "files-audiobook.svg", "ellipsis-vertical.svg", "music-settings.svg",
+    "music-2.svg", "wifi-high.svg", "files-gamepad.svg",
+    "ellipsis-vertical.svg", "music-settings.svg",
 )
 COLORS = (
-    "music.png", "streaming.png", "wireless.png",
-    "audiobooks.png", "more.png", "settings.png",
+    ("music-2.svg", "#e5a50a"), ("wifi-high.svg", "#3584e4"),
+    ("files-gamepad.svg", "#2ec27e"), ("ellipsis-vertical.svg", "#9141ac"),
+    ("music-settings.svg", "#8b8e94"),
 )
 
 
@@ -64,8 +68,19 @@ def render_glyph(filename, size):
     return b"".join(rows), stride, "A8"
 
 
-def render_color(filename, size):
-    image = Image.open(ASSETS / filename).convert("RGBA")
+def render_color(filename, color, size):
+    source = (ASSETS / filename).read_text(encoding="utf-8").replace("currentColor", color)
+    with tempfile.NamedTemporaryFile("w", suffix=".svg", delete=False, encoding="utf-8") as tmp:
+        tmp.write(source)
+        tmp_path = tmp.name
+    try:
+        png = resvg_py.svg_to_bytes(
+            svg_path=tmp_path, width=size, height=size,
+            skip_system_fonts=True,
+        )
+    finally:
+        os.unlink(tmp_path)
+    image = Image.open(io.BytesIO(png)).convert("RGBA")
     if image.size != (size, size):
         # Pillow resizes RGBA through premultiplied alpha, avoiding dark fringes.
         image = image.resize((size, size), Image.Resampling.LANCZOS)
@@ -86,13 +101,13 @@ def generate():
     ):
         for size in sizes:
             entries = []
-            for tile, filename in enumerate(filenames):
+            for tile, item in enumerate(filenames):
                 name = f"{family}_{size}_{tile}"
-                pixels, stride, fmt = render(filename, size)
+                pixels, stride, fmt = render(item, size) if family == "glyph" else render(*item, size)
                 total_bytes += len(pixels)
                 lines = ["\t" + ", ".join(f"0x{b:02x}" for b in pixels[i:i + 16]) + ","
                          for i in range(0, len(pixels), 16)]
-                parts.append(f"// {filename}, {size}x{size}, {fmt}\n"
+                parts.append(f"// {item if isinstance(item, str) else item[0]}, {size}x{size}, {fmt}\n"
                              f"_Alignas(4) static const uint8_t {name}[] = {{\n" +
                              "\n".join(lines) + "\n};\n\n")
                 entries.append(
@@ -101,13 +116,13 @@ def generate():
                     f".data_size = sizeof({name}), .data = {name}" + "},"
                 )
             descriptors[(family, size)] = "\n".join(entries)
-    for family, sizes in (("glyph", GLYPH_SIZES), ("color", COLOR_SIZES)):
-        parts.append(f"static const lv_image_dsc_t {family}_icons[{len(sizes)}][6] = {{\n")
+    for family, filenames, sizes in (("glyph", GLYPHS, GLYPH_SIZES), ("color", COLORS, COLOR_SIZES)):
+        parts.append(f"static const lv_image_dsc_t {family}_icons[{len(sizes)}][{len(filenames)}] = {{\n")
         for size in sizes:
             parts.append("\t{\n" + descriptors[(family, size)] + "\n\t},\n")
         parts.append("};\n\n")
     parts.append("""const lv_image_dsc_t *main_menu_icon_native(int tile, bool glyph, int size) {
-	if (tile < 0 || tile >= 6) {
+	if (tile < 0 || tile >= 5) {
 		return NULL;
 	}
 	if (glyph) {

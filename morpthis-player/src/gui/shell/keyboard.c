@@ -201,9 +201,6 @@ static void kb_register_refresh(void) {
 // near-white, so keys built straight out of those styles would be white on
 // white -- they have to sit on something darker.
 static lv_color_t kb_tray_color(void) {
-	if (theme_is_oled()) {
-		return theme()->screen_bg; // OLED fills nothing grey
-	}
 	return theme()->dark ? lv_color_make(22, 22, 22) : lv_color_make(206, 209, 216);
 }
 

@@ -292,11 +292,10 @@ static void row_show_glyph(row_t *row, bool is_dir) {
 	// browser row can show besides a folder is playable anyway.
 	lv_image_set_src(row->icon, is_dir ? &icon_folder : &icon_music2);
 	lv_obj_add_style(row->icon, &theme_style_icon, 0);
-	// A folder wears the colour the palette gives this page -- Tokyo Night's
-	// violet, the signal green on Amber on Black -- so it reads as the thing
-	// that can be entered. The note keeps the shared icon colour. Rows are
-	// recycled between folders and files, so the local recolour is dropped
-	// again for everything else.
+	// A folder wears the colour the palette gives this page -- the accent --
+	// so it reads as the thing that can be entered. The note keeps the shared
+	// icon colour. Rows are recycled between folders and files, so the local
+	// recolour is dropped again for everything else.
 	if (is_dir) {
 		lv_obj_set_style_image_recolor(row->icon, theme_browser_folder_color(), 0);
 	} else {

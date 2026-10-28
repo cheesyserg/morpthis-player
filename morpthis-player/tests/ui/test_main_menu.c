@@ -103,7 +103,7 @@ bool switcher_back_drag_active(void) { return false; }
 void player_sheet_attach_drag(lv_obj_t *obj, bool opening) { (void)obj; (void)opening; }
 bool player_sheet_drag_active(void) { return false; }
 void player_refresh_now_playing(void) {}
-void player_sheet_open(bool animated) { (void)animated; }
+void player_sheet_open(void) {}
 void coverflow_attach_edge(lv_obj_t *obj, gui_config_t *cfg) { (void)obj; (void)cfg; }
 bool coverflow_drag_active(void) { return false; }
 void medialist_open(const char *title, library_list_t kind, library_filter_t filter, const char *value) {
@@ -307,17 +307,12 @@ static void check_grid(lv_obj_t *grid, bool icons_only) {
 		int long_side = LV_MAX(lv_obj_get_width(icon), lv_obj_get_height(icon));
 		int default_size = theme_uses_function_glyphs() ? bp_pick(22, 46) : bp_pick(46, 128);
 		assert(long_side > default_size);
-		/* Preserve OLED's earlier reduction, then shrink every theme's
-		 * current icon-only size by 5%, rounded to the nearest pixel. */
+		/* Shrink every theme's current icon-only size by 5%, rounded to the
+		 * nearest pixel. */
 		int available = LV_MAX(1, LV_MIN(lv_obj_get_width(tile), lv_obj_get_height(tile)) - bp_pick(12, 24));
-		int previous_size = theme_is_oled() ? LV_MAX(1, available * 80 / 100) : available;
-		int expected_size = LV_MAX(1, (previous_size * 95 + 50) / 100);
+		int expected_size = LV_MAX(1, (available * 95 + 50) / 100);
 		assert(long_side == expected_size);
-		// Tile 3 is Apps; its gamepad glyph is deliberately not in the
-		// native Audiobooks art table yet.
-		if ((int)i != 3) {
-			check_native_icon(icon, (int)i, expected_size);
-		}
+		check_native_icon(icon, (int)i, expected_size);
 		lv_area_t t, image;
 		lv_obj_get_coords(tile, &t);
 		lv_obj_get_coords(icon, &image);
@@ -393,7 +388,6 @@ int main(int argc, char **argv) {
 	assert(lv_obj_has_state(menu_toggle, LV_STATE_CHECKED) == saved_icons_only);
 
 	assert(find_label(lv_obj_get_child(grid, 2), tr("apps")));
-	assert(!find_label(grid, tr("streaming")));
 	assert(!find_label(grid, tr("audiobooks")));
 	// Music took the full first row; the other four tiles share the two below.
 	lv_obj_update_layout(grid);
@@ -444,12 +438,12 @@ int main(int argc, char **argv) {
 	assert(find_label(music_tile_grid, tr("music_most_played")));
 	assert(find_label(music_tile_grid, tr("audiobooks")));
 	if (bp_is_tempotec_v1()) {
-		lv_obj_t *tokyo_panel = lv_obj_get_child(music_screen, lv_obj_get_child_count(music_screen) - 1);
-		assert(find_label(tokyo_panel, tr("music_years")));
-		assert(find_label(tokyo_panel, tr("music_most_played")));
+		lv_obj_t *morpthis_panel = lv_obj_get_child(music_screen, lv_obj_get_child_count(music_screen) - 1);
+		assert(find_label(morpthis_panel, tr("music_years")));
+		assert(find_label(morpthis_panel, tr("music_most_played")));
 	}
 
-	/* Rearrange and disable Years and Most played; verify both tile_grid and tokyo_music_panel update. */
+	/* Rearrange and disable Years and Most played; verify both tile_grid and morpthis_music_panel update. */
 	test_active_tiles[0] = MUSIC_TILE_PLAYLISTS;
 	test_active_tiles[1] = MUSIC_TILE_ALBUMS;
 	test_active_tiles[2] = MUSIC_TILE_ARTISTS;
@@ -462,21 +456,21 @@ int main(int argc, char **argv) {
 	assert(!find_label(music_tile_grid, tr("music_years")));
 	assert(!find_label(music_tile_grid, tr("music_most_played")));
 	if (bp_is_tempotec_v1()) {
-		lv_obj_t *tokyo_panel = lv_obj_get_child(music_screen, lv_obj_get_child_count(music_screen) - 1);
-		lv_obj_t *browse_card = lv_obj_get_child(tokyo_panel, 0);
+		lv_obj_t *morpthis_panel = lv_obj_get_child(music_screen, lv_obj_get_child_count(music_screen) - 1);
+		lv_obj_t *browse_card = lv_obj_get_child(morpthis_panel, 0);
 		lv_obj_t *browse_grid = lv_obj_get_child(browse_card, 1);
 		assert(find_label(lv_obj_get_child(browse_grid, 0), tr("playlists")));
-		assert(!find_label(tokyo_panel, tr("music_years")));
-		assert(!find_label(tokyo_panel, tr("music_most_played")));
-		assert(!find_label(tokyo_panel, tr("music_album_artist")));
+		assert(!find_label(morpthis_panel, tr("music_years")));
+		assert(!find_label(morpthis_panel, tr("music_most_played")));
+		assert(!find_label(morpthis_panel, tr("music_album_artist")));
 	}
 
 	const grid_entry_t entries[] = {
-		{"music_all_tracks", &icon_menu_music, &music_screen, NULL},
-		{"albums", &icon_album, &music_screen, NULL},
-		{"music_years", &icon_menu_year, &music_screen, NULL},
-		{"music_most_played", &icon_menu_most_played, &music_screen, NULL},
-		{"playlists", &icon_menu_playlist, &music_screen, NULL},
+		{"music_all_tracks", &icon_menu_music, &music_screen, NULL, NULL, NULL, false},
+		{"albums", &icon_album, &music_screen, NULL, NULL, NULL, false},
+		{"music_years", &icon_menu_year, &music_screen, NULL, NULL, NULL, false},
+		{"music_most_played", &icon_menu_most_played, &music_screen, NULL, NULL, NULL, false},
+		{"playlists", &icon_menu_playlist, &music_screen, NULL, NULL, NULL, false},
 	};
 	lv_obj_t *section_grid = gridpage_build(appspage_screen, &cfg, entries, 5, 2, 3, true);
 	gridpage_set_tile_label_hidden(NULL, 0, true);

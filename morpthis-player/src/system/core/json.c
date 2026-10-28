@@ -23,7 +23,7 @@ static int tok_new(parser_t *p, json_type_t type, int start, int parent) {
 		return -1;
 	}
 	if (p->doc->count == p->capacity) {
-		// Doubling, starting at 64: a Qobuz response runs to a few thousand
+		// Doubling, starting at 64: a service response runs to a few thousand
 		// tokens, and starting at one would mean a dozen reallocs per request.
 		int wanted = p->capacity > p->max_tokens / 2 ? p->max_tokens : p->capacity ? p->capacity * 2 : 64;
 		if (wanted > p->max_tokens) {
@@ -505,7 +505,7 @@ static bool json_string(const json_doc_t *doc, int tok, char *out, size_t size, 
 				break;
 			}
 			i += 4;
-			// Surrogate pair: Qobuz titles are full of characters outside the
+			// Surrogate pair: service responses are full of characters outside the
 			// basic plane (emoji in playlist names), and decoding one half at
 			// a time produces mojibake.
 			if (cp >= 0xD800 && cp <= 0xDBFF && i + 6 < len && src[i + 1] == '\\' && src[i + 2] == 'u') {
@@ -553,8 +553,8 @@ long json_long(const json_doc_t *doc, int tok, long fallback) {
 	if (t->type == JSON_BOOL) {
 		return doc->text[t->start] == 't' ? 1 : 0;
 	}
-	// Strings are accepted too: Qobuz sends ids sometimes as numbers and
-	// sometimes quoted, within the same response.
+	// Strings are accepted too: an id may arrive as a number and as a quoted
+	// string within the same response.
 	if (t->type != JSON_NUMBER && t->type != JSON_STRING) {
 		return fallback;
 	}
@@ -627,7 +627,7 @@ bool json_bool(const json_doc_t *doc, int tok, bool fallback) {
 	if (t->type == JSON_BOOL) {
 		return doc->text[t->start] == 't';
 	}
-	// Qobuz sends its subscription flags as booleans in some responses and as
+	// Boolean flags arrive as booleans in some responses and as
 	// 0/1 in others.
 	if (t->type == JSON_NUMBER) {
 		return json_long(doc, tok, fallback ? 1 : 0) != 0;

@@ -274,7 +274,7 @@ static const timezone_t TIMEZONES[] = {
 	{7 * 60, "timeset_tz_bangkok"},
 	{8 * 60, "timeset_tz_beijing"},
 	{8 * 60 + 45, "timeset_tz_eucla"},
-	{9 * 60, "timeset_tz_tokyo"},
+	{9 * 60, "timeset_tz_morpthis"},
 	{9 * 60 + 30, "timeset_tz_adelaide"},
 	{10 * 60, "timeset_tz_sydney"},
 	{10 * 60 + 30, "timeset_tz_lord_howe"},

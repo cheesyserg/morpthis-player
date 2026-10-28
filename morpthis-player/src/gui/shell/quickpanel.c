@@ -1328,7 +1328,7 @@ static lv_obj_t *make_circle_button(lv_obj_t *parent, const lv_image_dsc_t *glyp
 	lv_obj_set_size(btn, circle_button_size, circle_button_size);
 	lv_obj_set_style_radius(btn, LV_RADIUS_CIRCLE, 0);
 	// The neutral circle that follows the theme; its border too is the shared
-	// style's -- none, except OLED's ring around an idle circle.
+	// style's, which has none.
 	lv_obj_add_style(btn, &theme_style_switch, 0);
 	lv_obj_set_style_shadow_width(btn, 0, 0);
 

@@ -15,8 +15,8 @@ typedef struct {
 	void (*action)(void *user); // called after the popover has closed
 	void *user;
 	// A tick at the right of the row, for when the menu is not a list of
-	// actions but a choice between alternatives (Qobuz audio quality): there
-	// the current entry has to be visible.
+	// actions but a choice between alternatives (audio quality): there the
+	// current entry has to be visible.
 	bool checked;
 } popover_item_t;
 

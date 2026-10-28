@@ -384,15 +384,13 @@ static void check_frame(int w, int h) {
 }
 
 // What the page round the frame is: the player's blurred copy when it made
-// one the size of the screen, in Dark and Light; the palette's own colour in
-// the palettes; black otherwise.
+// one the size of the screen, black otherwise.
 static void check_page(void) {
-	bool field = theme_is_monochrome() || theme_is_tokyo_night();
 	const lv_image_dsc_t *backdrop = player_backdrop_image();
-	bool blur = !field && backdrop && (int)backdrop->header.w == screen_w && (int)backdrop->header.h == screen_h;
+	bool blur = backdrop && (int)backdrop->header.w == screen_w && (int)backdrop->header.h == screen_h;
 	assert(lv_obj_get_style_bg_image_src(saver_obj(), 0) == (blur ? (const void *)backdrop : NULL));
 	assert(lv_obj_get_style_bg_opa(cover_box(), 0) == (blur ? LV_OPA_TRANSP : LV_OPA_COVER));
-	lv_color_t page = field ? theme()->screen_bg : lv_color_black();
+	lv_color_t page = lv_color_black();
 	assert(lv_color_eq(lv_obj_get_style_bg_color(saver_obj(), 0), page));
 	assert(lv_color_eq(lv_obj_get_style_bg_color(cover_box(), 0), page));
 }
@@ -420,10 +418,6 @@ static void check_fill(const cover_image_t *sleeve) {
 	assert(lv_obj_get_style_radius(frame(), 0) == 0);
 	assert(lv_obj_get_style_bg_image_src(saver_obj(), 0) == NULL);
 	assert(lv_obj_get_style_bg_opa(cover_box(), 0) == LV_OPA_COVER);
-	bool field = theme_is_monochrome() || theme_is_tokyo_night();
-	if (field) {
-		assert(lv_obj_get_height(cover_box()) == screen_h); // under the palettes' field
-	}
 }
 
 static void check_nothing_held(void) {

@@ -123,7 +123,7 @@ Start with the ones that prove the API without needing the display handoff:
 ## What not to put in this repository
 
 - ROMs, BIOS files or copyrighted game assets.
-- Streaming credentials or API keys.
+- API keys or credentials.
 - A copy of the player's source. The SDK is the interface; the player is a
   separate repository.
 - Build outputs. Releases carry the `.pkgmerp`; the repository carries the

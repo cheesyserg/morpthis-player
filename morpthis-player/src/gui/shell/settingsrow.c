@@ -261,11 +261,10 @@ static void fit_row_label(lv_obj_t *label, int32_t width) {
 
 // Space left between the row name and whatever sits to its right.
 #define ROW_LABEL_GAP 12
-// The most leading icons alive at once. The Settings page has eight, the Tokyo
-// Night Streaming and More lists have five apiece, and the streaming pages add
-// their own. The table keeps headroom for a long browse page that puts an icon
-// on every row: a slot is a dozen bytes on the device, so the headroom costs
-// little.
+// The most leading icons alive at once. The Settings page has eight, the Music
+// and More lists have five apiece, and other pages add their own. The table
+// keeps headroom for a long browse page that puts an icon on every row: a slot
+// is a dozen bytes on the device, so the headroom costs little.
 #define SETTINGSROW_MAX_LEADING_ICONS 256
 
 typedef struct {
@@ -334,7 +333,7 @@ static void fit_row(lv_obj_t *row) {
 		avail -= lv_obj_get_width(right) + ROW_LABEL_GAP;
 	}
 
-	// Tokyo Night's optional leading glyph is appended after the normal row
+	// Morpthis's optional leading glyph is appended after the normal row
 	// children, preserving the existing name/value/chevron child indices used
 	// throughout the settings UI. Its width is reserved only while the theme is
 	// enabled, so Dark and Light retain their original label position.
@@ -479,8 +478,8 @@ static void settingsrow_refresh_theme(void) {
 		theme_apply_slider_knob(built_sliders[i]);
 	}
 
-	bool tokyo = theme_uses_function_glyphs();
-	bool flat_rows = compact_rows() && tokyo;
+	bool morpthis = theme_uses_function_glyphs();
+	bool flat_rows = compact_rows() && morpthis;
 	for (int i = 0; i < leading_icon_count; i++) {
 		lv_obj_t *row = leading_icons[i].row;
 		lv_obj_t *icon = leading_icons[i].icon;
@@ -488,12 +487,12 @@ static void settingsrow_refresh_theme(void) {
 			continue;
 		}
 		settingsrow_update_edges(row, flat_rows);
-		lv_obj_set_hidden(icon, !tokyo);
+		lv_obj_set_hidden(icon, !morpthis);
 		lv_obj_t *label = lv_obj_get_child(row, 0);
 		if (label && lv_obj_check_type(label, &lv_label_class)) {
 			lv_obj_set_style_text_font(label, &font_ui_24, 0);
 		}
-		if (tokyo) {
+		if (morpthis) {
 			lv_obj_set_style_image_recolor(icon, theme_semantic_color(leading_icons[i].tone), 0);
 			lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, 0);
 		} else {
@@ -819,10 +818,8 @@ void settingsrow_chevron_active(lv_obj_t *row, bool active) {
 		return;
 	}
 	if (active) {
-		// Adwaita green marks an active row, except the monochrome palettes
-		// (Amber on Black, OLED) use their accent so they stay single-hue.
-		lv_obj_set_style_image_recolor(chev,
-									   theme_is_monochrome() ? theme()->accent : lv_color_make(46, 194, 126), 0);
+		// Adwaita green marks an active row.
+		lv_obj_set_style_image_recolor(chev, lv_color_make(46, 194, 126), 0);
 		lv_obj_set_style_image_recolor_opa(chev, LV_OPA_COVER, 0);
 		lv_obj_set_style_image_opa(chev, LV_OPA_COVER, 0);
 	} else {

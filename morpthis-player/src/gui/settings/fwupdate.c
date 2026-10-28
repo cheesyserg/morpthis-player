@@ -161,8 +161,8 @@ static void build(void) {
 		lv_obj_set_width(btn, lv_pct(100));
 		lv_obj_set_height(btn, bp_pick(COMPACT_BUTTON_H, BUTTON_H));
 		lv_obj_set_style_radius(btn, bp_pick(bp_tile_radius(), 12), 0);
-		// No border of its own: a neutral button takes the shared style's,
-		// which is none except OLED's ring.
+		// No border of its own: a neutral button takes the shared style's, which
+		// has none.
 		lv_obj_set_style_shadow_width(btn, 0, 0);
 		lv_obj_add_event_cb(btn, button_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 

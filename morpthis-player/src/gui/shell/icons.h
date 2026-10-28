@@ -2,7 +2,8 @@
  * GENERATED FILE -- do not edit by hand.
  * Produced from the SVGs in assets/icons by tools/svg_to_lvgl.py.
  *
- * White ARGB8888 bitmaps: tint them with lv_obj_set_style_image_recolor().
+ * White and coloured ARGB8888 bitmaps. The white ones are tinted with
+ * lv_obj_set_style_image_recolor().
  */
 
 #ifndef ICONS_H
@@ -19,6 +20,7 @@ extern const lv_image_dsc_t icon_eye;
 extern const lv_image_dsc_t icon_eye_off;
 extern const lv_image_dsc_t icon_folder;
 extern const lv_image_dsc_t icon_folder_corner;
+extern const lv_image_dsc_t icon_info;
 extern const lv_image_dsc_t icon_folder_root;
 extern const lv_image_dsc_t icon_file;
 extern const lv_image_dsc_t icon_music_settings;
@@ -44,7 +46,6 @@ extern const lv_image_dsc_t icon_pause_large;
 extern const lv_image_dsc_t icon_skip_back_large;
 extern const lv_image_dsc_t icon_skip_forward_large;
 extern const lv_image_dsc_t icon_music_note;
-extern const lv_image_dsc_t icon_radio_player;
 extern const lv_image_dsc_t icon_airplay_page;
 extern const lv_image_dsc_t icon_dlna_page;
 extern const lv_image_dsc_t icon_battery;
@@ -58,10 +59,7 @@ extern const lv_image_dsc_t icon_volume_high;
 extern const lv_image_dsc_t icon_power_off;
 extern const lv_image_dsc_t icon_reboot;
 extern const lv_image_dsc_t icon_music2;
-extern const lv_image_dsc_t icon_tidal_mark;
-extern const lv_image_dsc_t icon_qobuz_mark;
 extern const lv_image_dsc_t icon_artist;
-extern const lv_image_dsc_t icon_podcast_list;
 extern const lv_image_dsc_t icon_artist_album;
 extern const lv_image_dsc_t icon_genre;
 extern const lv_image_dsc_t icon_album;
@@ -84,7 +82,6 @@ extern const lv_image_dsc_t icon_list_queue;
 extern const lv_image_dsc_t icon_list_x;
 extern const lv_image_dsc_t icon_star_x;
 extern const lv_image_dsc_t icon_search;
-extern const lv_image_dsc_t icon_podcast_downloaded;
 extern const lv_image_dsc_t icon_wifi;
 extern const lv_image_dsc_t icon_bluetooth;
 extern const lv_image_dsc_t icon_wifi_zero;
@@ -120,7 +117,6 @@ extern const lv_image_dsc_t icon_dlna_quick;
 extern const lv_image_dsc_t icon_wifi_transfer_quick;
 extern const lv_image_dsc_t icon_sleep_music_quick;
 extern const lv_image_dsc_t icon_sleep_audiobook_quick;
-extern const lv_image_dsc_t icon_sleep_podcast_quick;
 extern const lv_image_dsc_t icon_gapless_on_quick;
 extern const lv_image_dsc_t icon_gapless_off_quick;
 extern const lv_image_dsc_t icon_files_music;
@@ -143,7 +139,6 @@ extern const lv_image_dsc_t icon_circle_check;
 extern const lv_image_dsc_t icon_circle_alert;
 extern const lv_image_dsc_t icon_book_headphones;
 extern const lv_image_dsc_t icon_book_headphones_row;
-extern const lv_image_dsc_t icon_podcast_cover;
 extern const lv_image_dsc_t icon_shuffle;
 extern const lv_image_dsc_t icon_shuffle_repeat;
 extern const lv_image_dsc_t icon_arrow_down_up;
@@ -152,9 +147,6 @@ extern const lv_image_dsc_t icon_star_filled;
 extern const lv_image_dsc_t icon_heart_outline;
 extern const lv_image_dsc_t icon_heart_filled;
 extern const lv_image_dsc_t icon_star_corner;
-extern const lv_image_dsc_t icon_radio_recent;
-extern const lv_image_dsc_t icon_radio_custom;
-extern const lv_image_dsc_t icon_radio_quality;
 extern const lv_image_dsc_t icon_refresh;
 extern const lv_image_dsc_t icon_prev_10;
 extern const lv_image_dsc_t icon_next_10;
@@ -162,12 +154,9 @@ extern const lv_image_dsc_t icon_prev_30;
 extern const lv_image_dsc_t icon_next_30;
 extern const lv_image_dsc_t icon_prev_60;
 extern const lv_image_dsc_t icon_next_60;
-extern const lv_image_dsc_t icon_chapter;
-extern const lv_image_dsc_t icon_podcast_episodes;
 extern const lv_image_dsc_t icon_play_speed;
 extern const lv_image_dsc_t icon_zap;
 extern const lv_image_dsc_t icon_zap_off;
-extern const lv_image_dsc_t icon_qobuz_quality;
 extern const lv_image_dsc_t icon_log_out;
 extern const lv_image_dsc_t icon_swap_remap;
 extern const lv_image_dsc_t icon_save_state;
@@ -219,7 +208,6 @@ extern const lv_image_dsc_t icon_menu_explorer;
 extern const lv_image_dsc_t icon_menu_playlist;
 extern const lv_image_dsc_t icon_menu_year;
 extern const lv_image_dsc_t icon_menu_most_played;
-extern const lv_image_dsc_t icon_menu_streaming;
 extern const lv_image_dsc_t icon_menu_wireless;
 extern const lv_image_dsc_t icon_menu_wifi_settings;
 extern const lv_image_dsc_t icon_menu_bluetooth;
@@ -227,10 +215,6 @@ extern const lv_image_dsc_t icon_menu_airplay;
 extern const lv_image_dsc_t icon_menu_wifi_transfer;
 extern const lv_image_dsc_t icon_menu_sonixlink;
 extern const lv_image_dsc_t icon_menu_dlna;
-extern const lv_image_dsc_t icon_menu_tidal;
-extern const lv_image_dsc_t icon_menu_qobuz;
-extern const lv_image_dsc_t icon_menu_radio;
-extern const lv_image_dsc_t icon_menu_podcast;
 extern const lv_image_dsc_t icon_menu_audiobooks;
 extern const lv_image_dsc_t icon_menu_audiobook_library;
 extern const lv_image_dsc_t icon_menu_audiobook_series;
@@ -240,10 +224,5 @@ extern const lv_image_dsc_t icon_menu_settings;
 extern const lv_image_dsc_t icon_menu_more;
 extern const lv_image_dsc_t icon_menu_dac;
 extern const lv_image_dsc_t icon_menu_file_explorer;
-extern const lv_image_dsc_t icon_qobuz_badge;
-extern const lv_image_dsc_t icon_tidal_badge;
-extern const lv_image_dsc_t icon_podcast_badge;
-
-extern const lv_image_dsc_t icon_info;
 
 #endif // ICONS_H

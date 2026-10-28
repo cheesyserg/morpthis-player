@@ -5,11 +5,9 @@
 
 #include "lvgl/lvgl.h"
 
-// The More page: the sixth tile of the main menu.
+// The More page: the door to everything that does not fit on the home screen.
 //
-// The main menu has six places and not one more -- a 2x3 grid filling the
-// screen -- so the sixth cannot be a destination: it has to be the door to
-// everything that does not fit. It holds the DAC, and whatever comes next
+// It holds the DAC, and whatever comes next
 // goes there too.
 //
 // It is a section page like Music, Wireless and Streaming: same grid, same

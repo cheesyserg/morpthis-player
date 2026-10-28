@@ -63,12 +63,11 @@ void player_layout_set(player_layout_t layout);
 
 // Whether the play/pause glyph and the played part of the progress bar take
 // the playing sleeve's main colour instead of the theme's accent, in every
-// arrangement and on every theme (the monochrome palettes too: the switch is
-// explicit, so it wins over their one hue while it is on).
-// Previous and next keep their own colour either way. Off by default; the
-// switch lives beside the layout pills in Music > Display options. Changing
-// it only repaints: the colour is the one already worked out from the
-// artwork on screen, so nothing is decoded and playback is untouched.
+// arrangement and on every theme. Previous and next keep their own colour
+// either way. Off by default; the switch lives beside the layout pills in
+// Music > Display options. Changing it only repaints: the colour is the one
+// already worked out from the artwork on screen, so nothing is decoded and
+// playback is untouched.
 bool player_cover_tint_get(void);
 void player_cover_tint_set(bool enabled);
 

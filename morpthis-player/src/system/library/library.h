@@ -47,10 +47,10 @@ int library_track_count(void);
 // on its own thread and the UI polls the counters below.
 // ---------------------------------------------------------------------------
 
-// A folder the removed podcast feature used for downloads. The scan still
-// skips it: a card written by an older build can carry one, and what is in it
-// is not the user's music.
-#define LIBRARY_LEGACY_PODCAST_FOLDER "Podcast"
+// A folder the removed downloads feature used. The scan still skips it: a card
+// written by an older build can carry one, and what is in it is not the user's
+// music.
+#define LIBRARY_LEGACY_DOWNLOADS_FOLDER "Podcast"
 
 // The folders at the root of the card the scan reads; none for the whole card.
 // A scan limited to some folders leaves out the files at the root of the card

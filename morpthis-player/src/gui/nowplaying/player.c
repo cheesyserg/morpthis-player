@@ -785,9 +785,8 @@ static enum {
 } cover_id_state;
 
 // With artwork loaded the controls sit on the always-dark blurred backdrop,
-// so the chrome -- titles, clocks, transport glyphs, the chevron -- is light
-// in the existing themes. Amber on Black keeps its signal accent in either
-// state. Local style props are laid over the theme styles and removed again
+// so the chrome -- titles, clocks, transport glyphs, the chevron -- is light.
+// Local style props are laid over the theme styles and removed again
 // when needed so the no-cover panel keeps following the selected palette.
 // Poster's fade, up or down with the sleeve it melts: see the Poster section.
 static void poster_fade_apply(void);
@@ -835,9 +834,6 @@ static void set_over_cover(bool on) {
 	// of the screen in that arrangement.
 	bool over = on && !layout_poster_now;
 
-	// Amber on Black and OLED: the deck's own role colours, over artwork or not.
-	bool mono = theme_is_monochrome();
-	bool tokyo = theme_is_tokyo_night();
 	lv_obj_t *const text_objs[] = {song_title_label, elapsed_label, remaining_label};
 	lv_obj_t *const dim_objs[] = {song_artist_label, format_label, queue_position_label};
 	lv_obj_t *const icon_objs[] = {prev_icon, next_icon};
@@ -846,14 +842,7 @@ static void set_over_cover(bool on) {
 		if (!text_objs[i]) {
 			continue;
 		}
-		if (mono) {
-			lv_obj_set_style_text_color(text_objs[i],
-									   theme_player_chrome_color(THEME_PLAYER_CHROME_PRIMARY), 0);
-		} else if (tokyo && text_objs[i] == song_title_label) {
-			// The track name keeps the deck's violet over artwork and over the
-			// plain page alike; the two clocks beside it stay light.
-			lv_obj_set_style_text_color(text_objs[i], theme_player_chrome_color(THEME_PLAYER_CHROME_PRIMARY), 0);
-		} else if (over) {
+		if (over) {
 			lv_obj_set_style_text_color(text_objs[i], lv_color_white(), 0);
 		} else {
 			lv_obj_remove_local_style_prop(text_objs[i], LV_STYLE_TEXT_COLOR, 0);
@@ -863,14 +852,7 @@ static void set_over_cover(bool on) {
 		if (!dim_objs[i]) {
 			continue;
 		}
-		if (mono) {
-			lv_obj_set_style_text_color(dim_objs[i],
-									   theme_player_chrome_color(THEME_PLAYER_CHROME_SECONDARY), 0);
-		} else if (tokyo && dim_objs[i] == song_artist_label) {
-			lv_obj_set_style_text_color(dim_objs[i], theme_semantic_color(THEME_SEMANTIC_CYAN), 0);
-		} else if (tokyo && dim_objs[i] == format_label) {
-			lv_obj_set_style_text_color(dim_objs[i], theme_player_chrome_color(THEME_PLAYER_CHROME_SECONDARY), 0);
-		} else if (over) {
+		if (over) {
 			lv_obj_set_style_text_color(dim_objs[i], lv_color_make(200, 200, 200), 0);
 		} else {
 			lv_obj_remove_local_style_prop(dim_objs[i], LV_STYLE_TEXT_COLOR, 0);
@@ -880,16 +862,7 @@ static void set_over_cover(bool on) {
 		if (!icon_objs[i]) {
 			continue;
 		}
-		if (mono) {
-			lv_obj_set_style_image_recolor(icon_objs[i],
-									   theme_player_chrome_color(THEME_PLAYER_CHROME_PRIMARY), 0);
-			lv_obj_set_style_image_recolor_opa(icon_objs[i], LV_OPA_COVER, 0);
-		} else if (tokyo) {
-			// The skip glyphs are cyan on this deck whether or not artwork is
-			// behind them: the blurred backdrop is dark in either case.
-			lv_obj_set_style_image_recolor(icon_objs[i], theme_semantic_color(THEME_SEMANTIC_CYAN), 0);
-			lv_obj_set_style_image_recolor_opa(icon_objs[i], LV_OPA_COVER, 0);
-		} else if (over) {
+		if (over) {
 			lv_obj_set_style_image_recolor(icon_objs[i], lv_color_white(), 0);
 			lv_obj_set_style_image_recolor_opa(icon_objs[i], LV_OPA_COVER, 0);
 		} else if (theme_uses_function_glyphs()) {
@@ -969,55 +942,32 @@ static lv_color_t tone_shaped(int sat, int want) {
 // in. Cover Flow throws the same hue under the record in the middle, which is
 // what makes the two pages look like they belong to the same player.
 static lv_color_t alt_surface(void) { return tone_shaped(ALT_SURFACE_SAT, ALT_SURFACE_LUMA); }
-static lv_color_t alt_mark(void) {
-	return theme_is_monochrome()
-			   ? theme_player_chrome_color(THEME_PLAYER_CHROME_PLAYBACK)
-			   : tone_shaped(ALT_MARK_SAT, ALT_MARK_LUMA);
-}
+static lv_color_t alt_mark(void) { return tone_shaped(ALT_MARK_SAT, ALT_MARK_LUMA); }
 
-// The sleeve's colour as the cover tint switch asks for it: alt_mark() without
-// its monochrome guard. That guard is the palettes' own business -- Amber on
-// Black and OLED are one hue on purpose, and the Waveform arrangement
-// respects it -- but a switch the user has found and turned on is an
-// instruction, and leaving it silently doing nothing on those two themes
-// makes it read as broken rather than as a palette being kept. So where the
-// switch is on, the record wins on every theme; where it is off, nothing here
-// is asked at all and the guard stands exactly as it did.
+// The sleeve's colour as the cover tint switch asks for it.
 static lv_color_t cover_mark(void) { return tone_shaped(ALT_MARK_SAT, ALT_MARK_LUMA); }
 
 static lv_color_t chrome_accent(void) {
-	// Switched on, the sleeve's colour comes before every palette answer
-	// below, the monochrome ones included: the record winning over the theme
-	// is the whole of what the switch says. album_tone is 0 until a cover is
-	// on screen, so a track with no artwork keeps exactly the colours it has
-	// always had.
+	// Switched on, the sleeve's colour comes before the theme's own: the
+	// record winning over the theme is the whole of what the switch says.
+	// album_tone is 0 until a cover is on screen, so a track with no artwork
+	// keeps exactly the colours it has always had.
 	if (cover_tint && album_tone) {
 		return cover_mark();
-	}
-	if (theme_is_monochrome()) {
-		return theme_player_chrome_color(THEME_PLAYER_CHROME_PLAYBACK);
-	}
-	// Tokyo Night's play/pause glyph, and whatever else lights up with it,
-	// wears the deck's violet rather than the theme accent: the accent stays
-	// with the progress bar, which is what the palette preview promises.
-	if (theme_is_tokyo_night()) {
-		return theme_player_chrome_color(THEME_PLAYER_CHROME_PLAYBACK);
 	}
 	return layout_wave_now ? alt_mark() : theme()->accent;
 }
 
 // What the played stretch of the progress bar and the middle of its knob are
-// drawn in. Its own answer and not chrome_accent()'s: the two have never been
-// the same colour on every palette -- Tokyo Night's bar keeps the theme
-// accent while its play glyph wears the deck's violet -- so the cover tint
-// needs a way to take the bar over that leaves that alone. The knob's white
+// drawn in. Its own answer and not chrome_accent()'s, so the cover tint can
+// take the bar over without also taking the play glyph. The knob's white
 // ring and the unplayed stretch are set when the page is built and when the
 // theme changes, and are no part of this either way.
 static lv_color_t progress_tint(void) {
 	if (cover_tint && album_tone) {
-		return cover_mark(); // the switch's colour, on the monochrome palettes too
+		return cover_mark(); // the switch's colour
 	}
-	return theme_is_monochrome() ? theme_player_chrome_color(THEME_PLAYER_CHROME_PLAYBACK) : theme()->accent;
+	return theme()->accent;
 }
 
 static void paint_progress_tint(void) {
@@ -1095,13 +1045,8 @@ static void paint_alt_tint(void) {
 	}
 
 	lv_color_t surface = alt_surface();
-	bool mono = theme_is_monochrome();
-	lv_color_t title_ink = mono
-						 ? theme_player_chrome_color(THEME_PLAYER_CHROME_PRIMARY)
-						 : alt_ink();
-	lv_color_t artist_ink = mono
-						  ? theme_player_chrome_color(THEME_PLAYER_CHROME_SECONDARY)
-						  : title_ink;
+	lv_color_t title_ink = alt_ink();
+	lv_color_t artist_ink = title_ink;
 
 	lv_obj_set_style_bg_color(alt_title_pill, surface, 0);
 	lv_obj_set_style_bg_color(alt_artist_pill, surface, 0);
@@ -1112,7 +1057,7 @@ static void paint_alt_tint(void) {
 	}
 	if (song_artist_label) {
 		lv_obj_set_style_text_color(song_artist_label, artist_ink, 0);
-		lv_obj_set_style_text_opa(song_artist_label, mono ? LV_OPA_COVER : LV_OPA_80, 0);
+		lv_obj_set_style_text_opa(song_artist_label, LV_OPA_80, 0);
 	}
 	update_fav_button();
 	alt_pills_sync();
@@ -1198,8 +1143,7 @@ static void slider_over_waveform(bool over) {
 	lv_obj_set_size(progress_slider, compact_progress_width > 0 ? compact_progress_width : lv_pct(100),
 				 PROGRESS_TRACK_HEIGHT);
 	lv_obj_remove_local_style_prop(progress_slider, LV_STYLE_BG_OPA, LV_PART_MAIN);
-	lv_obj_set_style_bg_opa(progress_slider,
-							 theme_is_monochrome() ? LV_OPA_COVER : LV_OPA_30, LV_PART_MAIN);
+	lv_obj_set_style_bg_opa(progress_slider, LV_OPA_30, LV_PART_MAIN);
 	lv_obj_remove_local_style_prop(progress_slider, LV_STYLE_BG_OPA, LV_PART_INDICATOR);
 	lv_obj_remove_local_style_prop(progress_slider, LV_STYLE_OPA, LV_PART_KNOB);
 }
@@ -1254,15 +1198,9 @@ static bool studio_up;
 static int studio_box_w, studio_box_h; // the panel this arrangement is laid out on
 static bool lyrics_look_on;			   // the words have Studio's look up, see lyrics_look()
 
-// OLED keeps the page black behind Now Playing: the blurred copy of the sleeve
-// the V1 lays behind the standard and alternative arrangements, and behind the
-// words, is a lit background, and the theme has none. Studio and Immersive keep
-// theirs -- there the artwork is what the arrangement is.
-static bool backdrop_blur_wanted(void) { return !theme_is_oled(); }
-
 // Puts the V1's screen-sized blur up behind the standard and alternative
 // arrangements, or takes it down, to match whether there is a backdrop on
-// hand (and whether the theme wants one, backdrop_blur_wanted()). Studio draws the same object itself and the words borrow it while they
+// hand. Studio draws the same object itself and the words borrow it while they
 // are up, so both of those are left alone here; the cover panel and the deck
 // are already clear on this board (compact_clear_style), so there is nothing
 // else to switch.
@@ -1270,7 +1208,7 @@ static void full_backdrop_apply(void) {
 	if (!backdrop_full || !studio_bg || layout_studio_now || lyrics_look_on) {
 		return;
 	}
-	bool have = backdrop_blur_wanted() && current_backdrop.pixels != NULL && backdrop_is_full;
+	bool have = current_backdrop.pixels != NULL && backdrop_is_full;
 	lv_image_set_src(studio_bg, have ? &current_backdrop.dsc : NULL);
 	lv_obj_set_hidden(studio_bg, !have);
 	if (have) {
@@ -1680,11 +1618,6 @@ static void lyrics_scroll_cb(lv_event_t *e) {
 // The blurred sleeve the words sit on: Studio's own, or the one made for the
 // other two arrangements. NULL while there is none.
 static const lv_image_dsc_t *lyrics_backdrop(void) {
-	// None on OLED outside Studio and Immersive: the words stand on the page's
-	// own black, in the theme's colours.
-	if (!layout_studio_now && !layout_immersive_now && !backdrop_blur_wanted()) {
-		return NULL;
-	}
 	// Studio's copy is already the shape of the screen, and so is the V1's in
 	// every arrangement: nothing to make a second one from.
 	if (layout_studio_now || backdrop_is_full) {
@@ -3096,9 +3029,8 @@ static void wave_paint(int played_px) {
 	uint8_t *alpha = wave_buf + (size_t)w * h * 2;
 	memset(alpha, 0, (size_t)w * h);
 
-	// The arrangement's own colour normally -- on a monochrome palette that
-	// is the deck's, not the sleeve's -- and the switch's where that is on, so
-	// the bars and the rest of the transport never disagree about it.
+	// The arrangement's own colour, or the switch's where that is on, so the
+	// bars and the rest of the transport never disagree about it.
 	lv_color_t tint = cover_tint && album_tone ? cover_mark() : alt_mark();
 	uint16_t packed = (uint16_t)(((tint.red & 0xF8) << 8) | ((tint.green & 0xFC) << 3) | (tint.blue >> 3));
 
@@ -3552,20 +3484,6 @@ const char *player_cover_path(void) {
 
 static void update_repeat_button(void);
 
-// Keep the player footer edge-free. Its border is already zeroed by the deck,
-// but its default focus outline or shadow can still show as a grey one-pixel
-// seam along the bottom in Amber on Black.
-static void player_clear_footer_edge(void) {
-	if (!player_menu) {
-		return;
-	}
-	lv_obj_set_style_border_width(player_menu, 0, 0);
-	lv_obj_set_style_border_opa(player_menu, LV_OPA_TRANSP, 0);
-	lv_obj_set_style_outline_width(player_menu, 0, 0);
-	lv_obj_set_style_outline_opa(player_menu, LV_OPA_TRANSP, 0);
-	lv_obj_set_style_shadow_width(player_menu, 0, 0);
-}
-
 // Repaints the bits that are coloured by hand, and rebuilds the blurred
 // artwork behind the controls -- it is dimmed towards the page background, so
 // it has to be regenerated when that background changes.
@@ -3573,20 +3491,8 @@ static void player_refresh_theme(void) {
 	if (!cover_panel)
 		return;
 
-	bool mono = theme_is_monochrome();
-	if (mono) {
-		player_clear_footer_edge();
-	}
 	lv_color_t progress_rest = lv_color_make(255, 255, 255);
 	lv_color_t overflow = lv_color_make(150, 150, 150);
-	if (mono) {
-		progress_rest = theme_player_chrome_color(THEME_PLAYER_CHROME_PROGRESS_REST);
-		overflow = theme_player_chrome_color(THEME_PLAYER_CHROME_OVERFLOW);
-	} else if (theme_is_tokyo_night()) {
-		// The ellipsis takes the deck's muted grey-violet; the bar keeps the
-		// theme accent, and the play glyph is chrome_accent()'s violet.
-		overflow = theme_player_chrome_color(THEME_PLAYER_CHROME_OVERFLOW);
-	}
 
 	if (studio_box) {
 		lv_obj_set_style_bg_color(studio_box, theme()->screen_bg, 0);
@@ -3603,7 +3509,7 @@ static void player_refresh_theme(void) {
 	cover_set_backdrop_light(false);
 	lv_obj_set_style_bg_color(progress_slider, progress_rest, LV_PART_MAIN);
 	if (!layout_wave_now) {
-		lv_obj_set_style_bg_opa(progress_slider, mono ? LV_OPA_COVER : LV_OPA_30, LV_PART_MAIN);
+		lv_obj_set_style_bg_opa(progress_slider, LV_OPA_30, LV_PART_MAIN);
 	}
 	paint_progress_tint(); // the theme's colour, or the sleeve's while the tint is on
 	set_over_cover(chrome_over_cover); // recolours the player chrome for the new palette
@@ -3701,16 +3607,10 @@ static void update_fav_button(void) {
 	// function runs last on every track change, so anything that tints it
 	// elsewhere is overwritten.
 	//
-	// Tokyo Night matches the artist line's cyan in both states. Amber's marker
-	// stays in the subdued brown sampled from the reference, instead of
-	// competing with the cream title and playback accent; OLED's in its muted
-	// grey, for the same reason.
+	// The favourite marker in the alternate and immersive arrangements. A
+	// starred track wears Adwaita yellow; an unstarred one stays subdued.
 	lv_color_t favorite_color;
-	if (theme_is_tokyo_night()) {
-		favorite_color = theme_semantic_color(THEME_SEMANTIC_CYAN);
-	} else if (theme_is_monochrome()) {
-		favorite_color = theme_player_chrome_color(THEME_PLAYER_CHROME_MUTED);
-	} else if (starred) {
+	if (starred) {
 		favorite_color = lv_color_make(246, 211, 45); // Adwaita yellow
 	} else {
 		favorite_color = layout_alt_now ? alt_ink() : lv_color_make(150, 150, 150);
@@ -3839,12 +3739,8 @@ static void update_speed_button(void) {
 		return;
 	}
 	bool normal = speed_current_permille() == AUDIOBOOK_SPEED_NORMAL;
-	lv_color_t inactive = theme_is_monochrome()
-						  ? theme_player_chrome_color(THEME_PLAYER_CHROME_MUTED)
-						  : lv_color_make(100, 100, 100);
-	lv_color_t active = theme_is_monochrome()
-						? theme_player_chrome_color(THEME_PLAYER_CHROME_PLAYBACK)
-						: theme()->accent;
+	lv_color_t inactive = lv_color_make(100, 100, 100);
+	lv_color_t active = theme()->accent;
 	lv_obj_set_style_image_recolor(speed_btn_icon, normal ? inactive : active, 0);
 	lv_obj_set_style_image_recolor_opa(speed_btn_icon, LV_OPA_COVER, 0);
 }
@@ -3889,9 +3785,7 @@ static void update_repeat_button(void) {
 	// Active playback modes use the reference's dark orange. Shuffle/repeat
 	// when inactive has its own deep-brown role rather than the artist color.
 	lv_color_t active = chrome_accent();
-	lv_color_t inactive = (theme_is_monochrome() || theme_is_tokyo_night())
-							  ? theme_player_chrome_color(THEME_PLAYER_CHROME_SHUFFLE_IDLE)
-							  : lv_color_make(100, 100, 100);
+	lv_color_t inactive = lv_color_make(100, 100, 100);
 
 	const lv_image_dsc_t *icon;
 	lv_color_t color;
@@ -5051,17 +4945,9 @@ void player_init(gui_config_t *cfg) {
 	// centred square sleeve in what is left above it, and the blurred artwork
 	// behind the whole screen rather than behind the deck alone.
 	const bool compact = bp_is_tempotec_v1();
-	const bool mono_theme = theme_is_monochrome();
 	lv_color_t progress_rest_color = lv_color_make(255, 255, 255);
 	lv_color_t playback_color = theme()->accent;
 	lv_color_t overflow_color = lv_color_make(150, 150, 150);
-	if (mono_theme) {
-		progress_rest_color = theme_player_chrome_color(THEME_PLAYER_CHROME_PROGRESS_REST);
-		playback_color = theme_player_chrome_color(THEME_PLAYER_CHROME_PLAYBACK);
-		overflow_color = theme_player_chrome_color(THEME_PLAYER_CHROME_OVERFLOW);
-	} else if (theme_is_tokyo_night()) {
-		overflow_color = theme_player_chrome_color(THEME_PLAYER_CHROME_OVERFLOW);
-	}
 	backdrop_full = compact;
 	// The frost Immersive puts under its deck keeps more of the photograph's
 	// light than the blur a title is read on elsewhere: it is looked through.
@@ -5133,9 +5019,6 @@ void player_init(gui_config_t *cfg) {
 	lv_obj_set_flex_flow(player_menu, LV_FLEX_FLOW_COLUMN);
 	lv_obj_set_flex_align(player_menu, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 	lv_obj_set_style_border_width(player_menu, 0, 0);
-	if (theme_is_monochrome()) {
-		player_clear_footer_edge();
-	}
 	lv_obj_set_style_radius(player_menu, 0, 0);
 	lv_obj_set_style_pad_hor(player_menu, deck_side, 0);
 	if (compact) {
@@ -5292,7 +5175,7 @@ void player_init(gui_config_t *cfg) {
 
 	lv_obj_set_style_radius(progress_slider, LV_RADIUS_CIRCLE, LV_PART_MAIN);
 	lv_obj_set_style_bg_color(progress_slider, progress_rest_color, LV_PART_MAIN);
-	lv_obj_set_style_bg_opa(progress_slider, mono_theme ? LV_OPA_COVER : LV_OPA_30, LV_PART_MAIN);
+	lv_obj_set_style_bg_opa(progress_slider, LV_OPA_30, LV_PART_MAIN);
 
 	lv_obj_set_style_radius(progress_slider, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
 	lv_obj_set_style_bg_color(progress_slider, playback_color, LV_PART_INDICATOR);

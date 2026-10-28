@@ -245,8 +245,8 @@ static void rebuild(void) {
 			.icon = icon,
 			.action_user = launch_tile_cb,
 			.user = &apps[i],
-			// An app's icon is its own colour drawing; the monochrome layout
-			// must not recolor it or swap in one of its menu glyphs.
+			// An app's icon is its own colour drawing; the Morpthis layout must
+			// not recolor it or swap in one of its menu glyphs.
 			.keep_color = true,
 		};
 	}

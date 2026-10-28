@@ -1,6 +1,6 @@
 # Morpthis
 
-![Morpthis for TempoTec Variations V1 with the Tokyo Night main menu](screenshots/readme-banner.jpg)
+![Morpthis for TempoTec Variations V1 with the Morpthis main menu](screenshots/readme-banner.jpg)
 
 **Morpthis** is a community port and rebrand of the original **[Sonix Player](https://github.com/Jepl4r/sonix-player)** project by **[Jepl4r](https://github.com/Jepl4r)** — a replacement music player for the HiBy R3 Pro II and HiBy R1 — to the **TempoTec Variations V1**. The player and the firmware packer come from that project; this fork adds the V1 board profile, the V1 packaging path, the Morpthis identity and the V1 documentation. See [Credits](#credits).
 
@@ -16,7 +16,7 @@ This is not an official TempoTec or HiBy release. **The port has been tested on 
   - Soon™️
 - [Build a firmware image](#build-a-firmware-image)
 - [Install or restore firmware](#install-or-restore-firmware)
-- [Streaming credentials](#streaming-credentials)
+- [Last.fm credentials](#lastfm-credentials)
 - [Build from source](#build-from-source)
 - [Project files and documentation](#project-files-and-documentation)
 - [Credits](#credits)
@@ -41,7 +41,7 @@ The player UI is built with LVGL 9.6 and adapted for the V1's small display. The
 
 ## Features
 
-The project includes a local music library and file browser, album artwork, playlists, lyrics, audiobooks and DSP controls. The player also contains code for streaming and network features such as Bluetooth audio, AirPlay, DLNA and Wi-Fi file transfer.
+The project includes a local music library and file browser, album artwork, playlists, lyrics, audiobooks and DSP controls. The player also contains network features such as Bluetooth audio, AirPlay, DLNA and Wi-Fi file transfer.
 
 Local audio decoder inputs include WAV, FLAC, MP3, Ogg Vorbis, Opus, M4A/M4B/MP4, AAC, ALAC, WavPack, APE, AIFF/AIFC, CAF and DSD (DSF/DFF) files. DSP features include a 10-band graphic equalizer, parametric EQ, MSEB, crossfeed, channel balance and ReplayGain.
 
@@ -49,7 +49,7 @@ The interface font is a setting (Settings → Appearance → Font): MiSans, Neon
 
 The boot screen is a setting too (Settings → Appearance → Boot screen), and it opens a **Boot screen centre**: a horizontal carousel of **Retrospace** (the default), **Stock** (the firmware's own light and dark pictures), and any JPEG or PNG the user puts in the `.bootscreen` folder at the root of the card. The picture in the middle is drawn large and the ones either side shrink as the row is dragged; the applied picture sits in its own column at the far left, behind a vertical rule, and **Apply** writes the selected one to the device. A custom picture is copied to the writable partition and into the same flash marker the theme uses, so it survives the card being removed and appears from the next power-on. The choice cannot live in the config alone — the script that draws the logo runs before any filesystem holding a config is mounted.
 
-See [FEATURES.md](FEATURES.md) for a longer feature list. Streaming services also require valid credentials and may depend on third-party service availability.
+See [FEATURES.md](FEATURES.md) for a longer feature list.
 
 ## Install or restore firmware
 
@@ -62,25 +62,13 @@ Only attempt this on a TempoTec Variations V1. Read the warning above before pro
 
 The package builder is designed to preserve the stock `xImage` kernel and leave the existing update/recovery path in place. This is checked during the build, but it is **not** a guarantee that recovery will work on every device or in every failure case.
 
-## Streaming credentials
+## Last.fm credentials
 
-Credentials for Qobuz, Tidal, Podcast Index and Last.fm are not included in this repository or in the standard workflow artifact. Without usable credentials, those services remain disabled; local playback does not require them.
+Last.fm scrobbling is the only service in the player that needs credentials. They are not included in this repository or in the standard workflow artifact; without them Last.fm stays off, and local playback is unaffected.
 
-To try credentials on a build that has no keys embedded, copy `sonix-player/streaming-keys.ini.example` to the root of the microSD card as `streaming-keys.ini`, fill in only the services for which you have authorized credentials, then restart the player. Do not commit or share this file.
+To try credentials on a build that has none embedded, copy `morpthis-player/streaming-keys.ini.example` to the root of the microSD card as `streaming-keys.ini`, fill in the Last.fm keys, then restart the player. Do not commit or share this file.
 
 ```ini
-[qobuz]
-app_id =
-app_secret =
-
-[tidal]
-client_id =
-client_secret =
-
-[podcast]
-api_key =
-api_secret =
-
 [lastfm]
 api_key =
 api_secret =
@@ -102,7 +90,7 @@ adb shell ls -l /mnt/sd_0/.local/cacert.pem
 
 `Get-Item` should show that the downloaded file exists and has a non-zero length; the final `ls` checks the copy on the card. If the file was downloaded somewhere other than `Downloads`, use its actual path in the `adb push` command.
 
-If `[network] ca_bundle` is set in `/usr/data/device_config.ini`, that configured file takes priority: update that file instead. Otherwise, the player checks `/mnt/sd_0/.local/cacert.pem` before its firmware CA bundle. After copying, restart the player normally so it reloads the certificates; do not interrupt an update that is still in progress. If the TLS error persists, try a different trusted Wi-Fi network and see [how to collect a log](docs/collecting-logs.md). Never share `streaming-keys.ini`, API secrets, or your Last.fm password.
+If `[network] ca_bundle` is set in `/usr/data/device_config.ini`, that configured file takes priority: update that file instead. Otherwise, the player checks `/mnt/sd_0/.local/cacert.pem` before its firmware CA bundle. After copying, restart the player normally so it reloads the certificates; do not interrupt an update that is still in progress. If the TLS error persists, try a different trusted Wi-Fi network and see [how to collect a log](docs/collecting-logs.md). Never share the API-key file, API secrets, or your Last.fm password.
 
 ### Your own server with a self-signed certificate
 
@@ -141,7 +129,7 @@ The Subsonic app uses the player's raw PCM output (`morpthis_audio_open_ex`/`wri
 - `PATCHES.md` — device-porting and implementation notes.
 - `LICENSE` — GNU General Public License, version 3. Third-party components retain their own licenses.
 
-For bug reports, include the exact model, the firmware build/commit and relevant logs — see [Collecting logs for a bug report](docs/collecting-logs.md) for what to turn on and where the files are. Remove personal data and **never attach streaming credentials**.
+For bug reports, include the exact model, the firmware build/commit and relevant logs — see [Collecting logs for a bug report](docs/collecting-logs.md) for what to turn on and where the files are. Remove personal data and **never attach credentials**.
 
 ## Credits
 

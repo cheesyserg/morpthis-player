@@ -1560,7 +1560,7 @@ uint16_t *display_capture_frame(int *out_w, int *out_h) {
 
 	// One block, kept for the life of the process instead of allocating one
 	// per shot: nearly 700 KB contiguous, which is exactly the request malloc
-	// refuses on this device while Qobuz is downloading and a decoder is open.
+	// refuses on this device while an app is downloading and a decoder is open.
 	//
 	// The caller must not free it (see screenshot.c): the block stays here.
 	static uint16_t *copy;

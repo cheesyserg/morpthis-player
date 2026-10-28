@@ -660,20 +660,13 @@ void switch_screen_cb(lv_event_t *e) {
 	switch_screen(target_screen);
 }
 
-// Amber on Black uses the more restrained chevron color sampled from the
-// reference screen, and OLED its own chevron role in the same place. Other
-// themes retain the white, slightly translucent mark over cover art and
-// inherit their normal icon colour everywhere else.
+// The chevron is white and slightly translucent over cover art, and inherits
+// the normal icon colour everywhere else.
 static void chevron_apply_color(void) {
 	if (!back_btn_icon) {
 		return;
 	}
-	if (theme_is_monochrome()) {
-		lv_obj_set_style_image_recolor(back_btn_icon,
-									   theme_player_chrome_color(THEME_PLAYER_CHROME_CHEVRON), 0);
-		lv_obj_set_style_image_recolor_opa(back_btn_icon, LV_OPA_COVER, 0);
-		lv_obj_remove_local_style_prop(back_btn_icon, LV_STYLE_IMAGE_OPA, 0);
-	} else if (chevron_in_player && chevron_over_cover) {
+	if (chevron_in_player && chevron_over_cover) {
 		lv_obj_set_style_image_recolor(back_btn_icon, lv_color_white(), 0);
 		lv_obj_set_style_image_recolor_opa(back_btn_icon, LV_OPA_COVER, 0);
 		// See-through over the artwork, so the sleeve shows behind the chevron.

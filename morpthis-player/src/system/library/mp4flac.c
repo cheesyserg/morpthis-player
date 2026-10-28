@@ -15,7 +15,7 @@
 // next eight bytes (64-bit).
 //
 // Everything reaching this file comes from the network -- segments served by
-// Tidal's CDN -- and a segment truncated by a Wi-Fi hiccup is just as likely to
+// a CDN -- and a segment truncated by a Wi-Fi hiccup is just as likely to
 // carry a nonsensical length as a deliberately malformed one. Hence three rules
 // this file never breaks:
 //

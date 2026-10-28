@@ -4,13 +4,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-// A small JSON parser for streaming-service responses.
+// A small JSON parser for service responses.
 //
-// radio.c gets by without one: it scans for keys by hand in the raw text, and
-// for radio-browser.info -- an array of flat objects, all strings and numbers
-// -- that works in twenty lines.
-//
-// Qobuz and Tidal nest four or five levels deep
+// Service APIs nest four or five levels deep
 //
 //     {"tracks":{"items":[{"album":{"image":{"small":"..."}},"performer":{...}}]}}
 //
@@ -20,7 +16,7 @@
 //
 // One pass fills an array of tokens in document order, each with its span in
 // the text, its child count and its parent. No string is copied until it is
-// asked for -- a Qobuz response is a hundred kilobytes or so, and copying it
+// asked for -- a service response is a hundred kilobytes or so, and copying it
 // twice on a device with 64 MB is not free.
 //
 // The document holds a pointer to the text, not a copy: the text must stay
@@ -51,8 +47,8 @@ typedef struct {
 } json_doc_t;
 
 // How deep nesting may go before the document is rejected. Without a limit a
-// document of nothing but opening brackets takes down the stack. Qobuz and
-// Tidal never pass the fifth level.
+// document of nothing but opening brackets takes down the stack. Service APIs
+// never pass the fifth level.
 #define JSON_MAX_DEPTH 64
 
 // Parses `text`. False on malformed JSON, out of memory, or nesting past the
@@ -101,11 +97,10 @@ long json_long(const json_doc_t *doc, int tok, long fallback);
 
 // The same at 64 bits. `long` is 32 bits here, so an id above 2147483647 does
 // not fit, and strtol saturates rather than returning garbage: every such id
-// comes back as exactly 2147483647. Podcast Index episode ids are eleven
-// digits, so json_long collapsed them all onto one number, hence one cache
-// file, and the player kept playing the same episode under another episode's
-// title and duration. Use this for any id the service does not promise to keep
-// small.
+// comes back as exactly 2147483647. Some service ids are eleven digits, so
+// json_long collapsed them all onto one number, hence one cache file, and the
+// player kept playing the same episode under another episode's title and
+// duration. Use this for any id the service does not promise to keep small.
 long long json_llong(const json_doc_t *doc, int tok, long long fallback);
 
 double json_double(const json_doc_t *doc, int tok, double fallback);

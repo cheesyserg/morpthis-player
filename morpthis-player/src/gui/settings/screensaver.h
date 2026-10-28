@@ -10,20 +10,13 @@
 // the blurred cover carries the title, the artist and the time in large
 // figures. A chevron pointing up says how to get rid of it: swipe up.
 //
-// The two palettes added for the V1 -- Tokyo Night and Amber on Black -- draw
-// it the other way round: the artwork runs the whole panel and that same strip
-// is a translucent field of the palette's own colour laid over its foot, with
-// the title, the artist and the clock in the palette's ink. The blurred copy
-// is never borrowed there: a field is a colour, not a blur.
-//
 // The artwork is borrowed from the player, which has already decoded it for
 // the current track -- nothing is decoded here, so a wake stays instant.
 //
 // That is the Fill style, and the borrowed picture is the size of the player's
 // sleeve: covering the screensaver's larger area means enlarging it, which on
-// the V1 is half again in Dark and Light and twice over under the palettes'
-// field. The Framed style (see screensaver_style_t) is the other answer: the
-// artwork whole, with margins round it, at one pixel to one.
+// the V1 is half again. The Framed style (see screensaver_style_t) is the other
+// answer: the artwork whole, with margins round it, at one pixel to one.
 
 void screensaver_init(gui_config_t *cfg);
 
@@ -52,17 +45,15 @@ void screensaver_set_source(screensaver_source_t source);
 //
 // Fill is the arrangement the screensaver has always had, and the default: the
 // artwork covers its area, centre-cropped and enlarged to do it -- everything
-// above the strip in Dark and Light, the whole panel under the V1 palettes'
-// translucent field.
+// above the strip.
 //
 // Framed never enlarges. The whole picture sits in a frame with the player's
 // rounded corners and margins on every side, above the title, the artist and
 // the clock rather than under them, and it is decoded for exactly that frame
 // -- from the file, not from the player's copy -- so it is drawn one pixel to
-// one. A file that only carries a small picture shows it at its own size. Dark
-// and Light lay it on the player's blurred copy of the artwork when there is
-// one the size of the screen, which on the V1 is every arrangement but
-// Immersive; the palettes lay it on their own page colour.
+// one. A file that only carries a small picture shows it at its own size. The
+// frame is laid on the player's blurred copy of the artwork when there is one
+// the size of the screen, which on the V1 is every arrangement but Immersive.
 typedef enum {
 	SCREENSAVER_STYLE_FILL = 0,
 	SCREENSAVER_STYLE_FRAMED,

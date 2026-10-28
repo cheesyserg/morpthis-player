@@ -240,21 +240,15 @@ static void remember_timer_cb(lv_timer_t *timer) {
 	clock_remember();
 }
 
-// Amber on Black and OLED map the battery's semantic colours to their accent
-// (signal orange, white). Give these two status glyphs that same colour; in
-// every other theme they continue to inherit the regular icon style.
-static void refresh_status_icon_color(lv_obj_t *icon) {
+// Give these status glyphs the shared icon style: none of them keeps a local
+// recolour after a palette change.
+static void clear_status_icon_color(lv_obj_t *icon) {
 	if (!icon) {
 		return;
 	}
 
-	if (theme_is_monochrome()) {
-		lv_obj_set_style_image_recolor(icon, theme_semantic_color(THEME_SEMANTIC_GREEN), 0);
-		lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, 0);
-	} else {
-		lv_obj_remove_local_style_prop(icon, LV_STYLE_IMAGE_RECOLOR, 0);
-		lv_obj_remove_local_style_prop(icon, LV_STYLE_IMAGE_RECOLOR_OPA, 0);
-	}
+	lv_obj_remove_local_style_prop(icon, LV_STYLE_IMAGE_RECOLOR, 0);
+	lv_obj_remove_local_style_prop(icon, LV_STYLE_IMAGE_RECOLOR_OPA, 0);
 }
 
 // The volume number is held at the width of the widest reading it can show, so
@@ -320,7 +314,7 @@ void topbar_refresh_volume(int percent) {
 		icon = &icon_volume_low;
 	}
 	lv_image_set_src(vol_icon, icon);
-	refresh_status_icon_color(vol_icon);
+	clear_status_icon_color(vol_icon);
 }
 
 // Shows or hides the headphone glyph to match what is in the jacks. Four times
@@ -399,13 +393,11 @@ static void refresh_headphone_icon(bool force) {
 
 	lv_obj_set_hidden(hp_icon, false);
 	if (state == JACK_BALANCED) {
-		// Gold marks the balanced output; the monochrome palettes use their
-		// accent rather than introducing a second hue.
-		lv_obj_set_style_image_recolor(hp_icon,
-									   theme_is_monochrome() ? theme()->accent : lv_color_make(212, 175, 55), 0);
+		// Gold marks the balanced output.
+		lv_obj_set_style_image_recolor(hp_icon, lv_color_make(212, 175, 55), 0);
 		lv_obj_set_style_image_recolor_opa(hp_icon, LV_OPA_COVER, 0);
 	} else if (theme_uses_function_glyphs()) {
-		// Cyan marks the listening/output glyph in Tokyo Night.
+		// Cyan marks the listening/output glyph in the Morpthis style.
 		lv_obj_set_style_image_recolor(hp_icon, theme_semantic_color(THEME_SEMANTIC_CYAN), 0);
 		lv_obj_set_style_image_recolor_opa(hp_icon, LV_OPA_COVER, 0);
 	} else {
@@ -543,9 +535,7 @@ void topbar_refresh_radios(void) {
 			char codec[BT_CODEC_MAX];
 			lv_color_t color;
 			bt_current_codec(codec, sizeof(codec));
-			// Amber on Black and OLED stay monochrome even when codec metadata
-			// is known; Tokyo Night keeps its codec-family colors.
-			if (codec[0] && !theme_is_monochrome() && bt_codec_color(codec, &color)) {
+			if (codec[0] && bt_codec_color(codec, &color)) {
 				lv_obj_set_style_image_recolor(bt_icon, color, 0);
 				lv_obj_set_style_image_recolor_opa(bt_icon, LV_OPA_COVER, 0);
 			} else if (theme_uses_function_glyphs()) {
@@ -679,12 +669,7 @@ static void refresh_play_icon(const device_state_t *state) {
 	// background.
 	if (apphost_audio_active()) {
 		lv_image_set_src(play_icon, apphost_audio_playing() ? &icon_play_status : &icon_pause_status);
-		if (theme_is_monochrome()) {
-			refresh_status_icon_color(play_icon);
-		} else {
-			lv_obj_remove_local_style_prop(play_icon, LV_STYLE_IMAGE_RECOLOR, 0);
-			lv_obj_remove_local_style_prop(play_icon, LV_STYLE_IMAGE_RECOLOR_OPA, 0);
-		}
+		clear_status_icon_color(play_icon);
 		lv_obj_set_hidden(play_icon, false);
 		return;
 	}
@@ -698,15 +683,13 @@ static void refresh_play_icon(const device_state_t *state) {
 		return;
 	}
 
-	// Amber on Black and OLED keep this status glyph in the battery's colour.
-	// Other themes retain the Bluetooth-blue route indicator while it plays.
-	if (theme_is_monochrome()) {
-		refresh_status_icon_color(play_icon);
-	} else if (state->status == AUDIO_STATUS_PLAYING && bluetooth_audio_active()) {
+	// The playback glyph keeps the Bluetooth-blue route indicator while it
+	// plays; otherwise it inherits the regular icon style.
+	if (state->status == AUDIO_STATUS_PLAYING && bluetooth_audio_active()) {
 		// Fixed Bluetooth blue rather than the accent: it means wireless, not active.
 		lv_obj_set_style_image_recolor(play_icon,
 									   theme_uses_function_glyphs() ? theme_semantic_color(THEME_SEMANTIC_BLUE)
-														 : lv_color_make(0, 122, 255),
+													 : lv_color_make(0, 122, 255),
 									   0);
 	} else {
 		lv_obj_remove_local_style_prop(play_icon, LV_STYLE_IMAGE_RECOLOR, 0);
@@ -971,7 +954,7 @@ static void topbar_refresh_theme(void) {
 	// theme style, so repaint them in the same frame as the palette switch.
 	refresh_headphone_icon(true);
 	topbar_refresh_radios();
-	refresh_status_icon_color(vol_icon);
+	clear_status_icon_color(vol_icon);
 	topbar_refresh_playback();
 }
 
@@ -1110,7 +1093,7 @@ void topbar_init(gui_config_t *cfg) {
 	lv_image_set_src(vol_icon, &icon_volume_high);
 	compact_status_icon(vol_icon, &icon_volume_high);
 	lv_obj_add_style(vol_icon, &theme_style_icon, 0);
-	refresh_status_icon_color(vol_icon);
+	clear_status_icon_color(vol_icon);
 
 	vol_label = lv_label_create(container_left);
 	lv_label_set_text(vol_label, "--");
@@ -1243,8 +1226,7 @@ void topbar_init(gui_config_t *cfg) {
 
 	bat_bolt = lv_image_create(bat_widget);
 	lv_image_set_src(bat_bolt, &icon_battery_charging_bolt);
-	lv_obj_set_style_image_recolor(bat_bolt,
-								   theme_is_monochrome() ? theme()->accent : lv_color_make(245, 205, 60), 0);
+	lv_obj_set_style_image_recolor(bat_bolt, lv_color_make(245, 205, 60), 0);
 	lv_obj_set_style_image_recolor_opa(bat_bolt, LV_OPA_COVER, 0);
 	if (topbar_compact) {
 		lv_image_set_scale(bat_bolt, (uint32_t)(LV_SCALE_NONE * battery_icon_size / BATTERY_ICON_SIZE));

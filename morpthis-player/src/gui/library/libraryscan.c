@@ -239,7 +239,7 @@ static bool pick_add(const char *name) {
 }
 
 // The folders at the root of the card, alphabetically: not the hidden ones,
-// not the ones a desktop leaves behind, and not Audiobooks or the Podcast
+// not the ones a desktop leaves behind, and not Audiobooks or the downloads
 // folder older builds left behind, which the music scan never reads.
 static void pick_read_folders(void) {
 	pick_clear();
@@ -249,7 +249,7 @@ static void pick_read_folders(void) {
 	}
 	struct dirent *de;
 	while ((de = readdir(dir)) != NULL) {
-		if (de->d_name[0] == '.' || playlist_is_junk_name(de->d_name) || strcasecmp(de->d_name, AUDIOBOOKDB_FOLDER) == 0 || strcasecmp(de->d_name, LIBRARY_LEGACY_PODCAST_FOLDER) == 0) {
+		if (de->d_name[0] == '.' || playlist_is_junk_name(de->d_name) || strcasecmp(de->d_name, AUDIOBOOKDB_FOLDER) == 0 || strcasecmp(de->d_name, LIBRARY_LEGACY_DOWNLOADS_FOLDER) == 0) {
 			continue;
 		}
 		char path[768];

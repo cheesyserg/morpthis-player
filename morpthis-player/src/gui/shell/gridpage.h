@@ -32,7 +32,7 @@ typedef struct {
 	void *user;
 
 	// The icon is a colour drawing (an app's own icon) and is left alone in
-	// every layout, including the monochrome one. Menu glyphs leave it false.
+	// every layout. Menu glyphs leave it false.
 	bool keep_color;
 } grid_entry_t;
 
@@ -46,7 +46,7 @@ typedef struct {
 // the grid does not have to be built again to swap two of them.
 void gridpage_set_tile(lv_obj_t *grid, int index, const lv_image_dsc_t *icon, const char *label);
 
-// Replaces a tile's image and optionally tints it with a Tokyo Night semantic
+// Replaces a tile's image and optionally tints it with a Morpthis semantic
 // colour. `icon_size` is the displayed long side (the source is scaled without
 // changing its pixel data); `glow` adds a small, static low-opacity echo behind
 // the glyph. Passing glow=false hides an echo that was created earlier.
@@ -55,21 +55,21 @@ void gridpage_set_tile_icon_style(lv_obj_t *grid, int index, const lv_image_dsc_
 
 // Sets a tile's contents in a horizontal icon-and-label row, or restores the
 // original centered vertical layout. The horizontal form is used by the V1's
-// Tokyo Night home menu; existing themes keep their original construction.
+// Morpthis home menu; existing themes keep their original construction.
 void gridpage_set_tile_orientation(lv_obj_t *grid, int index, bool horizontal);
 
 // Hides a tile caption without deleting its text or changing other grids.
 // Pair with the vertical orientation to center an icon on its own.
 void gridpage_set_tile_label_hidden(lv_obj_t *grid, int index, bool hidden);
 
-// Lets selected Tokyo Night captions use up to `lines` tidy lines instead of
+// Lets selected Morpthis captions use up to `lines` tidy lines instead of
 // the default one-line ellipsis (for labels such as File Manager and Album
 // artist). The caller restores one line when returning to Dark or Light.
 void gridpage_set_tile_label_lines(lv_obj_t *grid, int index, int lines);
 
 // Reflows an existing grid into a different screen area. Used by the V1's
-// Tokyo Night home screen to reserve space for its heading and mini-player,
-// without duplicating the six tile objects or changing Dark/Light geometry.
+// Morpthis home screen to reserve space for its heading and mini-player,
+// without duplicating the tile objects or changing Dark/Light geometry.
 void gridpage_set_layout(lv_obj_t *grid, gui_config_t *cfg, int top, int bottom, int padding, int gap, int columns,
 						 int rows);
 

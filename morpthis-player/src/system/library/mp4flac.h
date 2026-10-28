@@ -8,7 +8,7 @@
 
 // Extracting a real FLAC file out of MP4 segments.
 //
-// Tidal hi-res does not arrive as a file: it arrives as DASH, an
+// Hi-res audio does not always arrive as a file: it may arrive as DASH, an
 // initialisation segment plus a few dozen audio segments, all in fragmented
 // MP4. What is inside is not AAC but FLAC -- the same frames a .flac file
 // would hold, byte for byte, only wrapped.

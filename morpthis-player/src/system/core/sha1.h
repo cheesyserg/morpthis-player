@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 
-// SHA-1, for one reason: Podcast Index signs every request with it.
+// SHA-1, for one reason: some service APIs sign every request with it.
 //
 // As with the MD5 next door, this is not a choice made here and it protects
 // nothing of this project's -- it is the lock the service puts on its own door,
@@ -14,7 +14,7 @@
 // Written here rather than taken from the libcrypto the device already carries
 // (see tls.h) for the same two reasons as MD5: it is a hundred and fifty
 // dependency-free lines testable against the FIPS 180-1 vectors, and that
-// library is opened at run time and may be absent -- making the podcast list
+// library is opened at run time and may be absent -- making an API call
 // depend on a TLS library loading would be a pointless coupling, since nothing
 // in the signature is TLS.
 //

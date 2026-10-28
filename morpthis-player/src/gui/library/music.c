@@ -32,9 +32,9 @@
 
 lv_obj_t *music_screen;
 
-#define TOKYO_RECENT_COUNT 2
-#define TOKYO_BROWSE_COUNT 4
-#define TOKYO_SHORTCUT_COUNT (MUSIC_TILE_COUNT + 1)
+#define MORPTHIS_RECENT_COUNT 2
+#define MORPTHIS_BROWSE_COUNT 4
+#define MORPTHIS_SHORTCUT_COUNT (MUSIC_TILE_COUNT + 1)
 
 typedef struct {
 	lv_obj_t *button;
@@ -54,15 +54,15 @@ typedef struct {
 	theme_semantic_t tone;
 } browse_tile_t;
 
-static recent_row_t recent_rows[TOKYO_RECENT_COUNT];
-static browse_tile_t browse_tiles[TOKYO_BROWSE_COUNT];
-static browse_tile_t shortcut_rows[TOKYO_SHORTCUT_COUNT];
-static lv_obj_t *tokyo_music_panel;
-static lv_obj_t *tokyo_browse_grid;
-static lv_obj_t *tokyo_shortcut_card;
-static lv_obj_t *tokyo_recent_card;
-static lv_obj_t *tokyo_recent_empty;
-static lv_obj_t *tokyo_scan_button;
+static recent_row_t recent_rows[MORPTHIS_RECENT_COUNT];
+static browse_tile_t browse_tiles[MORPTHIS_BROWSE_COUNT];
+static browse_tile_t shortcut_rows[MORPTHIS_SHORTCUT_COUNT];
+static lv_obj_t *morpthis_music_panel;
+static lv_obj_t *morpthis_browse_grid;
+static lv_obj_t *morpthis_shortcut_card;
+static lv_obj_t *morpthis_recent_card;
+static lv_obj_t *morpthis_recent_empty;
+static lv_obj_t *morpthis_scan_button;
 static int cached_queue_count = -1;
 static int cached_queue_current = -2;
 static unsigned cached_queue_revision = (unsigned)-1;
@@ -315,7 +315,7 @@ static lv_obj_t *make_browse_button(lv_obj_t *parent, const char *label_key, con
 	lv_image_set_scale(icon, source_side ? (uint32_t)(LV_SCALE_NONE * 17 / source_side) : LV_SCALE_NONE);
 	lv_obj_set_style_image_recolor(icon, theme_semantic_color(tone), 0);
 	lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, 0);
-	if (index >= 0 && index < TOKYO_BROWSE_COUNT) {
+	if (index >= 0 && index < MORPTHIS_BROWSE_COUNT) {
 		browse_tiles[index] = (browse_tile_t){.button = button, .icon = icon, .tone = tone};
 	}
 
@@ -364,34 +364,34 @@ typedef struct {
 	theme_semantic_t tone;
 	bool wrap_shortcut;
 	lv_event_cb_t callback;
-} tokyo_tile_spec_t;
+} morpthis_tile_spec_t;
 
-static tokyo_tile_spec_t tokyo_spec_for_tile(music_tile_id_t id) {
+static morpthis_tile_spec_t morpthis_spec_for_tile(music_tile_id_t id) {
 	switch (id) {
 	case MUSIC_TILE_ALL_TRACKS:
-		return (tokyo_tile_spec_t){"music_all_tracks", &icon_music2, THEME_SEMANTIC_CYAN, false, shortcut_all_tracks_cb};
+		return (morpthis_tile_spec_t){"music_all_tracks", &icon_music2, THEME_SEMANTIC_CYAN, false, shortcut_all_tracks_cb};
 	case MUSIC_TILE_ALBUMS:
-		return (tokyo_tile_spec_t){"albums", &icon_album, THEME_SEMANTIC_PURPLE, false, browse_albums_cb};
+		return (morpthis_tile_spec_t){"albums", &icon_album, THEME_SEMANTIC_PURPLE, false, browse_albums_cb};
 	case MUSIC_TILE_ARTISTS:
-		return (tokyo_tile_spec_t){"artists", &icon_artist, THEME_SEMANTIC_CYAN, false, browse_artists_cb};
+		return (morpthis_tile_spec_t){"artists", &icon_artist, THEME_SEMANTIC_CYAN, false, browse_artists_cb};
 	case MUSIC_TILE_ALBUM_ARTISTS:
-		return (tokyo_tile_spec_t){"music_album_artist", &icon_artist_album, THEME_SEMANTIC_BLUE, true,
+		return (morpthis_tile_spec_t){"music_album_artist", &icon_artist_album, THEME_SEMANTIC_BLUE, true,
 								   browse_album_artists_cb};
 	case MUSIC_TILE_GENRES:
-		return (tokyo_tile_spec_t){"music_genres", &icon_genre, THEME_SEMANTIC_AMBER, false, shortcut_genres_cb};
+		return (morpthis_tile_spec_t){"music_genres", &icon_genre, THEME_SEMANTIC_AMBER, false, shortcut_genres_cb};
 	case MUSIC_TILE_YEARS:
-		return (tokyo_tile_spec_t){"music_years", &icon_year, THEME_SEMANTIC_AMBER, false, shortcut_years_cb};
+		return (morpthis_tile_spec_t){"music_years", &icon_year, THEME_SEMANTIC_AMBER, false, shortcut_years_cb};
 	case MUSIC_TILE_PLAYLISTS:
-		return (tokyo_tile_spec_t){"playlists", &icon_list_music, THEME_SEMANTIC_GREEN, false, shortcut_playlists_cb};
+		return (morpthis_tile_spec_t){"playlists", &icon_list_music, THEME_SEMANTIC_GREEN, false, shortcut_playlists_cb};
 	case MUSIC_TILE_MOST_PLAYED:
-		return (tokyo_tile_spec_t){"music_most_played", &icon_most_played, THEME_SEMANTIC_PURPLE, false,
+		return (morpthis_tile_spec_t){"music_most_played", &icon_most_played, THEME_SEMANTIC_PURPLE, false,
 								   shortcut_most_played_cb};
 	case MUSIC_TILE_AUDIOBOOKS:
-		return (tokyo_tile_spec_t){"audiobooks", &icon_files_audiobook, THEME_SEMANTIC_AMBER, false,
+		return (morpthis_tile_spec_t){"audiobooks", &icon_files_audiobook, THEME_SEMANTIC_AMBER, false,
 								   browse_audiobooks_cb};
 	case MUSIC_TILE_BROWSE:
 	default:
-		return (tokyo_tile_spec_t){"music_browse", &icon_folder, THEME_SEMANTIC_GREEN, false, browse_music_cb};
+		return (morpthis_tile_spec_t){"music_browse", &icon_folder, THEME_SEMANTIC_GREEN, false, browse_music_cb};
 	}
 }
 
@@ -421,7 +421,7 @@ static void add_shortcut_row(lv_obj_t *card, const char *label_key, const lv_ima
 	lv_image_set_inner_align(icon, LV_IMAGE_ALIGN_CENTER);
 	lv_obj_set_style_image_recolor(icon, theme_semantic_color(tone), 0);
 	lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, 0);
-	if (index >= 0 && index < TOKYO_SHORTCUT_COUNT) {
+	if (index >= 0 && index < MORPTHIS_SHORTCUT_COUNT) {
 		shortcut_rows[index] = (browse_tile_t){.button = button, .icon = icon, .tone = tone};
 	}
 
@@ -458,14 +458,14 @@ static lv_obj_t *music_shortcut_card(lv_obj_t *parent) {
 	return card;
 }
 
-static void tokyo_music_populate(void) {
-	if (!tokyo_browse_grid || !tokyo_shortcut_card) {
+static void morpthis_music_populate(void) {
+	if (!morpthis_browse_grid || !morpthis_shortcut_card) {
 		return;
 	}
 	memset(browse_tiles, 0, sizeof(browse_tiles));
 	memset(shortcut_rows, 0, sizeof(shortcut_rows));
-	lv_obj_clean(tokyo_browse_grid);
-	lv_obj_clean(tokyo_shortcut_card);
+	lv_obj_clean(morpthis_browse_grid);
+	lv_obj_clean(morpthis_shortcut_card);
 
 	music_tile_id_t active[MUSIC_TILE_COUNT];
 	int count = musicsettings_main_tiles(active, MUSIC_TILE_COUNT);
@@ -483,19 +483,19 @@ static void tokyo_music_populate(void) {
 	}
 
 	for (int i = 0; i < first_browse_n; i++) {
-		tokyo_tile_spec_t spec = tokyo_spec_for_tile(active[i]);
+		morpthis_tile_spec_t spec = morpthis_spec_for_tile(active[i]);
 		bool two_lines = strchr(tr(spec.label), ' ') != NULL;
-		make_browse_button(tokyo_browse_grid, spec.label, spec.icon, spec.tone, two_lines, spec.callback, i);
+		make_browse_button(morpthis_browse_grid, spec.label, spec.icon, spec.tone, two_lines, spec.callback, i);
 	}
 	// Audiobooks is a Music destination now: keep it in the Browse card, next
 	// to the other ways into the library, even if the user saved it below them.
-	if (audiobooks_active && !audiobooks_in_browse && browse_n < TOKYO_BROWSE_COUNT) {
-		make_browse_button(tokyo_browse_grid, "audiobooks", &icon_files_audiobook, THEME_SEMANTIC_AMBER, false,
+	if (audiobooks_active && !audiobooks_in_browse && browse_n < MORPTHIS_BROWSE_COUNT) {
+		make_browse_button(morpthis_browse_grid, "audiobooks", &icon_files_audiobook, THEME_SEMANTIC_AMBER, false,
 						   browse_audiobooks_cb, browse_n++);
 		audiobooks_in_browse = true;
 	}
-	if (browse_n < TOKYO_BROWSE_COUNT) {
-		make_browse_button(tokyo_browse_grid, "search", &icon_search, THEME_SEMANTIC_AMBER, false,
+	if (browse_n < MORPTHIS_BROWSE_COUNT) {
+		make_browse_button(morpthis_browse_grid, "search", &icon_search, THEME_SEMANTIC_AMBER, false,
 						   browse_search_cb, browse_n);
 	}
 
@@ -504,70 +504,70 @@ static void tokyo_music_populate(void) {
 		if (active[i] == MUSIC_TILE_AUDIOBOOKS && audiobooks_in_browse) {
 			continue;
 		}
-		tokyo_tile_spec_t spec = tokyo_spec_for_tile(active[i]);
-		add_shortcut_row(tokyo_shortcut_card, spec.label, spec.icon, spec.tone, spec.wrap_shortcut, spec.callback,
+		morpthis_tile_spec_t spec = morpthis_spec_for_tile(active[i]);
+		add_shortcut_row(morpthis_shortcut_card, spec.label, spec.icon, spec.tone, spec.wrap_shortcut, spec.callback,
 						 row_idx++);
 	}
-	add_shortcut_row(tokyo_shortcut_card, "favourites", &icon_star, THEME_SEMANTIC_RED, false, favourites_cb,
+	add_shortcut_row(morpthis_shortcut_card, "favourites", &icon_star, THEME_SEMANTIC_RED, false, favourites_cb,
 					 row_idx++);
-	if (tokyo_music_panel) {
-		lv_obj_update_layout(tokyo_music_panel);
+	if (morpthis_music_panel) {
+		lv_obj_update_layout(morpthis_music_panel);
 	}
 }
 
-static void tokyo_music_build(gui_config_t *cfg) {
+static void morpthis_music_build(gui_config_t *cfg) {
 	if (!bp_is_tempotec_v1()) {
 		return;
 	}
 	int top = settingsrow_content_top(cfg);
-	tokyo_music_panel = lv_obj_create(music_screen);
-	music_remove_edges(tokyo_music_panel);
-	lv_obj_set_size(tokyo_music_panel, lv_pct(100), cfg->screen_height - top);
-	lv_obj_align(tokyo_music_panel, LV_ALIGN_TOP_LEFT, 0, top);
-	lv_obj_set_style_bg_opa(tokyo_music_panel, LV_OPA_TRANSP, 0);
-	lv_obj_set_style_border_width(tokyo_music_panel, 0, 0);
-	lv_obj_set_style_radius(tokyo_music_panel, 0, 0);
-	lv_obj_set_style_pad_hor(tokyo_music_panel, cfg->padding, 0);
-	lv_obj_set_style_pad_ver(tokyo_music_panel, 4, 0);
-	lv_obj_set_style_pad_gap(tokyo_music_panel, 6, 0);
-	lv_obj_set_flex_flow(tokyo_music_panel, LV_FLEX_FLOW_COLUMN);
-	lv_obj_set_flex_align(tokyo_music_panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
-	lv_obj_set_scroll_dir(tokyo_music_panel, LV_DIR_VER);
-	lv_obj_set_scrollbar_mode(tokyo_music_panel, LV_SCROLLBAR_MODE_AUTO);
-	lv_obj_set_hidden(tokyo_music_panel, true);
+	morpthis_music_panel = lv_obj_create(music_screen);
+	music_remove_edges(morpthis_music_panel);
+	lv_obj_set_size(morpthis_music_panel, lv_pct(100), cfg->screen_height - top);
+	lv_obj_align(morpthis_music_panel, LV_ALIGN_TOP_LEFT, 0, top);
+	lv_obj_set_style_bg_opa(morpthis_music_panel, LV_OPA_TRANSP, 0);
+	lv_obj_set_style_border_width(morpthis_music_panel, 0, 0);
+	lv_obj_set_style_radius(morpthis_music_panel, 0, 0);
+	lv_obj_set_style_pad_hor(morpthis_music_panel, cfg->padding, 0);
+	lv_obj_set_style_pad_ver(morpthis_music_panel, 4, 0);
+	lv_obj_set_style_pad_gap(morpthis_music_panel, 6, 0);
+	lv_obj_set_flex_flow(morpthis_music_panel, LV_FLEX_FLOW_COLUMN);
+	lv_obj_set_flex_align(morpthis_music_panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+	lv_obj_set_scroll_dir(morpthis_music_panel, LV_DIR_VER);
+	lv_obj_set_scrollbar_mode(morpthis_music_panel, LV_SCROLLBAR_MODE_AUTO);
+	lv_obj_set_hidden(morpthis_music_panel, true);
 
-	lv_obj_t *recent_heading = lv_label_create(tokyo_music_panel);
-	lv_label_set_text(recent_heading, tr("radio_recently_played"));
+	lv_obj_t *recent_heading = lv_label_create(morpthis_music_panel);
+	lv_label_set_text(recent_heading, tr("music_recently_played"));
 	lv_obj_add_style(recent_heading, &theme_style_text, 0);
 	lv_obj_set_style_text_font(recent_heading, &font_ui_14, 0);
 
-	tokyo_recent_card = lv_obj_create(tokyo_music_panel);
-	music_remove_edges(tokyo_recent_card);
-	lv_obj_set_width(tokyo_recent_card, lv_pct(100));
-	lv_obj_set_height(tokyo_recent_card, LV_SIZE_CONTENT);
-	lv_obj_add_style(tokyo_recent_card, &theme_style_card, 0);
-	lv_obj_set_style_radius(tokyo_recent_card, bp_tile_radius(), 0);
-	lv_obj_set_style_border_width(tokyo_recent_card, 0, 0);
-	lv_obj_set_style_shadow_width(tokyo_recent_card, 0, 0);
-	lv_obj_set_style_pad_all(tokyo_recent_card, 3, 0);
-	lv_obj_set_style_pad_gap(tokyo_recent_card, 0, 0);
-	lv_obj_set_scrollable(tokyo_recent_card, false);
-	lv_obj_set_flex_flow(tokyo_recent_card, LV_FLEX_FLOW_COLUMN);
-	lv_obj_set_flex_align(tokyo_recent_card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+	morpthis_recent_card = lv_obj_create(morpthis_music_panel);
+	music_remove_edges(morpthis_recent_card);
+	lv_obj_set_width(morpthis_recent_card, lv_pct(100));
+	lv_obj_set_height(morpthis_recent_card, LV_SIZE_CONTENT);
+	lv_obj_add_style(morpthis_recent_card, &theme_style_card, 0);
+	lv_obj_set_style_radius(morpthis_recent_card, bp_tile_radius(), 0);
+	lv_obj_set_style_border_width(morpthis_recent_card, 0, 0);
+	lv_obj_set_style_shadow_width(morpthis_recent_card, 0, 0);
+	lv_obj_set_style_pad_all(morpthis_recent_card, 3, 0);
+	lv_obj_set_style_pad_gap(morpthis_recent_card, 0, 0);
+	lv_obj_set_scrollable(morpthis_recent_card, false);
+	lv_obj_set_flex_flow(morpthis_recent_card, LV_FLEX_FLOW_COLUMN);
+	lv_obj_set_flex_align(morpthis_recent_card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
-	tokyo_recent_empty = lv_label_create(tokyo_recent_card);
-	lv_label_set_text(tokyo_recent_empty, tr("music_recent_queue_empty"));
-	lv_label_set_long_mode(tokyo_recent_empty, LV_LABEL_LONG_DOT);
-	lv_obj_set_width(tokyo_recent_empty, lv_pct(100));
-	lv_obj_set_height(tokyo_recent_empty, 30);
-	lv_obj_add_style(tokyo_recent_empty, &theme_style_text_dim, 0);
-	lv_obj_set_style_text_font(tokyo_recent_empty, &font_ui_14, 0);
-	lv_obj_set_style_text_align(tokyo_recent_empty, LV_TEXT_ALIGN_CENTER, 0);
+	morpthis_recent_empty = lv_label_create(morpthis_recent_card);
+	lv_label_set_text(morpthis_recent_empty, tr("music_recent_queue_empty"));
+	lv_label_set_long_mode(morpthis_recent_empty, LV_LABEL_LONG_DOT);
+	lv_obj_set_width(morpthis_recent_empty, lv_pct(100));
+	lv_obj_set_height(morpthis_recent_empty, 30);
+	lv_obj_add_style(morpthis_recent_empty, &theme_style_text_dim, 0);
+	lv_obj_set_style_text_font(morpthis_recent_empty, &font_ui_14, 0);
+	lv_obj_set_style_text_align(morpthis_recent_empty, LV_TEXT_ALIGN_CENTER, 0);
 
-	for (int i = 0; i < TOKYO_RECENT_COUNT; i++) {
+	for (int i = 0; i < MORPTHIS_RECENT_COUNT; i++) {
 		recent_row_t *row = &recent_rows[i];
 		row->queue_index = -1;
-		row->button = lv_btn_create(tokyo_recent_card);
+		row->button = lv_btn_create(morpthis_recent_card);
 		music_remove_edges(row->button);
 		lv_obj_set_size(row->button, lv_pct(100), 39);
 		lv_obj_set_style_bg_opa(row->button, LV_OPA_TRANSP, 0);
@@ -627,7 +627,7 @@ static void tokyo_music_build(gui_config_t *cfg) {
 		lv_obj_set_hidden(row->button, true);
 	}
 
-	lv_obj_t *queue_note = lv_label_create(tokyo_music_panel);
+	lv_obj_t *queue_note = lv_label_create(morpthis_music_panel);
 	lv_label_set_text(queue_note, tr("music_queue_recent_note"));
 	lv_label_set_long_mode(queue_note, LV_LABEL_LONG_DOT);
 	lv_obj_set_width(queue_note, lv_pct(100));
@@ -635,7 +635,7 @@ static void tokyo_music_build(gui_config_t *cfg) {
 	lv_obj_add_style(queue_note, &theme_style_text_dim, 0);
 	lv_obj_set_style_text_font(queue_note, &font_ui_14, 0);
 
-	lv_obj_t *browse_card = lv_obj_create(tokyo_music_panel);
+	lv_obj_t *browse_card = lv_obj_create(morpthis_music_panel);
 	music_remove_edges(browse_card);
 	lv_obj_set_width(browse_card, lv_pct(100));
 	lv_obj_set_height(browse_card, LV_SIZE_CONTENT);
@@ -654,35 +654,35 @@ static void tokyo_music_build(gui_config_t *cfg) {
 	lv_obj_add_style(browse_heading, &theme_style_text, 0);
 	lv_obj_set_style_text_font(browse_heading, &font_ui_14, 0);
 
-	tokyo_browse_grid = lv_obj_create(browse_card);
-	music_remove_edges(tokyo_browse_grid);
-	lv_obj_set_size(tokyo_browse_grid, lv_pct(100), LV_SIZE_CONTENT);
-	lv_obj_set_style_bg_opa(tokyo_browse_grid, LV_OPA_TRANSP, 0);
-	lv_obj_set_style_border_width(tokyo_browse_grid, 0, 0);
-	lv_obj_set_style_pad_all(tokyo_browse_grid, 0, 0);
-	lv_obj_set_style_pad_gap(tokyo_browse_grid, 4, 0);
-	lv_obj_set_scrollable(tokyo_browse_grid, false);
-	lv_obj_set_flex_flow(tokyo_browse_grid, LV_FLEX_FLOW_ROW_WRAP);
-	lv_obj_set_flex_align(tokyo_browse_grid, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+	morpthis_browse_grid = lv_obj_create(browse_card);
+	music_remove_edges(morpthis_browse_grid);
+	lv_obj_set_size(morpthis_browse_grid, lv_pct(100), LV_SIZE_CONTENT);
+	lv_obj_set_style_bg_opa(morpthis_browse_grid, LV_OPA_TRANSP, 0);
+	lv_obj_set_style_border_width(morpthis_browse_grid, 0, 0);
+	lv_obj_set_style_pad_all(morpthis_browse_grid, 0, 0);
+	lv_obj_set_style_pad_gap(morpthis_browse_grid, 4, 0);
+	lv_obj_set_scrollable(morpthis_browse_grid, false);
+	lv_obj_set_flex_flow(morpthis_browse_grid, LV_FLEX_FLOW_ROW_WRAP);
+	lv_obj_set_flex_align(morpthis_browse_grid, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
-	tokyo_shortcut_card = music_shortcut_card(tokyo_music_panel);
-	tokyo_music_populate();
+	morpthis_shortcut_card = music_shortcut_card(morpthis_music_panel);
+	morpthis_music_populate();
 
-	tokyo_scan_button = lv_btn_create(tokyo_music_panel);
-	music_remove_edges(tokyo_scan_button);
-	lv_obj_set_size(tokyo_scan_button, lv_pct(100), 38);
-	lv_obj_add_style(tokyo_scan_button, &theme_style_card, 0);
-	lv_obj_add_style(tokyo_scan_button, &theme_style_card_pressed, LV_STATE_PRESSED);
-	lv_obj_set_style_radius(tokyo_scan_button, bp_tile_radius(), 0);
-	lv_obj_set_style_border_width(tokyo_scan_button, 0, 0);
-	lv_obj_set_style_shadow_width(tokyo_scan_button, 0, 0);
-	lv_obj_set_style_pad_hor(tokyo_scan_button, 8, 0);
-	lv_obj_set_style_pad_column(tokyo_scan_button, 7, 0);
-	lv_obj_set_flex_flow(tokyo_scan_button, LV_FLEX_FLOW_ROW);
-	lv_obj_set_flex_align(tokyo_scan_button, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-	lv_obj_set_event_bubble(tokyo_scan_button, true);
-	lv_obj_add_event_cb(tokyo_scan_button, scan_cb, LV_EVENT_CLICKED, NULL);
-	lv_obj_t *scan_icon = lv_image_create(tokyo_scan_button);
+	morpthis_scan_button = lv_btn_create(morpthis_music_panel);
+	music_remove_edges(morpthis_scan_button);
+	lv_obj_set_size(morpthis_scan_button, lv_pct(100), 38);
+	lv_obj_add_style(morpthis_scan_button, &theme_style_card, 0);
+	lv_obj_add_style(morpthis_scan_button, &theme_style_card_pressed, LV_STATE_PRESSED);
+	lv_obj_set_style_radius(morpthis_scan_button, bp_tile_radius(), 0);
+	lv_obj_set_style_border_width(morpthis_scan_button, 0, 0);
+	lv_obj_set_style_shadow_width(morpthis_scan_button, 0, 0);
+	lv_obj_set_style_pad_hor(morpthis_scan_button, 8, 0);
+	lv_obj_set_style_pad_column(morpthis_scan_button, 7, 0);
+	lv_obj_set_flex_flow(morpthis_scan_button, LV_FLEX_FLOW_ROW);
+	lv_obj_set_flex_align(morpthis_scan_button, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+	lv_obj_set_event_bubble(morpthis_scan_button, true);
+	lv_obj_add_event_cb(morpthis_scan_button, scan_cb, LV_EVENT_CLICKED, NULL);
+	lv_obj_t *scan_icon = lv_image_create(morpthis_scan_button);
 	lv_image_set_src(scan_icon, &icon_folder);
 	lv_obj_add_style(scan_icon, &theme_style_icon, 0);
 	lv_obj_set_size(scan_icon, 18, 18);
@@ -690,7 +690,7 @@ static void tokyo_music_build(gui_config_t *cfg) {
 	lv_image_set_inner_align(scan_icon, LV_IMAGE_ALIGN_CENTER);
 	lv_obj_set_style_image_recolor(scan_icon, theme_semantic_color(THEME_SEMANTIC_CYAN), 0);
 	lv_obj_set_style_image_recolor_opa(scan_icon, LV_OPA_COVER, 0);
-	lv_obj_t *scan_label = lv_label_create(tokyo_scan_button);
+	lv_obj_t *scan_label = lv_label_create(morpthis_scan_button);
 	lv_label_set_text(scan_label, tr("music_scan_library"));
 	lv_label_set_long_mode(scan_label, LV_LABEL_LONG_DOT);
 	lv_obj_set_flex_grow(scan_label, 1);
@@ -700,19 +700,19 @@ static void tokyo_music_build(gui_config_t *cfg) {
 	// Keep the browse destinations and scan action at the top. The queue-derived
 	// Recently played section belongs at the end of the scrollable Music page.
 	lv_obj_move_to_index(browse_card, 0);
-	lv_obj_move_to_index(tokyo_shortcut_card, 1);
-	lv_obj_move_to_index(tokyo_scan_button, 2);
+	lv_obj_move_to_index(morpthis_shortcut_card, 1);
+	lv_obj_move_to_index(morpthis_scan_button, 2);
 	lv_obj_move_to_index(recent_heading, 3);
-	lv_obj_move_to_index(tokyo_recent_card, 4);
+	lv_obj_move_to_index(morpthis_recent_card, 4);
 	lv_obj_move_to_index(queue_note, 5);
-	lv_obj_update_layout(tokyo_music_panel);
+	lv_obj_update_layout(morpthis_music_panel);
 
-	player_sheet_attach_drag(tokyo_music_panel, true);
-	switcher_attach_back_gesture(tokyo_music_panel);
+	player_sheet_attach_drag(morpthis_music_panel, true);
+	switcher_attach_back_gesture(morpthis_music_panel);
 }
 
 static void music_recent_refresh(void) {
-	if (!tokyo_recent_card) {
+	if (!morpthis_recent_card) {
 		return;
 	}
 	int count = playlist_count();
@@ -724,7 +724,7 @@ static void music_recent_refresh(void) {
 
 	int filled = 0;
 	if (current >= 0 && current < count) {
-		for (int index = current; index >= 0 && filled < TOKYO_RECENT_COUNT; index--) {
+		for (int index = current; index >= 0 && filled < MORPTHIS_RECENT_COUNT; index--) {
 			char path[512];
 			if (!playlist_path_at(index, path, sizeof(path)) || !path[0]) {
 				continue;
@@ -764,28 +764,28 @@ static void music_recent_refresh(void) {
 			filled++;
 		}
 	}
-	for (int i = filled; i < TOKYO_RECENT_COUNT; i++) {
+	for (int i = filled; i < MORPTHIS_RECENT_COUNT; i++) {
 		recent_rows[i].queue_index = -1;
 		recent_rows[i].path[0] = '\0';
 		recent_rows[i].library_file = false;
 		lv_obj_set_hidden(recent_rows[i].button, true);
 	}
-	lv_obj_set_hidden(tokyo_recent_empty, filled != 0);
+	lv_obj_set_hidden(morpthis_recent_empty, filled != 0);
 }
 
 static void music_update_visibility(void) {
-	bool tokyo_v1 = bp_is_tempotec_v1() && theme_uses_function_glyphs();
+	bool morpthis_v1 = bp_is_tempotec_v1() && theme_uses_function_glyphs();
 	bool empty_library = !library_scan_running() && library_track_count() == 0;
-	if (tokyo_v1 && tokyo_music_panel) {
+	if (morpthis_v1 && morpthis_music_panel) {
 		lv_obj_set_hidden(tile_grid, true);
 		lv_obj_set_hidden(empty_panel, true);
-		lv_obj_set_hidden(tokyo_music_panel, false);
-		if (tokyo_scan_button) {
-			lv_obj_set_hidden(tokyo_scan_button, !empty_library);
+		lv_obj_set_hidden(morpthis_music_panel, false);
+		if (morpthis_scan_button) {
+			lv_obj_set_hidden(morpthis_scan_button, !empty_library);
 		}
 	} else {
-		if (tokyo_music_panel) {
-			lv_obj_set_hidden(tokyo_music_panel, true);
+		if (morpthis_music_panel) {
+			lv_obj_set_hidden(morpthis_music_panel, true);
 		}
 		gridpage_show_empty(tile_grid, empty_panel, empty_library);
 	}
@@ -797,7 +797,7 @@ static void music_refresh_theme(void) {
 	}
 	music_update_visibility();
 	lv_color_t browse_fill = theme_now_playing_fill();
-	for (int i = 0; i < TOKYO_BROWSE_COUNT; i++) {
+	for (int i = 0; i < MORPTHIS_BROWSE_COUNT; i++) {
 		if (browse_tiles[i].button) {
 			lv_obj_set_style_bg_color(browse_tiles[i].button, browse_fill, 0);
 			lv_obj_set_style_bg_opa(browse_tiles[i].button, LV_OPA_COVER, 0);
@@ -807,13 +807,13 @@ static void music_refresh_theme(void) {
 			lv_obj_set_style_image_recolor_opa(browse_tiles[i].icon, LV_OPA_COVER, 0);
 		}
 	}
-	for (int i = 0; i < TOKYO_SHORTCUT_COUNT; i++) {
+	for (int i = 0; i < MORPTHIS_SHORTCUT_COUNT; i++) {
 		if (shortcut_rows[i].icon) {
 			lv_obj_set_style_image_recolor(shortcut_rows[i].icon, theme_semantic_color(shortcut_rows[i].tone), 0);
 			lv_obj_set_style_image_recolor_opa(shortcut_rows[i].icon, LV_OPA_COVER, 0);
 		}
 	}
-	for (int i = 0; i < TOKYO_RECENT_COUNT; i++) {
+	for (int i = 0; i < MORPTHIS_RECENT_COUNT; i++) {
 		if (recent_rows[i].icon) {
 			lv_obj_set_style_image_recolor(recent_rows[i].icon, theme_semantic_color(THEME_SEMANTIC_PURPLE), 0);
 			lv_obj_set_style_image_recolor_opa(recent_rows[i].icon, LV_OPA_COVER, 0);
@@ -895,12 +895,12 @@ void music_init(gui_config_t *cfg) {
 
 	empty_panel = gridpage_empty_panel(music_screen, cfg, &icon_music_note, "music_no_database", scan_cb);
 	lv_obj_add_event_cb(music_screen, screen_loaded_cb, LV_EVENT_SCREEN_LOADED, NULL);
-	tokyo_music_build(cfg);
+	morpthis_music_build(cfg);
 
 	music_refresh_layout();
 	music_refresh_theme();
 	theme_register_refresh(music_refresh_theme);
-	if (tokyo_music_panel) {
+	if (morpthis_music_panel) {
 		lv_timer_create(recent_timer_cb, 1000, NULL);
 	}
 }
@@ -912,7 +912,7 @@ void music_refresh_layout(void) {
 	grid_entry_t entries[MUSIC_TILE_COUNT];
 	int count = music_build_entries(entries, MUSIC_TILE_COUNT);
 	gridpage_replace_entries(tile_grid, music_cfg, entries, count, 2, 3);
-	tokyo_music_populate();
+	morpthis_music_populate();
 
 	bool playlists_first = musicsettings_playlists_first();
 	if (playlists_icon) {

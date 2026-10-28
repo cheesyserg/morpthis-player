@@ -4465,9 +4465,9 @@ static void scan_directory(const char *path, int depth) {
 		if (S_ISDIR(st.st_mode)) {
 			folder_sig_add(&sig, de->d_name, true);
 			// The audiobooks have an index of their own (audiobookdb.h), and the
-			// Podcast folder an older build wrote is not music either.
+			// downloads folder an older build wrote is not music either.
 			if (depth == 0 && (strcasecmp(de->d_name, AUDIOBOOKDB_FOLDER) == 0 ||
-							   strcasecmp(de->d_name, LIBRARY_LEGACY_PODCAST_FOLDER) == 0)) {
+							   strcasecmp(de->d_name, LIBRARY_LEGACY_DOWNLOADS_FOLDER) == 0)) {
 				continue;
 			}
 			if (depth == 0 && scan_folder_count > 0 && !scan_folder_chosen(de->d_name)) {
@@ -5048,7 +5048,7 @@ static void update_folder(const char *path, int depth, walk_t *w) {
 			folder_sig_add(&sig, de->d_name, true);
 			overflow |= !namelist_add(&dirs, de->d_name);
 			if (depth == 0 && (strcasecmp(de->d_name, AUDIOBOOKDB_FOLDER) == 0 ||
-							   strcasecmp(de->d_name, LIBRARY_LEGACY_PODCAST_FOLDER) == 0)) {
+							   strcasecmp(de->d_name, LIBRARY_LEGACY_DOWNLOADS_FOLDER) == 0)) {
 				continue;
 			}
 			if (depth == 0 && scan_folder_count > 0 && !scan_folder_chosen(de->d_name)) {

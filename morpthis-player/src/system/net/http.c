@@ -114,7 +114,7 @@ static bool url_parse(const char *url, url_t *out) {
 		}
 	}
 
-	// Never request a truncated path. Tidal segment URLs carry a signed query
+	// Never request a truncated path. Signed segment URLs carry a query
 	// (Policy, Signature, Key-Pair-Id) well past five hundred characters, and
 	// cutting the tail yields a URL the CDN rejects with 403 -- a failure that
 	// looks like a subscription problem from outside rather than a short
@@ -547,7 +547,7 @@ static void read_until_close(conn_t *c, body_t *b) {
 // The same, for a body of a known length.
 //
 // Returns false when less arrived than the server promised. The distinction
-// matters: a Tidal segment cut in half by a Wi-Fi hiccup and accepted as good
+// matters: a segment cut in half by a Wi-Fi hiccup and accepted as good
 // becomes a gap mid-track, inside a file then marked complete and never
 // re-downloaded.
 static bool read_length(conn_t *c, body_t *b, size_t content_length) {
@@ -709,7 +709,7 @@ static bool get_once(const url_t *u, const http_req_t *req, char **out, size_t *
 	// HTTP/1.0: a 1.0 request may not be answered with a chunked body, so the
 	// common case stays simple. Chunked is handled below anyway, because
 	// "may not" and "does not" are different things once a proxy is involved.
-	// The extra headers are for Qobuz, which wants the app credentials there.
+	// The extra headers are for APIs that want credentials there.
 	// They arrive already CRLF-terminated, one per line.
 	char host_header[300];
 	host_header_value(u, host_header, sizeof(host_header));

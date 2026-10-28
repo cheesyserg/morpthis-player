@@ -30,7 +30,7 @@
 //
 // dmrd does not send audio: it sends a URL. The phone serves the track over its
 // own HTTP, and the player downloads and decodes it, which is why part of this
-// module closely resembles the Qobuz cache. The file lands on the card and
+// module closely resembles the download cache. The file lands on the card and
 // playback starts while it arrives (decode/growfile.c), so the right decoder,
 // the progress bar, the equalizer and seeking all work unchanged.
 //
@@ -152,7 +152,7 @@ void dlna_request_prev(void);
 void dlna_set_root(const char *sd_root);
 
 // Empties the cache. Call on the way out -- shutdown, reboot, firmware update,
-// factory reset -- exactly as for the Qobuz and Tidal caches and for the same
+// factory reset -- exactly as for the other download caches and for the same
 // reason: these are transient tracks sent by the phone to be heard now, not
 // files the user put on the card and expects to find again. Left alone they sit
 // in a hidden folder eating space with nothing to show for it.

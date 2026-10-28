@@ -59,31 +59,23 @@
 - **Playlists** - create, rename, reorder, delete. A long press on a row of All tracks, Albums, Artists or Album artists starts a selection, and the chosen tracks, albums or artists go into the queue, the favourites or a playlist together. Inside a playlist or the favourites the selection also takes the chosen tracks out, after asking. In the file browser the same works on tracks and folders, a folder bringing everything under it. A backup writes an extended M3U to the card that other players can read; import reads one back, resolves missing entries by file name, and reports what it found.
 - **Playback modes** - normal, repeat all, repeat one, shuffle, and a continuous shuffle that deals a fresh order each round.
 - **Album and folder chaining** - the next album starts when one ends, or the next folder in a depth-first walk when you came in through the browser.
-- **The local queue survives a reboot**, with positions, and so does the volume. Streaming-app queues do not.
+- **The local queue survives a reboot**, with positions, and so does the volume. App queues do not.
 
 ## Now playing
 
 - Artwork edge to edge across the top, and the same picture flipped, blurred and dimmed behind the controls.
 - **Alternative layout** - the progress bar becomes a **waveform**
-- **Immersive layout** - the picture itself, edge to edge across the whole panel: the sleeve fills the screen and is centre-cropped, at its own brightness, with nothing laid over it. The controls stand on a frosted band: the foot of the same photograph, lightly blurred, dimmed to the darkness the type reads on and tinted so the sleeve's colour survives in it, cut to the deck's rectangle - so the artwork is still seen through the glass, softly, while the names, the bar, the clocks and the transport are read on top; the chevron and the source marks take their chance in white over the sharp part. Anything holding artwork gets one - local files, podcasts, audiobooks and the streaming services alike - and without a picture the page falls back to its own colour with the controls in the theme's ink.
+- **Immersive layout** - the picture itself, edge to edge across the whole panel: the sleeve fills the screen and is centre-cropped, at its own brightness, with nothing laid over it. The controls stand on a frosted band: the foot of the same photograph, lightly blurred, dimmed to the darkness the type reads on and tinted so the sleeve's colour survives in it, cut to the deck's rectangle - so the artwork is still seen through the glass, softly, while the names, the bar, the clocks and the transport are read on top; the chevron and the source marks take their chance in white over the sharp part. Anything holding artwork gets one - local files and audiobooks alike - and without a picture the page falls back to its own colour with the controls in the theme's ink.
 - **Poster layout** - the sleeve scaled to the edges of the screen without the crop Immersive takes: the whole picture from side to side at the width of the panel, held at the top with square corners and nothing stretched, and the deck below it on its own opaque ground rather than over the artwork - as much of the sleeve as the deck leaves room for, at the largest size the screen allows. Anything holding artwork gets one, and without a picture the empty sleeve stands edge to edge in the cover's colour with the controls in the theme's ink; the favourite marker is a heart on this deck, kept a step smaller than the star it stands in for; and the foot of the sleeve fades into the deck over its last pixels instead of meeting the controls at a line.
 - **Player layout** - Standard, Waveform, Alternative, Immersive or Poster, in Settings → Music → Display options; the choice is remembered across restarts.
 - **Tint controls from album art** - optional, off by default, in the same Display options: the play/pause button and the played part of the progress bar take the main colour of the playing track's artwork, in every layout, while previous and next keep their colour. The colour is the one already worked out from the decoded artwork, so nothing extra is decoded and playback is untouched; a track with no artwork keeps the theme's colours.
 - **Cover Flow** - an album carousel, swiped up from the bottom of the Music page.
 - **Queue**, **Details** and, while an audiobook is loaded, **Chapters**.
 
-## Streaming
+## Streaming apps
 
-- **Subsonic / Gonic** - an app now, installed as `Apps/pkgmerps/subsonic.pkgmerp`. It browses artists, albums, folders, playlists, genres, starred, random and newest, searches with an on-screen letter keyboard, stars the current track, and keeps its own queue. Quality is MP3 256/320 or lossless FLAC transcoded by the server; a 24-bit FLAC plays at 32-bit output, the same hi-res path as local music. It keeps playing in the background when the app is left, with the status-bar indicator showing play/pause. The app carries dr_mp3 and dr_flac, so the player's own streaming client and RAM bridge are gone. Server and TLS settings live in `Apps/merp_data/subsonic/settings.json`.
-- **Tidal** - sign in with the code on screen or with the QR-Code; Low, High, CD and Hi-res quality. Search, albums, artists, playlists, favourites and the featured lists. Favourites and playlists can be managed from the player.
-- **Qobuz** - sign in with the account; MP3 320, FLAC 16/44.1, 24/96 and 24/192. Search, albums, artists, playlists, favourites and the featured lists. Favourites and playlists can be managed from the player.
-- **Podcasts** - the Podcast Index catalogue: search, trending, follow up to 100
-shows kept on the device.
-- **Radio** - the radio-browser.info directory by language, country or genre,
-plus search, favourites, recently played, and **My stations** read from a
-`radio.txt` you write yourself in the card root. MP3 and AAC, HTTPS with real
-certificate checking (plus an opt-in relaxed mode for a server of your own with
-a self-signed certificate), and HLS.
+- **Subsonic / Gonic** - installed as `Apps/pkgmerps/subsonic.pkgmerp`. It browses artists, albums, folders, playlists, genres, starred, random and newest, searches with an on-screen letter keyboard, stars the current track, and keeps its own queue. Quality is MP3 256/320 or lossless FLAC transcoded by the server; a 24-bit FLAC plays at 32-bit output, the same hi-res path as local music. It keeps playing in the background when the app is left, with the status-bar indicator showing play/pause. The app carries dr_mp3 and dr_flac. Server and TLS settings live in `Apps/merp_data/subsonic/settings.json`.
+- **Radio** - installed as `Apps/pkgmerps/radio.pkgmerp`. It reads the radio-browser.info directory by language, country or genre, plus search, favourites, recently played, and **My stations** read from a `radio.txt` you write yourself in the card root. MP3 and AAC, HTTPS with real certificate checking (plus an opt-in relaxed mode for a server of your own with a self-signed certificate), and HLS.
 
 
 ## Wireless

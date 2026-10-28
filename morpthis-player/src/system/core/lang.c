@@ -379,7 +379,7 @@ void lang_init(const char *dir) {
 		printf("lang: %s, %d texts from %s\n", current, live.count, path);
 	} else {
 		// Since the move to tags the source holds no Italian: it holds tags
-		// ("podcast_search_for_a_podcast"), and every language, Italian included, is a
+		// ("music_all_tracks"), and every language, Italian included, is a
 		// file to load. Without its file the interface shows bare tags --
 		// deliberately ugly, because that is the unmistakable sign the .ini
 		// files were not installed, not a case to paper over. Italian is still

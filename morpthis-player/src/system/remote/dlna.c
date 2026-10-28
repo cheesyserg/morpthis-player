@@ -48,8 +48,8 @@
 #define FETCH_CHUNK 32768
 
 // How much to download before starting the decoder. The phone is one hop away,
-// not halfway around the world, so the sizing math qobuzcache needs is not
-// required here: half a megabyte covers the headers of any format and keeps
+// not halfway around the world, so the sizing math a streaming cache needs is
+// not required here: half a megabyte covers the headers of any format and keeps
 // the decoder from catching up with the download immediately.
 #define FETCH_PREBUFFER (512 * 1024)
 

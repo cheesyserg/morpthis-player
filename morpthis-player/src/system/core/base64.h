@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Base64, because Tidal wraps the important things in it.
+// Base64, because some service APIs wrap the important things in it.
 //
 // The response that says where a track is does not carry the URL: it carries a
 // "manifest" field in base64, holding either a JSON with the URL or a DASH MPD.
@@ -23,7 +23,7 @@
 // '+' and '/') is accepted too, since that is what OAuth tokens use and
 // recognising it costs nothing.
 //
-// The buffer carries one extra zero byte past `*out_size`: a Tidal manifest is
+// The buffer carries one extra zero byte past `*out_size`: a manifest is
 // text (JSON or XML) and its recipient hands it to a parser that wants a
 // terminated string, without having to copy it.
 uint8_t *base64_decode(const char *text, size_t text_len, size_t max_bytes, size_t *out_size);

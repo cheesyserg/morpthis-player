@@ -3,11 +3,11 @@
 
 #include <stddef.h>
 
-// MD5, for one reason: Qobuz signs the request for a track's URL with it. Not a
-// choice made here, and not a defensible one in 2026 -- MD5 has been broken for
-// collisions for twenty years -- but it protects nothing here: it is the lock
-// the service puts on its own door, and getting in means holding the key it
-// asks for.
+// MD5, for one reason: some service APIs sign the request for a track's URL
+// with it. Not a choice made here, and not a defensible one in 2026 -- MD5 has
+// been broken for collisions for twenty years -- but it protects nothing here:
+// it is the lock the service puts on its own door, and getting in means holding
+// the key it asks for.
 //
 // Written here rather than taken from the libcrypto the device already carries
 // (see tls.h) because it is a hundred and twenty dependency-free lines testable

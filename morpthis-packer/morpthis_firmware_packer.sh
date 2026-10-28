@@ -332,7 +332,7 @@ build_one() {
 	MODEL_N="$(cd "$ASSETS_DIR/$MODEL_DIR" && find . -type f | wc -l | tr -d ' ')"
 	say "    $MODEL_DIR/: $MODEL_N model-specific files"
 
-	# The streaming keys go in sealed, as streaming-keys.bin. One left in the
+	# The API keys go in sealed, as streaming-keys.bin. One left in the
 	# clear in the assets is not shipped: an image is unpacked by anyone who
 	# downloads it. See tools/seal_streamkeys.py in sonix-player.
 	PLAIN_KEYS="usr/resource/morpthis/components/streaming-keys.ini"
@@ -341,11 +341,10 @@ build_one() {
 		warn "$MODEL_DIR/$PLAIN_KEYS is in the clear and was left out; seal it with tools/seal_streamkeys.py"
 	fi
 	if [ ! -f "$SQUASH_DIR/usr/resource/morpthis/components/streaming-keys.bin" ]; then
-		warn "no streaming-keys.bin in $MODEL_DIR: Tidal, Qobuz, podcasts and Last.fm stay off"
-		warn "whoever installs it can still turn them on: streaming-keys.ini at the card's root is read at boot"
+		warn "no streaming-keys.bin in $MODEL_DIR: Last.fm stays off"
+		warn "whoever installs it can still turn it on: streaming-keys.ini at the card's root is read at boot"
 	fi
 
-	# The streaming keys go in sealed, as streaming-keys.bin. One left in the
 	# ==========================================================================
 	# 5a. The boot script records the boot screen choice
 	# ==========================================================================

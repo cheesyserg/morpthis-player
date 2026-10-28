@@ -129,39 +129,14 @@ keeps its own foot, and the other arrangements keep the edges they have. Without
 cover's own colour from edge to edge, and the blurred copy stays down: the
 deck no longer shows it through, and the sleeve covers everything above it.
 
-The **screensaver** follows the same split. Dark and Light keep the arrangement
-they have always had: the artwork stops where the blurred strip begins, and the
-title, the artist and the time are read on the player's own blurred copy in
-light type. The two palettes added for the V1 draw it the other way round:
-Amber on Black and Tokyo Night both let the artwork run the **whole** panel,
-centre-cropped, and lay a translucent field of the palette's own colour over
-its foot — Amber's `#000000` at half alpha, Tokyo Night's `#16161e` at 60%, a
-step heavier because the violet, cyan and blue inks are dimmer than the cream
-and amber ones and have less headroom over a pale sleeve. The blurred copy is
-never borrowed there: a field is a colour, not a blur.
-
-The type in that field takes the roles the palette's own Now Playing deck gives
-the same things. Tokyo Night: the track name's violet `#bb9af7` for the title,
-the artist line's cyan `#7dcfff` for the artist, the accent blue `#7aa2f7` for
-the clock — the screensaver's own rule, which Amber set when the clock there
-became its signal amber — and the palette's ordinary icon colour `#c0caf5` for
-the chevron that says how to dismiss it, at the same 70% it has always worn.
-Amber: cream, amber and signal orange, unchanged. A track with no artwork
-behind either field sits on the palette's page colour rather than on black, so
-the same screen reads the same way whether the sleeve is there or not.
-
-The field's colour and every line of ink are written in one place, in the
-screensaver's theme-refresh callback, where they were already written for
-Amber. Adding Tokyo Night beside it is a second branch in three functions —
-`metadata_over_art()`, `set_info_strip_backdrop()` and that callback — and
-touches the Amber path nowhere.
+The **screensaver** keeps the arrangement it has always had: the artwork stops
+where the blurred strip begins, and the title, the artist and the time are read
+on the player's own blurred copy in light type.
 
 **Framed artwork.** The album source has always drawn the player's own sleeve.
 That sleeve is decoded at its own size, about 156 px a side on the V1, so
 covering the screensaver's larger area means enlarging it. In Dark and Light
-it is enlarged by half again, to 240 × 188. Under the palettes' field it is
-doubled, to 240 × 320, and on a 240 px panel a picture enlarged that much is
-made of blocks.
+it is enlarged by half again, to 240 × 188.
 
 Settings → Screen → Screensaver now has a second row under Album and Pictures:
 *Album art: Fill / Framed*, saved as `screen/screensaver_style`. Fill is the
@@ -190,10 +165,9 @@ The copy is let go of in five cases:
 - the screensaver is dismissed;
 - the switch goes off.
 
-In every theme the words sit on the page rather than on a strip. Dark and
-Light lay the frame on the player's full-screen blurred copy when it has one,
-which is every arrangement but Immersive. The palettes use their own page
-colour and their own ink.
+In every theme the words sit on the page rather than on a strip. The frame sits
+on the player's full-screen blurred copy when it has one, which is every
+arrangement but Immersive.
 
 **Pictures from the card.** The Screensaver folder only accepts pictures no
 larger than the panel. That rule was written for the HiBy players, where the
@@ -218,43 +192,6 @@ Two smaller fixes go with it:
 - Names starting with a dot are skipped. A Mac leaves a "._" file beside every
   picture it copies to a FAT card, and each one cost a read and one of the
   random pick's eight tries.
-
-**OLED** is the third palette added for the V1: true black, white type, white
-as its accent and `#a0a0a0` for the second line, with nothing filled grey. The
-page, the status bar, the Now Playing deck, the cards and the idle pills and
-buttons are all `#000000`, so the layouts are carried by the type and the
-glyphs alone. Now Playing goes the same way: the blurred copy of the sleeve the
-V1 lays behind the standard and alternative arrangements, and behind the
-lyrics, is left out, so the sleeve stands on black (`backdrop_blur_wanted()`,
-asked again on a theme change, since the same picture otherwise keeps the
-backdrop it has). Studio and Immersive keep theirs: there the artwork is what
-the arrangement is. What would vanish with its fill gets something else
-instead. A press flashes `#303030`, the only grey that is ever a fill, and only
-under a finger. A quiet control (an off switch's track, a dialog's Cancel, an
-idle quick-panel circle) is drawn as a 2 px `#606060` ring. A disabled switch
-is faded to 40% rather than given the default theme's wash towards light grey,
-which on a black track is a grey fill. A switch that is on is one solid white
-pill: its ring takes the accent, and so does the track under the indicator, so
-the two rounded edges have nothing dark to blend into where they meet. Tracks
-stay visible, `#303030` under the progress bar and the secondary text at 40%
-under a slider, since a bar with no rest reads as a stray line. Every grey the
-theme draws is a multiple of eight, which RGB565 keeps exactly; a step in
-between lands on different levels in the five-bit and six-bit channels and
-comes out faintly green or magenta.
-
-It takes the same compact layouts and function-matched glyphs as Tokyo Night
-and Amber, with one exception: the home screen has no title or tagline, and its
-grid starts directly under the status bar, the six tiles sharing the height the
-header took. It is single-hue like Amber, so the places that kept Amber
-monochrome — the status glyphs, the codec colours, the balanced-output gold,
-the Now Playing deck, the screensaver's field — ask `theme_is_monochrome()`
-now, and the deck's roles come back as steps of grey: `#888888` for the star
-and the overflow, `#606060` for the idle shuffle. A white accent is also the
-first one white type does not read on, so whatever is drawn on an accent fill —
-a selected pill, a confirm button, the keyboard's accept key, the knob of a
-switch that is on — takes `theme_on_accent()`: black above a luma of 200, white
-below it. Every earlier accent, Amber's `#ffad2e` included, stays below the
-line and keeps its white.
 
 Two board matters that are not layout live beside the profile. The V1 kernel
 has one switch node, `/sys/class/switch/headset`, and no `balance` node; with

@@ -103,7 +103,7 @@ void display_set_rotated(bool rotated);
 // The buffer belongs to the module, not the caller, and must not be freed:
 // there is one, kept aside and reused for every shot, valid until the next
 // call. That is deliberate -- it is 700 kB contiguous, and reallocating it per
-// shot is how it returns NULL exactly when memory is tight (Qobuz downloading,
+// shot is how it returns NULL exactly when memory is tight (an app downloading,
 // a decoder open, a cover just decoded). Shots are taken one at a time, so
 // reuse is safe.
 uint16_t *display_capture_frame(int *out_w, int *out_h);

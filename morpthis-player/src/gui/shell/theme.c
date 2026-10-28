@@ -17,8 +17,6 @@ lv_style_t theme_style_icon;
 lv_style_t theme_style_switch;		   // switch track, off state
 lv_style_t theme_style_switch_checked; // switch indicator, on state
 lv_style_t theme_style_switch_knob_checked; // switch knob, on state
-lv_style_t theme_style_switch_track_checked; // switch track, on state (OLED's ring)
-lv_style_t theme_style_switch_disabled;      // switch, disabled (OLED only)
 lv_style_t theme_style_accent_bg;	   // anything that must follow the accent
 lv_style_t theme_style_slider_track;   // a slider's unfilled part
 
@@ -232,10 +230,6 @@ static void apply_palette(void) {
 	lv_style_remove_prop(&theme_style_switch, LV_STYLE_BORDER_WIDTH);
 	lv_style_remove_prop(&theme_style_switch, LV_STYLE_BORDER_COLOR);
 	lv_style_remove_prop(&theme_style_switch, LV_STYLE_BORDER_OPA);
-	lv_style_remove_prop(&theme_style_switch_track_checked, LV_STYLE_BG_COLOR);
-	lv_style_remove_prop(&theme_style_switch_track_checked, LV_STYLE_BORDER_COLOR);
-	lv_style_remove_prop(&theme_style_switch_disabled, LV_STYLE_RECOLOR_OPA);
-	lv_style_remove_prop(&theme_style_switch_disabled, LV_STYLE_OPA);
 	lv_style_set_bg_color(&theme_style_switch_checked, active->accent);
 	lv_style_set_bg_color(&theme_style_switch_knob_checked, theme_on_accent());
 
@@ -310,9 +304,6 @@ void theme_init(void) {
 	lv_style_set_bg_opa(&theme_style_switch_checked, LV_OPA_COVER);
 	lv_style_init(&theme_style_switch_knob_checked);
 	lv_style_set_bg_opa(&theme_style_switch_knob_checked, LV_OPA_COVER);
-	lv_style_init(&theme_style_switch_track_checked);
-	lv_style_init(&theme_style_switch_disabled);
-
 	lv_style_init(&theme_style_accent_bg);
 	lv_style_set_bg_opa(&theme_style_accent_bg, LV_OPA_COVER);
 	lv_style_init(&theme_style_slider_track);
@@ -320,9 +311,7 @@ void theme_init(void) {
 	lv_style_set_radius(&theme_style_slider_track, LV_RADIUS_CIRCLE);
 
 	// Read the named theme choice when present; configs from older builds have
-	// only `dark_theme`, so they keep their original Dark/Light setting. A
-	// palette this build no longer has (tokyo-night, amber-on-black, oled)
-	// falls through to that same boolean, which is true by default.
+	// only `dark_theme`, so they keep their original Dark/Light setting.
 	const char *saved_theme = config_get("ui", "theme", NULL);
 	if (saved_theme && strcmp(saved_theme, "light") == 0) {
 		selected_kind = THEME_KIND_LIGHT;
@@ -332,18 +321,12 @@ void theme_init(void) {
 		selected_kind = config_get_bool("ui", "dark_theme", true) ? THEME_KIND_DARK : THEME_KIND_LIGHT;
 	}
 
-	// The layout style. A clean boot gets the V1's original interface. A config
-	// written before the styles existed kept its layout in the theme name: the
-	// three palettes that used the compact one map to Morpthis, so an existing
-	// device keeps the look it had.
+	// The layout style. A clean boot gets the V1's original interface.
 	const char *saved_style = config_get("ui", "style", NULL);
 	if (saved_style && (strcmp(saved_style, "morpthis") == 0 || strcmp(saved_style, "sonix") == 0)) {
 		selected_style = THEME_STYLE_MORPTHIS;
 	} else if (saved_style && strcmp(saved_style, "classic") == 0) {
 		selected_style = THEME_STYLE_CLASSIC;
-	} else if (saved_theme && (strcmp(saved_theme, "tokyo-night") == 0 ||
-							  strcmp(saved_theme, "amber-on-black") == 0 || strcmp(saved_theme, "oled") == 0)) {
-		selected_style = THEME_STYLE_MORPTHIS;
 	}
 
 	// The marker the boot script reads has to agree with the setting too, not
@@ -392,8 +375,6 @@ void theme_apply_slider_knob(lv_obj_t *slider) {
 
 void theme_apply_switch(lv_obj_t *sw) {
 	lv_obj_add_style(sw, &theme_style_switch, LV_PART_MAIN);
-	lv_obj_add_style(sw, &theme_style_switch_track_checked, LV_PART_MAIN | LV_STATE_CHECKED);
-	lv_obj_add_style(sw, &theme_style_switch_disabled, LV_PART_MAIN | LV_STATE_DISABLED);
 	lv_obj_add_style(sw, &theme_style_switch_checked, LV_PART_INDICATOR | LV_STATE_CHECKED);
 	lv_obj_add_style(sw, &theme_style_switch_knob_checked, LV_PART_KNOB | LV_STATE_CHECKED);
 }
@@ -428,16 +409,6 @@ lv_color_t theme_now_playing_fill(void) {
 
 bool theme_is_dark(void) { return active->dark; }
 
-// The three palettes these name were removed for the V1-only tree. The pages
-// still ask, and take their ordinary Dark/Light drawing.
-bool theme_is_tokyo_night(void) { return false; }
-
-bool theme_is_amber_on_black(void) { return false; }
-
-bool theme_is_oled(void) { return false; }
-
-bool theme_is_monochrome(void) { return false; }
-
 // The compact V1 layout and the function-matched glyphs belong to the Morpthis
 // style alone; the palette has no say.
 bool theme_uses_function_glyphs(void) { return selected_style == THEME_STYLE_MORPTHIS; }
@@ -463,23 +434,6 @@ lv_color_t theme_semantic_color(theme_semantic_t role) {
 // colour, the same one the library lists write theirs in.
 lv_color_t theme_browser_folder_color(void) {
 	return theme_semantic_color(THEME_SEMANTIC_GREEN);
-}
-
-lv_color_t theme_player_chrome_color(theme_player_chrome_t role) {
-	switch (role) {
-	case THEME_PLAYER_CHROME_PRIMARY:
-	case THEME_PLAYER_CHROME_CHEVRON:
-		return active->text_primary;
-	case THEME_PLAYER_CHROME_SECONDARY:
-	case THEME_PLAYER_CHROME_MUTED:
-	case THEME_PLAYER_CHROME_PROGRESS_REST:
-	case THEME_PLAYER_CHROME_SHUFFLE_IDLE:
-	case THEME_PLAYER_CHROME_OVERFLOW:
-		return active->text_secondary;
-	case THEME_PLAYER_CHROME_PLAYBACK:
-	default:
-		return active->accent;
-	}
 }
 
 void theme_set_dark(bool dark) { theme_set_kind(dark ? THEME_KIND_DARK : THEME_KIND_LIGHT); }

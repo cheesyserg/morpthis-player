@@ -15,12 +15,12 @@ typedef enum {
 
 // The layout style, chosen independently of the palette.
 //
-//   classic  the V1's original interface: tiled menu pages, plain settings
-//            rows, the blurred strip on the screensaver. The default, and
-//            what a clean boot shows.
-//   morpthis    the compact layout built around function-matched icons: the
-//            single-column More list, captioned settings rows, the compact
-//            home page.
+//   classic   the V1's original interface: tiled menu pages, plain settings
+//             rows, the blurred strip on the screensaver. The default, and
+//             what a clean boot shows.
+//   morpthis  the compact layout built around function-matched icons: the
+//             single-column More list, captioned settings rows, the compact
+//             home page.
 //
 typedef enum {
 	THEME_STYLE_CLASSIC = 0,
@@ -42,18 +42,9 @@ typedef enum {
 	THEME_SEMANTIC_MUTED,
 } theme_semantic_t;
 
-// Role-specific colors from the reference Now Playing screen. Dark and Light
-// map these to their ordinary text/accent colours.
-typedef enum {
-	THEME_PLAYER_CHROME_PRIMARY,
-	THEME_PLAYER_CHROME_SECONDARY,
-	THEME_PLAYER_CHROME_MUTED,
-	THEME_PLAYER_CHROME_PLAYBACK,
-	THEME_PLAYER_CHROME_PROGRESS_REST,
-	THEME_PLAYER_CHROME_CHEVRON,
-	THEME_PLAYER_CHROME_SHUFFLE_IDLE,
-	THEME_PLAYER_CHROME_OVERFLOW,
-} theme_player_chrome_t;
+// Role-specific colors from the reference Now Playing screen are no longer
+// separate from the palette: Dark and Light map them to their ordinary
+// text/accent colours through the semantic roles above.
 
 // The handful of colours the whole UI is built from. Everything on screen
 // pulls from the active one.
@@ -86,11 +77,6 @@ extern lv_style_t theme_style_switch_checked; // image_recolor for monochrome ic
 // takes theme_on_accent().
 // theme_apply_switch() adds it with LV_PART_KNOB | LV_STATE_CHECKED.
 extern lv_style_t theme_style_switch_knob_checked;
-
-// Two states of the track that no built-in theme draws differently; they stay
-// empty and are kept for the switch helper's shape.
-extern lv_style_t theme_style_switch_track_checked;
-extern lv_style_t theme_style_switch_disabled;
 
 // Gives an lv_switch all of the switch styles, each on its part and state.
 // Call it once, when the switch is built.
@@ -134,13 +120,6 @@ const theme_palette_t *theme(void);
 // and Music browse tiles.
 lv_color_t theme_now_playing_fill(void);
 bool theme_is_dark(void);
-// Absent from this tree. Kept as predicates because the pages still ask --
-// their branches resolve to the ordinary Dark/Light drawing, which is what a
-// V1 shows now.
-bool theme_is_tokyo_night(void);
-bool theme_is_amber_on_black(void);
-bool theme_is_oled(void);
-bool theme_is_monochrome(void);
 // True when the Morpthis style is chosen: the function-matched icons and the
 // compact layouts. Independent of the palette.
 bool theme_uses_function_glyphs(void);
@@ -155,7 +134,6 @@ theme_kind_t theme_get_kind(void);
 // Dark and Light resolve every icon role to the chosen accent, with muted
 // left to secondary text.
 lv_color_t theme_semantic_color(theme_semantic_t role);
-lv_color_t theme_player_chrome_color(theme_player_chrome_t role);
 
 // What text and marks drawn on an accent-coloured fill wear: white, unless the
 // accent is so light that white would not read on it.

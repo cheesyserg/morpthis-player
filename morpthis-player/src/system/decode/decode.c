@@ -284,9 +284,9 @@ static bool adts_scan(adts_state_t *s) {
 // ---------------------------------------------------------------------------
 // Files that are still downloading
 //
-// A Qobuz track starts playing while it arrives. dr_flac and dr_mp3 can read
-// through callbacks instead of from a path, and that is all it takes:
-// growfile.c answers a read by waiting for the missing piece instead of
+// A track from a download cache starts playing while it arrives. dr_flac and
+// dr_mp3 can read through callbacks instead of from a path, and that is all it
+// takes: growfile.c answers a read by waiting for the missing piece instead of
 // reporting end of file as soon as it reaches the end of what is there.
 //
 // There are two sets of adapters only because the two libraries have two
@@ -1486,7 +1486,7 @@ static int mp3_probe_bitrate(decoder_t *dec) {
 // is written inside and the answer is immediate and exact. Without one, dr_mp3
 // reads the stream end to end, frame by frame -- and on a downloading file
 // those reads wait for the network, so counting means waiting for the whole
-// download, minutes on an hour-long podcast episode (feeds very often carry no
+// download, minutes on an hour-long file (feeds very often carry no
 // Xing header). A stalled download makes it worse: the count gives up halfway
 // and reports a duration proportional to what had arrived.
 //

@@ -81,8 +81,8 @@ static lv_obj_t *make_button(lv_obj_t *parent, const char *text, bool accent, lv
 		lv_obj_set_style_bg_color(btn, theme()->accent, 0);
 		lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
 	} else {
-		// The quiet neutral fill. Its border is left to the shared style:
-		// none, except OLED's ring around a button as black as the card.
+		// The quiet neutral fill. Its border is left to the shared style, which
+		// has none.
 		lv_obj_add_style(btn, &theme_style_switch, 0);
 	}
 

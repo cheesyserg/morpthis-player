@@ -28,10 +28,10 @@
 #define DISMISS_ANIM_MS 180
 
 static lv_obj_t *saver;		 // the whole thing, full screen on the top layer
-static lv_obj_t *cover_img;	 // the artwork: above the strip, or the whole panel under a field
+static lv_obj_t *cover_img;	 // the artwork above the strip
 static lv_obj_t *cover_placeholder; // the note, for a track that has none
-static lv_obj_t *info_strip; // metadata over blur, or a translucent panel in the V1 palettes
-static lv_obj_t *cover_box;	 // the artwork's area: everything above the strip, or the screen
+static lv_obj_t *info_strip; // metadata over the blurred block
+static lv_obj_t *cover_box;	 // the artwork's area: everything above the strip
 static lv_obj_t *frame_box;	 // what cover_img sits in: all of cover_box, or the Framed sleeve
 static lv_obj_t *title_label;
 static lv_obj_t *artist_label;
@@ -45,16 +45,8 @@ static int strip_h;
 
 // What the strip falls back to when there is no artwork to size it from, and
 // the height it always has over a picture from the folder -- there the block
-// is built to order rather than borrowed, so there is nothing to measure. The
-// two V1 palettes use this same stable height for the metadata field they lay
-// over the sleeve rather than under it.
+// is built to order rather than borrowed, so there is nothing to measure.
 #define DEFAULT_STRIP_H bp_pick(132, 250)
-
-// How much of the sleeve still shows through that field, per palette. Amber's
-// cream and amber type is bright enough to read through half; Tokyo Night's
-// violet, cyan and blue are dimmer inks, so its film is a step heavier.
-#define AMBER_STRIP_OPA LV_OPA_50
-#define TOKYO_STRIP_OPA LV_OPA_60
 
 // The Framed style's sleeve. It keeps at least this much of the panel free on
 // either side, and above and below itself inside the area over the strip; its
@@ -102,9 +94,9 @@ static screensaver_source_t source;
 #define V1_PICTURE_MAX_H 800
 static int picture_max_w, picture_max_h;
 
-// The picture on screen and, outside the V1 palettes, the blurred block over
-// its lower part. Owned here, not by the player: freed here whenever a
-// different one is chosen or the screensaver goes away.
+// The picture on screen and the blurred block over its lower part. Owned here,
+// not by the player: freed here whenever a different one is chosen or the
+// screensaver goes away.
 static cover_image_t image_pic, image_strip;
 static char image_file[512]; // what image_pic was built from
 
@@ -153,25 +145,17 @@ static bool frame_failed;
 // than the blurred block would show a black bar above it and another below.
 // The height is therefore taken from the picture, leaving nothing to paint.
 //
-// In the regular themes an album cover stops where its blurred strip starts.
-// A folder photograph already fills the screen, and so does the artwork under
-// the V1 palettes' metadata field: that field is translucent, and it is only
-// over the sleeve that it means anything.
+// An album cover stops where its blurred strip starts. A folder photograph
+// already fills the screen.
 //
 // Cheap, and a no-op unless something has actually changed.
 static int cover_box_h;
 
-// The palettes added for the V1 draw the metadata over the sleeve itself:
-// the artwork runs the whole panel and a translucent field of the palette's
-// own colour is laid over its foot. Dark and Light keep the blurred strip,
-// which is the artwork the player already made for that purpose.
-static bool metadata_over_art(void) {
-	return theme_is_monochrome() || theme_is_tokyo_night();
-}
+// Dark and Light keep the blurred strip, which is the artwork the player
+// already made for that purpose.
 
-// The album, framed. In every theme the frame stands above the words rather
-// than behind them, so the palettes' field and the blurred strip have nothing
-// to lie over.
+// The album, framed. The frame stands above the words rather than behind
+// them, so the blurred strip has nothing to lie over.
 static bool framed_now(void) { return source == SCREENSAVER_SOURCE_ALBUM && style == SCREENSAVER_STYLE_FRAMED; }
 
 static void set_strip_height(int height) {
@@ -183,7 +167,7 @@ static void set_strip_height(int height) {
 		lv_obj_set_height(info_strip, strip_h);
 		lv_obj_align(info_strip, LV_ALIGN_BOTTOM_MID, 0, 0);
 	}
-	bool over_art = !framed_now() && (source == SCREENSAVER_SOURCE_IMAGES || metadata_over_art());
+	bool over_art = !framed_now() && source == SCREENSAVER_SOURCE_IMAGES;
 	int want = over_art ? screen_h : screen_h - strip_h;
 	if (want != cover_box_h) {
 		cover_box_h = want;
@@ -463,11 +447,8 @@ static void promote_next(void) {
 	next_file[0] = '\0';
 }
 
-// The V1 palettes replace the artwork-derived blur beneath their metadata with
-// a fixed translucent field: black for Amber and OLED, Tokyo Night's
-// blue-black panel. Either keeps the palette's ink legible over every sleeve while still
-// letting the cover show through behind it. The other themes keep the blurred
-// copy, or plain black when there is no artwork to blur.
+// The metadata strip sits on the blurred copy of the artwork, or on black when
+// there is no artwork to blur.
 static void set_info_strip_backdrop(const lv_image_dsc_t *backdrop) {
 	if (framed_now()) {
 		// Framed keeps the words off the artwork altogether, so there is
@@ -475,20 +456,6 @@ static void set_info_strip_backdrop(const lv_image_dsc_t *backdrop) {
 		// itself, whichever page that is (see set_page_backdrop).
 		lv_obj_set_style_bg_image_src(info_strip, NULL, 0);
 		lv_obj_set_style_bg_opa(info_strip, LV_OPA_TRANSP, 0);
-		return;
-	}
-
-	if (theme_is_monochrome()) {
-		lv_obj_set_style_bg_image_src(info_strip, NULL, 0);
-		lv_obj_set_style_bg_color(info_strip, lv_color_black(), 0);
-		lv_obj_set_style_bg_opa(info_strip, AMBER_STRIP_OPA, 0);
-		return;
-	}
-
-	if (theme_is_tokyo_night()) {
-		lv_obj_set_style_bg_image_src(info_strip, NULL, 0);
-		lv_obj_set_style_bg_color(info_strip, theme()->panel, 0);
-		lv_obj_set_style_bg_opa(info_strip, TOKYO_STRIP_OPA, 0);
 		return;
 	}
 
@@ -502,70 +469,43 @@ static void set_info_strip_backdrop(const lv_image_dsc_t *backdrop) {
 	}
 }
 
-// What the whole page is drawn on behind a framed sleeve, in Dark and Light:
-// the player's blurred copy of the artwork, when the player made it the size
-// of the screen -- on the V1 it does for every arrangement but Immersive,
-// whose blur is a band. NULL puts back the plain page colour. Borrowed exactly
-// like the sleeve, so it is let go of in the same places: the release hook,
-// and the screensaver going away.
+// What the whole page is drawn on behind a framed sleeve: the player's blurred
+// copy of the artwork, when the player made it the size of the screen -- on the
+// V1 it does for every arrangement but Immersive, whose blur is a band. NULL
+// puts back the plain page colour. Borrowed exactly like the sleeve, so it is
+// let go of in the same places: the release hook, and the screensaver going
+// away.
 static void set_page_backdrop(const lv_image_dsc_t *backdrop) {
 	if (lv_obj_get_style_bg_image_src(saver, LV_PART_MAIN) != backdrop) {
 		lv_obj_set_style_bg_image_src(saver, backdrop, 0);
 	}
 }
 
-// The metadata field's ink, by palette. Amber takes the cream, amber and
-// signal-orange roles sampled from its reference Now Playing screen, and OLED
-// the white and grey steps of its own deck; Tokyo Night takes the violet it
-// gives the deck's track name, the cyan it gives the artist line and its own
-// accent blue for the time. Dark and Light have no
-// field of their own: they keep the light type they have always worn over the
-// blurred strip, whatever the page behind them is.
+// The ink has one place, this function: the light type the screensaver has
+// always worn over the blurred strip.
 static void screensaver_refresh_theme(void) {
 	if (!saver) {
 		return;
 	}
 
-	bool mono = theme_is_monochrome(); // Amber on Black and OLED
-	bool tokyo = theme_is_tokyo_night();
-	bool field = mono || tokyo;
-
-	// The page behind everything. Where there is a field it is the palette's own
-	// background -- both the ground the note sits on when a track has no artwork
-	// and the colour the translucent field is read against; black otherwise,
-	// which is what the blurred strip is built to sit on.
-	lv_color_t page = field ? theme()->screen_bg : lv_color_black();
+	// The page behind everything is black, which is what the blurred strip is
+	// built to sit on.
+	lv_color_t page = lv_color_black();
 	lv_obj_set_style_bg_color(saver, page, 0);
 	if (cover_box) {
 		lv_obj_set_style_bg_color(cover_box, page, 0);
 	}
 
-	// What the words and the marks are drawn in. Over a field they take the
-	// roles the palette's own Now Playing deck gives the same things: the
-	// track name's colour for the title, the artist line's for the artist --
-	// which is Amber's amber and Tokyo Night's cyan, the one place the two
-	// palettes ask a different colour of the same role -- the accent for the
-	// time and the deck's quiet chevron for the way out.
+	// The words and the marks keep the light type they have always worn over the
+	// blurred strip.
 	lv_color_t ink_title = lv_color_white();
 	lv_color_t ink_artist = lv_color_make(200, 200, 200);
 	lv_color_t ink_clock = lv_color_white();
 	lv_color_t ink_chevron = lv_color_white();
-	if (field) {
-		ink_title = theme_player_chrome_color(THEME_PLAYER_CHROME_PRIMARY);
-		ink_artist = tokyo ? theme_semantic_color(THEME_SEMANTIC_CYAN)
-						   : theme_player_chrome_color(THEME_PLAYER_CHROME_SECONDARY);
-		ink_clock = theme()->accent;
-		ink_chevron = theme_player_chrome_color(THEME_PLAYER_CHROME_CHEVRON);
-	}
 
 	if (cover_placeholder) {
-		// The note in the middle of a screen with no artwork: the monochrome
-		// palettes' secondary deck role, the palette's own secondary text
-		// everywhere else.
-		lv_obj_set_style_image_recolor(cover_placeholder,
-									   mono ? theme_player_chrome_color(THEME_PLAYER_CHROME_SECONDARY)
-											 : theme()->text_secondary,
-									   0);
+		// The note in the middle of a screen with no artwork.
+		lv_obj_set_style_image_recolor(cover_placeholder, theme()->text_secondary, 0);
 	}
 	if (title_label) {
 		lv_obj_set_style_text_color(title_label, ink_title, 0);
@@ -581,8 +521,8 @@ static void screensaver_refresh_theme(void) {
 	}
 
 	// A theme can change while this is on screen. Reapply the source-specific
-	// field immediately, so a blurred frame never survives into a palette that
-	// has one of its own.
+	// strip immediately, so a blurred frame never survives a change of page
+	// colour.
 	if (screensaver_is_visible()) {
 		refresh_content();
 	}
@@ -655,10 +595,9 @@ static void draw_framed(const lv_image_dsc_t *backdrop) {
 		lv_obj_set_hidden(cover_placeholder, false);
 	}
 
-	// The page: the blurred copy behind everything in Dark and Light when the
-	// player has one the size of the screen, the page colour otherwise -- and
-	// always the page colour in the palettes, whose page is a colour by design.
-	bool blur = !metadata_over_art() && backdrop && (int)backdrop->header.w == screen_w &&
+	// The page: the blurred copy behind everything when the player has one the
+	// size of the screen, the page colour otherwise.
+	bool blur = backdrop && (int)backdrop->header.w == screen_w &&
 				(int)backdrop->header.h == screen_h;
 	set_page_backdrop(blur ? backdrop : NULL);
 	lv_obj_set_style_bg_opa(cover_box, blur ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
@@ -739,26 +678,21 @@ static void refresh_content(void) {
 		return;
 	}
 
-	// The strip first: in the regular themes the artwork is scaled into the
-	// area above it. The two V1 palettes settle the same panel height, but
-	// overlay it on a full-screen cover so their translucent field really has
-	// the sleeve under it.
+	// The strip first: the artwork is scaled into the area above it.
 	frame_fill();
 	// The player's blurred copy is as tall as whatever shows it, and one
 	// arrangement shows it behind the whole screen: a strip that tall is the
 	// screen, so that one keeps the default height and takes the top of the
-	// picture instead. The two V1 palettes deliberately never borrow that
-	// blurred copy -- their field is a colour, not a blur.
+	// picture instead.
 	int strip_from_backdrop = backdrop ? (int)backdrop->header.h : 0;
-	set_strip_height(!metadata_over_art() && strip_from_backdrop > 0 && strip_from_backdrop < screen_h
-														 ? strip_from_backdrop : DEFAULT_STRIP_H);
+	set_strip_height(strip_from_backdrop > 0 && strip_from_backdrop < screen_h
+						 ? strip_from_backdrop : DEFAULT_STRIP_H);
 	const lv_image_dsc_t *cover = shown_cover;
 	if (cover) {
 		lv_image_set_src(cover_img, cover);
 		// Fill the available artwork area, cropping the overflow: a letterboxed
-		// cover with black bars would look like a bug, not a screensaver. Under
-		// a field the whole screen is artwork, the field included.
-		int image_h = metadata_over_art() ? screen_h : screen_h - strip_h;
+		// cover with black bars would look like a bug, not a screensaver.
+		int image_h = screen_h - strip_h;
 		int32_t zoom_w = (256 * screen_w) / (int32_t)cover->header.w;
 		int32_t zoom_h = (256 * image_h) / (int32_t)cover->header.h;
 		lv_image_set_scale(cover_img, zoom_w > zoom_h ? zoom_w : zoom_h);
@@ -770,8 +704,6 @@ static void refresh_content(void) {
 		lv_obj_set_hidden(cover_placeholder, false);
 	}
 
-	// In Amber and Tokyo Night this clears the blurred artwork and puts the
-	// palette's translucent field in its place.
 	set_info_strip_backdrop(backdrop);
 
 	refresh_clock();
@@ -1014,12 +946,10 @@ void screensaver_init(gui_config_t *cfg) {
 	lv_obj_add_event_cb(saver, drag_cb, LV_EVENT_RELEASED, NULL);
 	lv_obj_add_event_cb(saver, drag_cb, LV_EVENT_PRESS_LOST, NULL);
 
-	// The artwork: everything above the strip in the regular themes, and the
-	// whole screen under the two V1 palettes, centre-cropped to fill it either
-	// way -- or, Framed, the area above the strip in every theme, with the
-	// sleeve centred in it. Its fill is the page colour (see
-	// screensaver_refresh_theme): what shows when a track has no artwork
-	// behind the note, and round a framed sleeve.
+	// The artwork: everything above the strip, centre-cropped to fill it -- or,
+	// Framed, the area above the strip with the sleeve centred in it. Its fill
+	// is the page colour (see screensaver_refresh_theme): what shows when a
+	// track has no artwork behind the note, and round a framed sleeve.
 	cover_box = lv_obj_create(saver);
 	lv_obj_set_size(cover_box, screen_w, screen_h - strip_h);
 	lv_obj_set_pos(cover_box, 0, 0);
@@ -1063,8 +993,7 @@ void screensaver_init(gui_config_t *cfg) {
 	lv_obj_center(cover_img);
 	lv_image_set_inner_align(cover_img, LV_IMAGE_ALIGN_CENTER);
 
-	// Metadata field: the player's blurred artwork in Dark and Light, a
-	// translucent fill of the palette's own colour in the two V1 palettes (see
+	// Metadata field: the player's blurred artwork (see
 	// set_info_strip_backdrop).
 	info_strip = lv_obj_create(saver);
 	lv_obj_set_size(info_strip, screen_w, strip_h);
@@ -1081,12 +1010,9 @@ void screensaver_init(gui_config_t *cfg) {
 	lv_obj_set_flex_flow(info_strip, LV_FLEX_FLOW_COLUMN);
 	lv_obj_set_flex_align(info_strip, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-	// None of the ink is set here. What the words and the marks are drawn in
-	// depends on the palette -- Amber's cream and signal orange, Tokyo Night's
-	// violet, cyan and blue, the light type Dark and Light have always worn over
-	// the blurred strip -- and it is all written in screensaver_refresh_theme(),
-	// which runs at the end of this function and again on every theme change.
-	// One place, so the two can never disagree.
+	// None of the ink is set here. It is all written in
+	// screensaver_refresh_theme(), which runs at the end of this function and
+	// again on every theme change. One place, so the two can never disagree.
 	title_label = lv_label_create(info_strip);
 	lv_obj_set_width(title_label, lv_pct(100));
 	lv_obj_set_style_text_font(title_label, &font_ui_28, 0);

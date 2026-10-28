@@ -77,7 +77,7 @@ static const lv_image_dsc_t *const NORMAL_MENU_ICONS[5] = {
 	&icon_menu_settings,
 };
 
-static const lv_image_dsc_t *const TOKYO_MENU_ICONS[5] = {
+static const lv_image_dsc_t *const MORPTHIS_MENU_ICONS[5] = {
 	&icon_music2,            // Music
 	&icon_wifi_high,         // Wireless
 	&icon_files_game,        // Apps
@@ -85,7 +85,7 @@ static const lv_image_dsc_t *const TOKYO_MENU_ICONS[5] = {
 	&icon_music_settings,    // Settings
 };
 
-static const theme_semantic_t TOKYO_MENU_TONES[5] = {
+static const theme_semantic_t MORPTHIS_MENU_TONES[5] = {
 	THEME_SEMANTIC_CYAN,
 	THEME_SEMANTIC_BLUE,
 	THEME_SEMANTIC_GREEN,
@@ -120,11 +120,8 @@ static void set_label_if_changed(lv_obj_t *label, const char *text) {
 	}
 }
 
-// The V1 home's title and tagline. OLED leaves both out: its grid starts right
-// under the status bar, and the five cards share the height the header took.
+// The V1 home's title and tagline.
 #define HOME_HEADER_HEIGHT 62
-
-static bool home_header_shown(void) { return !theme_is_oled(); }
 
 bool main_menu_icons_only(void) { return config_get_bool("ui", "main_menu_icons_only", false); }
 
@@ -159,52 +156,44 @@ static void main_menu_refresh_tiles(void) {
 	}
 
 	bool compact = bp_is_tempotec_v1();
-	bool tokyo = theme_uses_function_glyphs();
+	bool morpthis = theme_uses_function_glyphs();
 	bool icons_only = main_menu_icons_only();
 	bool browse = main_menu_browse();
 	gridpage_set_tile(menu_grid, 0, browse ? &icon_menu_explorer : &icon_menu_music,
 						 browse ? "music_browse" : "music");
-	bool horizontal = compact && tokyo && !icons_only;
+	bool horizontal = compact && morpthis && !icons_only;
 	for (int i = 0; i < 5; i++) {
 		lv_obj_t *tile = lv_obj_get_child(menu_grid, i);
 		// The wide Music row gets a little more art than the four square tiles.
-		int icon_size = tokyo ? (compact ? (i == 0 ? 34 : 22) : 46) : (compact ? 46 : 0);
+		int icon_size = morpthis ? (compact ? (i == 0 ? 34 : 22) : 46) : (compact ? 46 : 0);
 		if (icons_only) {
 			// Leave breathing room inside the tile. Size both the image's
 			// drawing and its flex layout box.
 			icon_size = LV_MAX(1, LV_MIN(lv_obj_get_width(tile), lv_obj_get_height(tile)) - bp_pick(12, 24));
-			// OLED's header-free grid has taller tiles. Leave more breathing
-			// room for its glyphs without changing the grid or touch targets.
-			if (theme_is_oled()) {
-				icon_size = LV_MAX(1, icon_size * 4 / 5);
-			}
 			// A further 5% reduction in every theme, rounded to the nearest
 			// display pixel so compact glyphs do not shrink by a full extra pixel.
 			icon_size = LV_MAX(1, (icon_size * 95 + 50) / 100);
 		}
 
-		const lv_image_dsc_t *source = tokyo ? TOKYO_MENU_ICONS[i] : NORMAL_MENU_ICONS[i];
-		if (i == 0 && browse) source = tokyo ? &icon_folder : &icon_menu_explorer;
+		const lv_image_dsc_t *source = morpthis ? MORPTHIS_MENU_ICONS[i] : NORMAL_MENU_ICONS[i];
+		if (i == 0 && browse) source = morpthis ? &icon_folder : &icon_menu_explorer;
 		if (icons_only && !(i == 0 && browse)) {
 			// Use art pre-rasterized at the final pixel size, not stretched
 			// toolbar glyphs or colored art filtered for a second time.
 			// Matching source/layout sizes also avoids LVGL's fractional image
 			// transform and its extra edge interpolation. Other menus and the
 			// labeled layout continue to use their original sources and sizes.
-			// Tile 3 is Apps now. The native lookup still carries the old
-			// Audiobooks art, so leave this one on the gamepad glyph until the
-			// generated menu art is refreshed.
-			const lv_image_dsc_t *native = i == 3 ? NULL : main_menu_icon_native(i, tokyo, icon_size);
+			const lv_image_dsc_t *native = main_menu_icon_native(i, morpthis, icon_size);
 			if (native) {
 				source = native;
 			}
 		}
 		gridpage_set_tile_label_hidden(menu_grid, i, icons_only);
-		if (tokyo) {
+		if (morpthis) {
 			// Keep the decorative left-column glow only in the labeled layout.
 			bool glow = !icons_only && compact && (i % 2 == 0);
 			gridpage_set_tile_icon_style(menu_grid, i, source, icon_size, true,
-										 theme_semantic_color(TOKYO_MENU_TONES[i]), glow);
+										 theme_semantic_color(MORPTHIS_MENU_TONES[i]), glow);
 		} else {
 			gridpage_set_tile_icon_style(menu_grid, i, source, icon_size, false,
 										 theme()->text_primary, false);
@@ -212,7 +201,7 @@ static void main_menu_refresh_tiles(void) {
 		gridpage_set_tile_orientation(menu_grid, i, horizontal);
 
 		lv_obj_set_style_border_width(tile, 0, 0);
-		if (tokyo) {
+		if (morpthis) {
 			lv_obj_set_style_outline_width(tile, 0, 0);
 		} else {
 			lv_obj_remove_local_style_prop(tile, LV_STYLE_OUTLINE_WIDTH, 0);
@@ -223,7 +212,7 @@ static void main_menu_refresh_tiles(void) {
 // Fit the V1's live strip around two fixed one-line labels. Explicitly sizing
 // the text column from the row's content width keeps both glyphs and ellipses
 // inside the card, including after a font-size or theme change.
-static void main_menu_layout_tokyo_home(bool force) {
+static void main_menu_layout_morpthis_home(bool force) {
 	if (!menu_grid || !menu_cfg || !mini_player || !mini_player_copy ||
 			!bp_is_tempotec_v1() || !theme_uses_function_glyphs()) {
 		return;
@@ -252,7 +241,7 @@ static void main_menu_layout_tokyo_home(bool force) {
 	lv_obj_set_height(mini_player_subtitle, line_height);
 
 	int bottom = (int)menu_cfg->padding + footer_height + 1;
-	int top = (int)menu_cfg->top_bar_height + (home_header_shown() ? HOME_HEADER_HEIGHT : 0);
+	int top = (int)menu_cfg->top_bar_height + HOME_HEADER_HEIGHT;
 	gridpage_set_layout(menu_grid, menu_cfg, top, bottom, menu_cfg->padding, 6, 2, 3);
 	main_menu_refresh_tiles();
 }
@@ -264,7 +253,7 @@ static void main_menu_refresh_now_playing(void) {
 	if (!mini_player || !menu_cfg) {
 		return;
 	}
-	main_menu_layout_tokyo_home(false);
+	main_menu_layout_morpthis_home(false);
 
 	device_state_t state;
 	device_state_get(&state);
@@ -329,21 +318,20 @@ static void main_menu_refresh_theme(void) {
 	}
 
 	bool compact = bp_is_tempotec_v1();
-	bool tokyo = theme_uses_function_glyphs();
-	bool prototype_layout = compact && tokyo;
+	bool morpthis = theme_uses_function_glyphs();
+	bool prototype_layout = compact && morpthis;
 
 	if (prototype_layout) {
-		lv_obj_set_hidden(home_header, !home_header_shown());
-		lv_obj_set_hidden(home_note, !home_header_shown());
+		lv_obj_set_hidden(home_header, false);
+		lv_obj_set_hidden(home_note, false);
 		lv_obj_set_hidden(mini_player, false);
 
 		// Status bar: y=0..24. The bold 36 px title row and single-line note
 		// lead into five cards; Music takes the full first row and the
-		// mini-player sits below. OLED has no title row or note: the cards start
-		// under the status bar. The five existing tile objects are simply
-		// reflowed, not duplicated.
-		// The title rests directly on the Tokyo Night background; the tagline
-		// stays below it with a clear gap, and there is no divider.
+		// mini-player sits below. The five existing tile objects are simply
+		// reflowed, not duplicated. The title rests directly on the Morpthis
+		// background; the tagline stays below it with a clear gap, and there is
+		// no divider.
 		lv_obj_set_style_bg_opa(home_header, LV_OPA_TRANSP, 0);
 		lv_obj_set_style_radius(home_header, 0, 0);
 		lv_obj_set_style_border_width(home_header, 0, 0);
@@ -353,7 +341,7 @@ static void main_menu_refresh_theme(void) {
 		lv_obj_set_style_bg_color(mini_player, strip_fill, 0);
 		lv_obj_set_style_bg_opa(mini_player, LV_OPA_COVER, 0);
 		mini_player_clear_edge();
-		main_menu_layout_tokyo_home(true);
+		main_menu_layout_morpthis_home(true);
 	} else {
 		lv_obj_set_hidden(home_header, true);
 		lv_obj_set_hidden(home_note, true);
@@ -402,7 +390,7 @@ void main_menu_init(gui_config_t *cfg) {
 	// just as the music grid used to, without entering Music first.
 	coverflow_attach_edge(menu_grid, cfg);
 
-	// Tokyo Night's compact home chrome: the header, note and live mini-player
+	// Morpthis's compact home chrome: the header, note and live mini-player
 	// are ordinary LVGL objects, and remain hidden in the unchanged Dark/Light
 	// home menu.
 	home_header = lv_obj_create(main_menu_screen);
@@ -450,7 +438,7 @@ void main_menu_init(gui_config_t *cfg) {
 	lv_obj_set_flex_align(mini_player, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 	lv_obj_add_event_cb(mini_player, switch_screen_cb, LV_EVENT_CLICKED, player_screen);
 	lv_obj_set_event_bubble(mini_player, true);
-	// Compact Amber/Tokyo home menus reserve the bottom band for this footer,
+	// The compact Morpthis home menu reserves the bottom band for this footer,
 	// so make the same upward pull available here as it is over the card grid.
 	coverflow_attach_edge(mini_player, cfg);
 

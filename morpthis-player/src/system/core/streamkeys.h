@@ -7,9 +7,9 @@
 // than written into the source.
 //
 // Last.fm signs every call with the API secret, so the pair has to be supplied
-// by whoever assembles the firmware. The original streaming services were
-// removed; the file and its paths keep their old names so an existing card or
-// image still works, but only the [lastfm] section is read now.
+// by whoever assembles the firmware. The file and its paths keep their old
+// names so an existing card or image still works; only the [lastfm] section is
+// read now.
 //
 //     [lastfm]
 //     api_key = ...

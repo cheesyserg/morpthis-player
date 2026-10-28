@@ -26,9 +26,9 @@ static int grid_gap(void) { return compact_grid() ? 6 : GRID_GAP; }
 
 // A compact list of the tiled menu pages. The entry arrays passed to
 // gridpage_build() are local to each init function, so retain just the icon
-// and translation key that are needed to restore Dark/Light or apply Tokyo
-// Night later. V1 has six tiles per page; the extra slots cover optional
-// builds without allocating per-tile theme objects.
+// and translation key that are needed to restore Dark/Light or apply the
+// Morpthis style later. V1 menu pages hold up to six tiles; the extra slots
+// cover optional builds without allocating per-tile theme objects.
 #define GRIDPAGE_THEME_PAGE_MAX 12
 #define GRIDPAGE_THEME_TILE_MAX 16
 typedef struct {
@@ -37,7 +37,7 @@ typedef struct {
 	const lv_image_dsc_t *normal_icons[GRIDPAGE_THEME_TILE_MAX];
 	const char *labels[GRIDPAGE_THEME_TILE_MAX];
 	// A tile whose icon is a colour drawing (an app's own icon) keeps it in
-	// every layout: no recolour, no Tokyo Night replacement.
+	// every layout: no recolour, no Morpthis replacement.
 	bool keep_color[GRIDPAGE_THEME_TILE_MAX];
 	bool wide_first;
 } gridpage_theme_page_t;
@@ -132,7 +132,7 @@ void gridpage_set_tile(lv_obj_t *grid, int index, const lv_image_dsc_t *icon, co
 
 // Sets a tile glyph at a known display size. The optional echo is a separate
 // static image object: it costs no bitmap memory, stays outside flex layout,
-// and is created only for the handful of Tokyo Night home-menu icons.
+// and is created only for the handful of Morpthis home-menu icons.
 void gridpage_set_tile_icon_style(lv_obj_t *grid, int index, const lv_image_dsc_t *source, int icon_size,
 								  bool recolor, lv_color_t color, bool glow) {
 	if (!grid || !source || index < 0 || index >= (int)lv_obj_get_child_count(grid)) {
@@ -222,9 +222,9 @@ void gridpage_set_tile_icon_style(lv_obj_t *grid, int index, const lv_image_dsc_
 	lv_obj_align_to(halo, icon, LV_ALIGN_CENTER, 0, 0);
 }
 
-static bool gridpage_tokyo_icon(const char *label, const lv_image_dsc_t **icon, theme_semantic_t *tone) {
+static bool gridpage_morpthis_icon(const char *label, const lv_image_dsc_t **icon, theme_semantic_t *tone) {
 	// Function-matched monochrome icons: the bitmap menu illustrations remain
-	// untouched in Dark/Light, while Tokyo Night uses the existing compact
+	// untouched in Dark/Light, while Morpthis uses the existing compact
 	// glyphs and a restrained semantic accent per destination.
 	static const struct {
 		const char *label;
@@ -279,17 +279,17 @@ static void gridpage_apply_theme_page(gridpage_theme_page_t *page) {
 		return;
 	}
 
-	bool tokyo = theme_uses_function_glyphs();
+	bool morpthis = theme_uses_function_glyphs();
 	for (int i = 0; i < page->count; i++) {
 		const lv_image_dsc_t *icon = page->normal_icons[i];
 		theme_semantic_t tone = THEME_SEMANTIC_BLUE;
 		bool keep = page->keep_color[i];
-		if (tokyo && !keep) {
-			gridpage_tokyo_icon(page->labels[i], &icon, &tone);
+		if (morpthis && !keep) {
+			gridpage_morpthis_icon(page->labels[i], &icon, &tone);
 		}
 		// A colour icon is drawn as it came, at the classic size; only the
 		// monochrome menu glyphs take the layout's accent and compact size.
-		bool tinted = tokyo && !keep;
+		bool tinted = morpthis && !keep;
 		bool horizontal = tinted && compact_grid();
 		gridpage_set_tile_icon_style(page->grid, i, icon,
 									 tinted ? (compact_grid() ? 22 : 42)
@@ -299,11 +299,11 @@ static void gridpage_apply_theme_page(gridpage_theme_page_t *page) {
 
 		lv_obj_t *tile = lv_obj_get_child(page->grid, i);
 		if (tile) {
-			// Tokyo Night tiles are separated by gaps and fill, not keylines.
+			// Morpthis tiles are separated by gaps and fill, not keylines.
 			// Clear both border and focus-outline styles; a zero-opacity line
 			// still reads as a card edge on the V1's small panel.
 			lv_obj_set_style_border_width(tile, 0, 0);
-			if (tokyo) {
+			if (morpthis) {
 				lv_obj_set_style_outline_width(tile, 0, 0);
 			} else {
 				lv_obj_remove_local_style_prop(tile, LV_STYLE_OUTLINE_WIDTH, 0);

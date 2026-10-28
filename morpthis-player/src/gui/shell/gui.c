@@ -319,7 +319,7 @@ static void popup_notify(const char *text, const lv_image_dsc_t *icon, lv_color_
 	ev->icon = icon;
 	ev->icon_color = color;
 	// gui_post rather than lv_async_call: popups arrive from any thread
-	// (bluetooth, usb, Qobuz downloads), and lv_async_call from off the GUI
+	// (bluetooth, usb, app downloads), and lv_async_call from off the GUI
 	// thread corrupts the timer list. See gui_post.
 	gui_post(popup_async_cb, ev);
 }
