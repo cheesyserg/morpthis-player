@@ -524,7 +524,11 @@ static void morpthis_music_build(gui_config_t *cfg) {
 	music_remove_edges(morpthis_music_panel);
 	lv_obj_set_size(morpthis_music_panel, lv_pct(100), cfg->screen_height - top);
 	lv_obj_align(morpthis_music_panel, LV_ALIGN_TOP_LEFT, 0, top);
-	lv_obj_set_style_bg_opa(morpthis_music_panel, LV_OPA_TRANSP, 0);
+	// Opaque in the page's colour, so a scroll repaints only this panel instead
+	// of the screen behind it. Same reason as the library viewport: LVGL redraws
+	// the topmost object covering a dirty area, and a transparent panel is not
+	// that object. The colour is the screen's, so the look is unchanged.
+	lv_obj_add_style(morpthis_music_panel, &theme_style_screen, 0);
 	lv_obj_set_style_border_width(morpthis_music_panel, 0, 0);
 	lv_obj_set_style_radius(morpthis_music_panel, 0, 0);
 	lv_obj_set_style_pad_hor(morpthis_music_panel, cfg->padding, 0);
