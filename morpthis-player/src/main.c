@@ -1647,8 +1647,8 @@ static lv_display_t *try_panned_display(void) {
 	// thing about this device the player cannot work out for itself, it is what
 	// the whole interface is then laid out against, and it is the first thing
 	// anyone needs when the interface does not appear.
-	printf("fb: %ux%u (virtual %ux%u), %u bpp, stride %u, %u bytes of memory\n", fb_var.xres, fb_var.yres,
-		   fb_var.xres_virtual, fb_var.yres_virtual, fb_var.bits_per_pixel, fix.line_length, fix.smem_len);
+	printf("fb: %ux%u (virtual %ux%u), %u bpp, stride %u, %u bytes of memory, driver %.16s\n", fb_var.xres, fb_var.yres,
+		   fb_var.xres_virtual, fb_var.yres_virtual, fb_var.bits_per_pixel, fix.line_length, fix.smem_len, fix.id);
 
 	// LVGL renders with a stride of xres * bytespp; a padded framebuffer line
 	// would shear the picture, so refuse and fall back.
@@ -1710,6 +1710,15 @@ static lv_display_t *try_panned_display(void) {
 		fb_fd = -1;
 		return NULL;
 	}
+
+	// One whole page copied through this process, timed once. The page flip
+	// costs about a refresh interval on this panel, and this says whether that
+	// is a wait in the driver or the driver copying a page itself -- the two
+	// have opposite fixes. Page 1 is off screen (yoffset is 0), so the copy is
+	// invisible and the first frame overwrites it anyway.
+	uint64_t copy_started = now_us();
+	memcpy(fb_mem + fb_page_size, fb_mem, fb_page_size);
+	printf("fb: a %zu byte page copy took %llu us\n", fb_page_size, (unsigned long long)(now_us() - copy_started));
 
 	lv_display_t *disp = lv_display_create((int32_t)fb_var.xres, (int32_t)fb_var.yres);
 	if (!disp) {
