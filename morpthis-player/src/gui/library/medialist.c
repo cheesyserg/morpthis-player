@@ -3491,6 +3491,9 @@ static void build_panel(panel_t *p, gui_config_t *cfg, bool is_tracks, int slot_
 		row->button = lv_btn_create(p->body);
 		lv_obj_set_size(row->button, width, ROW_HEIGHT);
 		lv_obj_set_x(row->button, 0);
+		// A press on a partly visible row starts a drag. Do not let focus scroll
+		// it into view first -- that is the jump felt at the top of a list.
+		lv_obj_set_scroll_on_focus(row->button, false);
 		lv_obj_add_style(row->button, &theme_style_card, 0);
 		lv_obj_add_style(row->button, &style_row, 0);
 		lv_obj_add_style(row->button, &theme_style_card_pressed, LV_STATE_PRESSED);

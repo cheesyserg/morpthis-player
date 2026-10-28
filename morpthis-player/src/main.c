@@ -65,6 +65,10 @@
 
 static volatile sig_atomic_t running = 1;
 
+// Page flips the panel actually took. Read by the drag diagnostic, written by
+// the presenter thread; a relaxed counter is all this needs to be.
+static volatile uint32_t presented_frames;
+
 #ifdef HOST_BUILD
 // Screenshot trigger on the simulator. The device uses volume-up plus power,
 // physical keys that do not exist here, so creating /tmp/morpthis/shot takes their
@@ -1034,13 +1038,12 @@ static void tune_kinetic_scroll(lv_indev_t *indev) {
 
 // What one drag cost, reported when the finger lifts.
 //
-// A pass is one lv_timer_handler(). With the flip on its own thread, a flush
-// waits for the previous flip rather than making one, so a pass that presents
-// a frame still costs about one panel interval: what is left of the previous
-// flip, plus the copy. What matters is how many frames a drag got and whether
-// any pass ran long, because a frame that misses the next refresh is shown one
-// interval late. One line per gesture, printed after the finger is off the
-// glass, so it never lands in the middle of one.
+// A pass is one lv_timer_handler(). The flush now only snapshots the damaged
+// rectangle into a staging page; the vsync wait is the presenter's. What
+// matters is how many frames a drag produced, how often the pointer actually
+// moved, and whether a pass ran long, because the presenter can only put one
+// frame on the glass per panel interval. One line per gesture, printed after
+// the finger is off the glass, so it never lands in the middle of one.
 static struct {
 	bool active;
 	lv_point_t press_at;
@@ -1052,6 +1055,7 @@ static struct {
 	uint32_t pass_max;
 	uint32_t flush_sum_us;
 	uint32_t flush_max_us;
+	uint32_t presented_start;
 } drag_stats;
 
 // The pointer the stats above are gathered from (the touch panel on the
@@ -1089,6 +1093,7 @@ static void pointer_pace_cb(lv_event_t *e) {
 		drag_stats.pass_max = 0;
 		drag_stats.flush_sum_us = 0;
 		drag_stats.flush_max_us = 0;
+		drag_stats.presented_start = presented_frames;
 	} else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
 		lv_timer_set_period(read_timer, POINTER_IDLE_READ_PERIOD_MS);
 		if (!drag_stats.active) {
@@ -1108,10 +1113,11 @@ static void pointer_pace_cb(lv_event_t *e) {
 		if (dx * dx + dy * dy <= TAP_SLOP_PX * TAP_SLOP_PX || drag_stats.frames == 0) {
 			return;
 		}
-		DEBUG_ERR("ui: drag %u ms, %u frames, %u moves, pass avg %u max %u ms, flush avg %u max %u ms\n",
+		DEBUG_ERR("ui: drag %u ms, %u frames, %u moves, %u shown, pass avg %u max %u ms, flush avg %u max %u ms\n",
 				  lv_tick_get() - drag_stats.started, drag_stats.frames, drag_stats.moves,
-				  drag_stats.pass_sum / drag_stats.frames, drag_stats.pass_max,
-				  drag_stats.flush_sum_us / drag_stats.frames / 1000, drag_stats.flush_max_us / 1000);
+				  presented_frames - drag_stats.presented_start, drag_stats.pass_sum / drag_stats.frames,
+				  drag_stats.pass_max, drag_stats.flush_sum_us / drag_stats.frames / 1000,
+				  drag_stats.flush_max_us / 1000);
 	}
 }
 
@@ -1399,20 +1405,28 @@ uint32_t fb_flush_us_take(void) { return 0; }
 //
 // jzfb latches FBIOPAN_DISPLAY on vsync, but the call itself waits for the
 // panel: 16.8 ms measured on this device, against a 16.7 ms panel interval.
-// Drawing a frame and then flipping therefore costs the frame time *plus* a
-// whole interval, and that sum is not a multiple of the panel's, so frames
-// land one vblank apart, then two, then one -- which is the judder a slow
-// scroll shows. No amount of drawing work inside the frame can pay for it,
-// because the wait is added after the drawing.
+// A flush that waited for that flip gave the touch panel 16.8 ms to collect
+// reports; lv_evdev drains the queue and exposes only the latest point, so a
+// slow drag arrived in lumps.  It also made the draw loop miss vblanks, and
+// the wait landed after the drawing where nothing could pay for it.
 //
-// So the flip is moved off the drawing thread. LVGL always draws into one RAM
-// page; the last flush copies the damage into whichever framebuffer page the
-// panel is not showing, hands that page to the presenter and returns. The
-// presenter's wait then runs underneath the next frame, and the panel is fed
-// one flip per interval.
+// The presenter thread hides the wait, but hiding it is not enough if the
+// drawing thread still waits for the previous flip before it may write the
+// other framebuffer page.  So a frame is snapshotted into one of two
+// full-page staging buffers and handed over; the flush returns immediately.
+// The presenter is the only one that touches the framebuffer pages, copies
+// the staging buffer into the page the panel is not scanning, and lets
+// FBIOPAN_DISPLAY wait for the next vblank.
 //
-// The copy is affordable: a whole 153600 byte page takes 348 us here, and a
-// flush copies only the damaged rectangle.
+// This is the third buffer that made triple buffering possible here: fb0 has
+// room for exactly two scan-out pages, but the staging buffers are ordinary
+// RAM and never scanned by the panel. Three of them let the drawing thread run
+// through a burst -- a slow label rebind, a cover arriving -- while the
+// presenter waits on vsync; input keeps being read at its own 8 ms pace
+// instead of once per panel interval.
+//
+// The copy is affordable: a whole 153600 byte page takes 348 us here, and the
+// snapshot is still only the damaged rectangle.
 //
 // A framebuffer that cannot give two pages, or a thread that will not start,
 // falls back to LVGL's plain driver, which draws straight into the visible
@@ -1435,18 +1449,44 @@ static uint8_t *draw_page; // the RAM page LVGL draws into
 static lv_area_t frame_dirty;
 static lv_area_t page_owed[2];
 
-// The panel's two pages and the flip in flight. `fb_shown` is the page the
-// panel is scanning; `fb_pending` is the page handed to the presenter, or -1
-// when it holds none. The page that may be written is always the one that is
-// neither.
+// The software staging pages. A frame is copied into one of these on the
+// drawing thread; the presenter copies it into a framebuffer page and flips.
+// `target` is the page this frame belongs on, decided while it is published so
+// the page-owed bookkeeping stays in the same order as the flips. The stage is
+// claimed and filled under fb_lock, so the presenter can never read a
+// half-written one.
+enum { FB_STAGE_FREE, FB_STAGE_READY, FB_STAGE_PRESENTING };
+typedef struct {
+	uint8_t *buf;
+	lv_area_t rect;
+	int target;
+	int state;
+	uint32_t seq; // publication order: the presenter must flip in this order
+} fb_stage_t;
+
+#define FB_STAGE_COUNT 3 // three software buffers plus the two scan-out pages
+static fb_stage_t fb_stages[FB_STAGE_COUNT];
+static uint32_t fb_stage_seq;
+
+// The page the panel is scanning. The presenter keeps it; everything else only
+// reads it under fb_lock.
 static int fb_shown;
-static int fb_pending = -1;
+// The page the next published frame belongs on. Frames are presented in the
+// order they are published, so this simply alternates; fb_shown is the truth
+// for what is on the glass now.
+static int fb_next_target = 1;
+// Set after a refused flip or a mode change: the next frame is copied whole
+// and the page-owed bookkeeping starts again from nothing.
+static bool fb_resync;
+// True when no stage is presenting and no flip is in flight.
+static bool fb_presenter_idle = true;
 
 static pthread_t fb_presenter;
 static bool fb_presenter_started;
 static pthread_mutex_t fb_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t fb_work = PTHREAD_COND_INITIALIZER;	   // presenter: a page to flip
-static pthread_cond_t fb_flip_done = PTHREAD_COND_INITIALIZER; // drawing: the flip was taken
+static pthread_cond_t fb_work = PTHREAD_COND_INITIALIZER;	   // presenter: a stage is ready
+static pthread_cond_t fb_stage_free = PTHREAD_COND_INITIALIZER; // drawing: a stage is free
+static pthread_cond_t fb_flip_done = PTHREAD_COND_INITIALIZER;  // idle waiters
 
 // Whether FBIOPAN_DISPLAY itself waits for the panel. soc_fb offers the choice
 // through its pan_display_sync parameter; this player asks for it on, because
@@ -1510,11 +1550,11 @@ static void area_set_full(lv_area_t *a) {
 	a->y2 = (int32_t)fb_var.yres - 1;
 }
 
-// Microseconds the current pass has spent handing frames to the panel: the
-// dirty rectangle turned around (only when the screen is rotated), and the page
-// flip, which the display driver latches on vsync and can therefore wait for.
+// Microseconds the current pass has spent handing this frame to the presenter:
+// waiting for a free staging page and copying the damaged rectangle into it.
+// The vsync wait is not here anymore -- it belongs to the presenter thread.
 //
-// Reported beside a slow pass, because drawing a frame and delivering one lead
+// Reported beside a slow pass, because drawing a frame and handing it over lead
 // to completely different fixes, and only one of them is inside the player.
 static uint64_t fb_flush_us_total;
 
@@ -1592,36 +1632,101 @@ static void blit_page(uint16_t *dst, const uint16_t *src, const lv_area_t *area,
 	}
 }
 
-// The presenter holds no page. Used before anything else writes fb_var or
-// relies on which page is on the panel.
+// Waits until the presenter has no flip in flight and no stage is waiting.
+// Frames that were ready but not yet on the glass are dropped: every caller
+// is about to change the mode or the geometry and repaint everything anyway,
+// and a queued frame belongs to the old geometry.
 static void fb_wait_presenter_idle(void) {
 	if (!fb_presenter_started) {
 		return;
 	}
 	pthread_mutex_lock(&fb_lock);
-	while (fb_pending >= 0) {
+	for (int i = 0; i < FB_STAGE_COUNT; i++) {
+		if (fb_stages[i].state == FB_STAGE_READY) {
+			fb_stages[i].state = FB_STAGE_FREE;
+		}
+	}
+	pthread_cond_broadcast(&fb_stage_free);
+	while (!fb_presenter_idle) {
 		pthread_cond_wait(&fb_flip_done, &fb_lock);
 	}
 	pthread_mutex_unlock(&fb_lock);
 }
 
+// Makes a published frame impossible to reuse without starting the page
+// bookkeeping again. Both framebuffer pages are marked as owing a full frame,
+// so the next one is copied whole whichever page it lands on.
+static void fb_resync_locked(void) {
+	fb_resync = true;
+	fb_next_target = fb_shown ? 0 : 1;
+	area_set_full(&page_owed[0]);
+	area_set_full(&page_owed[1]);
+	// A queued frame belongs to the geometry or page order that just failed.
+	for (int i = 0; i < FB_STAGE_COUNT; i++) {
+		if (fb_stages[i].state == FB_STAGE_READY) {
+			fb_stages[i].state = FB_STAGE_FREE;
+		}
+	}
+	pthread_cond_broadcast(&fb_stage_free);
+}
+
 // Runs the page flip, and waits for it, while the drawing thread carries on.
-// Nothing here touches LVGL: it takes a page number, points the panel at it,
-// and says when the panel has taken it.
+// Nothing here touches LVGL: it takes a prepared staging page, copies it into
+// the framebuffer page the panel is not scanning, and points the panel at it.
+// The copy happens before FBIOPAN_DISPLAY, so the panel is never shown a
+// half-updated page.
 static void *fb_present_thread(void *arg) {
 	(void)arg;
 	for (;;) {
 		pthread_mutex_lock(&fb_lock);
-		while (fb_pending < 0) {
-			pthread_cond_wait(&fb_work, &fb_lock);
+
+		int slot = -1;
+		while (slot < 0) {
+			// Oldest first. A slot can be refilled while an older frame waits in
+			// the other one, so slot order is not publication order.
+			for (int i = 0; i < FB_STAGE_COUNT; i++) {
+				if (fb_stages[i].state != FB_STAGE_READY) {
+					continue;
+				}
+				if (slot < 0 || (int32_t)(fb_stages[i].seq - fb_stages[slot].seq) < 0) {
+					slot = i;
+				}
+			}
+			if (slot < 0) {
+				pthread_cond_wait(&fb_work, &fb_lock);
+			}
 		}
-		int page = fb_pending;
+
+		fb_stage_t *stage = &fb_stages[slot];
+		int target = stage->target;
+		lv_area_t redraw = stage->rect;
+
+		// A refused flip can leave the alternation pointing at the page the
+		// panel is still scanning. Never write that one; drop the frame and
+		// make the next publication rebuild both pages.
+		if (fb_resync || target == fb_shown) {
+			stage->state = FB_STAGE_FREE;
+			fb_resync_locked();
+			fb_presenter_idle = true;
+			pthread_cond_broadcast(&fb_stage_free);
+			pthread_cond_broadcast(&fb_flip_done);
+			pthread_mutex_unlock(&fb_lock);
+			continue;
+		}
+
+		stage->state = FB_STAGE_PRESENTING;
+		fb_presenter_idle = false;
 		pthread_mutex_unlock(&fb_lock);
+
+		if (!area_is_empty(&redraw)) {
+			blit_page((uint16_t *)(fb_mem + (size_t)target * fb_page_size), (const uint16_t *)stage->buf, &redraw,
+					  (int32_t)fb_var.xres, (int32_t)fb_var.yres, fb_rotated);
+		}
 
 		// A wake re-arm sets FB_ACTIVATE_FORCE in the shared var; a normal flip
 		// must not carry it. FB_ACTIVATE_NOW is zero.
 		fb_var.activate = FB_ACTIVATE_NOW;
-		fb_var.yoffset = (uint32_t)page * fb_var.yres;
+		fb_var.yoffset = (uint32_t)target * fb_var.yres;
 		uint64_t started = now_us();
 		int flipped = ioctl(fb_fd, FBIOPAN_DISPLAY, &fb_var);
 		if (flipped == 0 && !fb_pan_waits) {
@@ -1653,19 +1758,129 @@ static void *fb_present_thread(void *arg) {
 
 		pthread_mutex_lock(&fb_lock);
 		if (flipped == 0) {
-			fb_shown = page; // a refused flip leaves the panel where it was
+			fb_shown = target; // a refused flip leaves the panel where it was
+			presented_frames++;
+		} else {
+			fb_resync_locked();
 		}
-		fb_pending = -1;
+		stage->state = FB_STAGE_FREE;
+		fb_presenter_idle = true;
+		pthread_cond_broadcast(&fb_stage_free);
 		pthread_cond_broadcast(&fb_flip_done);
 		pthread_mutex_unlock(&fb_lock);
 	}
 	return NULL;
 }
 
+// Snapshots the finished frame into a free staging buffer and hands it to the
+// presenter. The copy is made while fb_lock is held, but it is a damaged
+// rectangle (348 us for a whole page), and the presenter never waits on it for
+// longer than that. Nothing here waits for vsync.
+static void fb_stage_publish(const uint8_t *px) {
+	uint64_t wait_started = now_us();
+	pthread_mutex_lock(&fb_lock);
+
+	int slot = -1;
+	while (slot < 0) {
+		for (int i = 0; i < FB_STAGE_COUNT; i++) {
+			if (fb_stages[i].state == FB_STAGE_FREE) {
+				slot = i;
+				break;
+			}
+		}
+		if (slot >= 0) {
+			break;
+		}
+
+		// Both stages are still owed to the panel. Waiting is the correct
+		// backpressure -- but never forever, in case the presenter or the
+		// driver has died. On a timeout this frame is dropped into the next
+		// one's damage instead of stalling the interface.
+		struct timespec deadline;
+		clock_gettime(CLOCK_REALTIME, &deadline);
+		deadline.tv_nsec += 50 * 1000 * 1000;
+		if (deadline.tv_nsec >= 1000000000) {
+			deadline.tv_sec++;
+			deadline.tv_nsec -= 1000000000;
+		}
+		if (pthread_cond_timedwait(&fb_stage_free, &fb_lock, &deadline) == ETIMEDOUT) {
+			break;
+		}
+	}
+
+	if (slot < 0) {
+		area_merge(&page_owed[0], &frame_dirty);
+		area_merge(&page_owed[1], &frame_dirty);
+		pthread_mutex_unlock(&fb_lock);
+		if (debug_enabled()) {
+			DEBUG_ERR("fb: no staging page for %llu us, frame dropped\n", (unsigned long long)(now_us() - wait_started));
+		}
+		return;
+	}
+
+	int target;
+	lv_area_t redraw;
+	if (fb_resync) {
+		target = fb_shown ? 0 : 1;
+		area_set_full(&redraw);
+		fb_resync = false;
+		fb_next_target = target ? 0 : 1;
+		// The other page has not seen this geometry either.
+		area_set_full(&page_owed[target ? 0 : 1]);
+	} else {
+		target = fb_next_target;
+		// While an earlier frame is still queued its flip will change fb_shown,
+		// so target may legitimately equal the page on the glass now. Only with
+		// nothing in flight would that be a real disagreement.
+		bool in_flight = false;
+		for (int i = 0; i < FB_STAGE_COUNT; i++) {
+			if (fb_stages[i].state == FB_STAGE_READY || fb_stages[i].state == FB_STAGE_PRESENTING) {
+				in_flight = true;
+				break;
+			}
+		}
+		if (target == fb_shown && !in_flight) {
+			fb_resync_locked();
+			target = fb_shown ? 0 : 1;
+			area_set_full(&redraw);
+			fb_resync = false;
+			fb_next_target = target ? 0 : 1;
+			area_set_full(&page_owed[target ? 0 : 1]);
+		} else {
+			redraw = page_owed[target];
+			area_merge(&redraw, &frame_dirty);
+			fb_next_target = target ? 0 : 1;
+		}
+	}
+
+	fb_stage_t *stage = &fb_stages[slot];
+	if (!area_is_empty(&redraw)) {
+		blit_page((uint16_t *)stage->buf, (const uint16_t *)px, &redraw, (int32_t)fb_var.xres, (int32_t)fb_var.yres,
+				  false);
+	}
+	stage->rect = redraw;
+	stage->target = target;
+	stage->seq = ++fb_stage_seq;
+	stage->state = FB_STAGE_READY;
+
+	area_clear(&page_owed[target]);
+	area_merge(&page_owed[target ? 0 : 1], &frame_dirty);
+	pthread_cond_signal(&fb_work);
+	pthread_mutex_unlock(&fb_lock);
+
+	// A wait here is the only place the drawing thread can still be held up by
+	// panel timing. It should be sub-millisecond; anything longer means the
+	// presenter is behind and the drag diagnostic will show fewer flips.
+	uint64_t waited = now_us() - wait_started;
+	if (waited > 3000 && debug_enabled()) {
+		DEBUG_ERR("fb: stage wait %llu us\n", (unsigned long long)waited);
+	}
+}
+
 // The last area of a frame. The drawing is already in the RAM page; this
-// copies what changed into the page the panel is not showing, and hands that
-// page to the presenter. It waits only for the previous flip to be taken, and
-// that wait is the one the presenter has been covering with the drawing.
+// takes a snapshot of what changed and returns. It does not wait for the panel
+// and it does not touch a framebuffer page, so touch input and the next frame
+// keep running while the presenter waits for vsync.
 static void fb_pan_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px) {
 	uint64_t flush_started = now_us();
 
@@ -1676,49 +1891,10 @@ static void fb_pan_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *
 		return;
 	}
 
-	int target = -1;
 	if (fb_presenter_started) {
-		// A timeout means the presenter is stuck: keep this frame's damage for
-		// a later one rather than writing a page the panel may be scanning.
-		struct timespec deadline;
-		clock_gettime(CLOCK_REALTIME, &deadline);
-		deadline.tv_nsec += 100 * 1000 * 1000;
-		if (deadline.tv_nsec >= 1000000000) {
-			deadline.tv_sec++;
-			deadline.tv_nsec -= 1000000000;
-		}
-
-		pthread_mutex_lock(&fb_lock);
-		while (fb_pending >= 0) {
-			if (pthread_cond_timedwait(&fb_flip_done, &fb_lock, &deadline) == ETIMEDOUT) {
-				break;
-			}
-		}
-		if (fb_pending < 0) {
-			target = fb_shown ? 0 : 1;
-		}
-		pthread_mutex_unlock(&fb_lock);
-	}
-
-	if (target >= 0) {
-		// Everything that page still owes, plus what this frame changed.
-		lv_area_t redraw = page_owed[target];
-		area_merge(&redraw, &frame_dirty);
-		if (!area_is_empty(&redraw)) {
-			blit_page((uint16_t *)(fb_mem + (size_t)target * fb_page_size), (const uint16_t *)px, &redraw,
-					  (int32_t)fb_var.xres, (int32_t)fb_var.yres, fb_rotated);
-		}
-
-		area_clear(&page_owed[target]);
-		area_merge(&page_owed[target ? 0 : 1], &frame_dirty);
-
-		pthread_mutex_lock(&fb_lock);
-		fb_pending = target;
-		pthread_cond_signal(&fb_work);
-		pthread_mutex_unlock(&fb_lock);
+		fb_stage_publish(px);
 	} else {
-		// No page could be taken: whichever one is written next will have to
-		// carry this frame too.
+		// No presenter: whichever page is written next has to carry this frame.
 		area_merge(&page_owed[0], &frame_dirty);
 		area_merge(&page_owed[1], &frame_dirty);
 	}
@@ -1817,8 +1993,39 @@ static lv_display_t *try_panned_display(void) {
 	}
 	memset(draw_page, 0, fb_page_size);
 
+	// Two snapshots, so the drawing thread can prepare the next frame while
+	// the presenter is waiting for the panel to take the current one.
+	bool stages_ok = true;
+	for (int i = 0; i < FB_STAGE_COUNT; i++) {
+		fb_stages[i].buf = malloc(fb_page_size);
+		fb_stages[i].state = FB_STAGE_FREE;
+		area_clear(&fb_stages[i].rect);
+		if (!fb_stages[i].buf) {
+			stages_ok = false;
+			break;
+		}
+	}
+	if (!stages_ok) {
+		fprintf(stderr, "fb: no memory for the %d staging pages (%zu bytes each)\n", FB_STAGE_COUNT, fb_page_size);
+		for (int i = 0; i < FB_STAGE_COUNT; i++) {
+			free(fb_stages[i].buf);
+			fb_stages[i].buf = NULL;
+		}
+		free(draw_page);
+		draw_page = NULL;
+		munmap(fb_mem, pages_size);
+		fb_mem = NULL;
+		close(fb_fd);
+		fb_fd = -1;
+		return NULL;
+	}
+
 	lv_display_t *disp = lv_display_create((int32_t)fb_var.xres, (int32_t)fb_var.yres);
 	if (!disp) {
+		for (int i = 0; i < FB_STAGE_COUNT; i++) {
+			free(fb_stages[i].buf);
+			fb_stages[i].buf = NULL;
+		}
 		free(draw_page);
 		draw_page = NULL;
 		munmap(fb_mem, pages_size);
@@ -1830,7 +2037,9 @@ static lv_display_t *try_panned_display(void) {
 
 	// Both pages are stale until each has been given a frame.
 	fb_shown = 0;
-	fb_pending = -1;
+	fb_next_target = 1;
+	fb_resync = true;
+	fb_presenter_idle = true;
 	area_clear(&frame_dirty);
 	area_set_full(&page_owed[0]);
 	area_set_full(&page_owed[1]);
@@ -1857,6 +2066,10 @@ static lv_display_t *try_panned_display(void) {
 		fprintf(stderr, "fb: no presenter thread, so no page flipping\n");
 		lv_display_delete(disp);
 		fb_display = NULL;
+		for (int i = 0; i < FB_STAGE_COUNT; i++) {
+			free(fb_stages[i].buf);
+			fb_stages[i].buf = NULL;
+		}
 		free(draw_page);
 		draw_page = NULL;
 		munmap(fb_mem, pages_size);
@@ -1868,15 +2081,15 @@ static lv_display_t *try_panned_display(void) {
 	pthread_detach(fb_presenter);
 	fb_presenter_started = true;
 
-	printf("fb: two pages, flipped from a presenter thread (%ux%u); pan_display_sync %s\n", fb_var.xres, fb_var.yres,
-		   fb_pan_waits ? "on" : "off");
+	printf("fb: two pages, %d staging pages, flipped from a presenter thread (%ux%u); pan_display_sync %s\n",
+		   FB_STAGE_COUNT, fb_var.xres, fb_var.yres, fb_pan_waits ? "on" : "off");
 	return disp;
 }
 
 // A copy of what the panel is showing right now.
 //
 // `fb_shown` is the page the panel is scanning, kept by the presenter. The
-// flush only ever writes the other page, so this one can be read while the
+// presenter only ever writes the other page, so this one can be read while the
 // next frame is being prepared. Nothing else is needed, not even whether
 // rotation is on, because the framebuffer already holds the turned image,
 // which is exactly what is visible.
@@ -1903,12 +2116,11 @@ uint16_t *display_capture_frame(int *out_w, int *out_h) {
 	}
 
 	// The page the panel is scanning, which is also the one nothing is writing:
-	// the flush only ever writes the other one.
+	// the presenter only ever writes the other one. The lock is held through
+	// the copy so a flip cannot turn the source page over underneath it.
 	pthread_mutex_lock(&fb_lock);
-	int shown = fb_shown;
+	memcpy(copy, fb_mem + (size_t)fb_shown * fb_page_size, fb_page_size);
 	pthread_mutex_unlock(&fb_lock);
-
-	memcpy(copy, fb_mem + (size_t)shown * fb_page_size, fb_page_size);
 
 	if (out_w) {
 		*out_w = (int)fb_var.xres;
@@ -1967,6 +2179,9 @@ void display_wake_begin(lv_display_t *disp) {
 				fb_shown = page;
 			}
 		}
+		// Whatever the panel was scanning while dark is not a frame this
+		// player drew. The wake repaint publishes a full one.
+		fb_resync_locked();
 		pthread_mutex_unlock(&fb_lock);
 		return;
 	}
@@ -2026,10 +2241,11 @@ void display_set_rotated(bool rotated) {
 	// that copy. Wait for the flip in flight, then put both pages down as owing
 	// the whole frame -- they still hold the other way up.
 	fb_wait_presenter_idle();
+	pthread_mutex_lock(&fb_lock);
 	fb_rotated = rotated;
 	area_clear(&frame_dirty);
-	area_set_full(&page_owed[0]);
-	area_set_full(&page_owed[1]);
+	fb_resync_locked();
+	pthread_mutex_unlock(&fb_lock);
 
 	// The touch panel turns with the picture: an inverted calibration maps
 	// the top-left corner of the glass to the bottom-right of the screen.
