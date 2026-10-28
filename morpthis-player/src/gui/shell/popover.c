@@ -104,6 +104,7 @@ void popover_show(lv_obj_t *anchor, const popover_item_t *items, int count) {
 	lv_obj_clean(card);
 	for (int i = 0; i < count; i++) {
 		lv_obj_t *row = lv_btn_create(card);
+		lv_obj_set_scroll_on_focus(row, false);
 		// Tall enough for one line, taller when the text needs two: a
 		// translated label such as "Zur Wiedergabeliste hinzufügen" does not
 		// fit on one, and a fixed height would clip it at the card's edge.

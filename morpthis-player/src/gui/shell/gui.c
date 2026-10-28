@@ -618,6 +618,12 @@ static void volume_async_cb(void *user_data) {
 // level themselves, so across the bridge like the key above.
 void gui_notify_volume(int percent) { gui_post(volume_async_cb, (void *)(intptr_t)percent); }
 
+static lv_obj_tree_walk_res_t disable_focus_scroll_cb(lv_obj_t *obj, void *unused) {
+	(void)unused;
+	lv_obj_set_scroll_on_focus(obj, false);
+	return LV_OBJ_TREE_WALK_NEXT;
+}
+
 static void power_menu_async_cb(void *unused) {
 	(void)unused;
 	powermenu_show();
@@ -904,6 +910,13 @@ void gui_init(gui_config_t *cfg) {
 	} else if (timeset_needed()) {
 		timeset_show();
 	}
+
+	// A button defaults to scroll_on_focus: pressing a partly visible row sends
+	// it LV_EVENT_FOCUSED, and that animates the row into view before the drag
+	// has begun. On a touch-only list that is the jump felt at the start of a
+	// vertical scroll. Turn it off once, for every object that already exists;
+	// it does not change keyboard focus, only the automatic scroll.
+	lv_obj_tree_walk(NULL, disable_focus_scroll_cb, NULL);
 
 	switch_screen(main_menu_screen);
 }

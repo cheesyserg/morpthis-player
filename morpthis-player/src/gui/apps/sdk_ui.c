@@ -1315,6 +1315,9 @@ int morpthis_list_add_entry(morpthis_widget_t *list, const char *title, const ch
 	// The same row the player's own library draws: a card, a leading thumb,
 	// a title over a dim detail, and the chevron on anything that opens a page.
 	row->row = lv_btn_create(list->obj);
+	// The list scrolls; pressing a partly visible row must not focus-scroll it
+	// into view before the drag has begun.
+	lv_obj_set_scroll_on_focus(row->row, false);
 	if (!row->row) {
 		free(row);
 		return -1;

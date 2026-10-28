@@ -197,6 +197,7 @@ typedef struct {
 	winrow_t *window; // WINDOW_ROWS of them, allocated once with the panel
 	int window_first; // index of window[0]; -1 when nothing is cached
 	int window_count;
+	int pool_first; // first index the 12 widgets are bound to; -1 until bound
 
 	// Path-backed lists only, with a count of its own: p->count below is the
 	// length of the LIST, which for a query-backed one comes from the handle
@@ -522,6 +523,7 @@ static void panel_refresh_stale(panel_t *p) {
 	for (int i = 0; i < ROW_POOL; i++) {
 		p->rows[i].index = -2;
 	}
+	p->pool_first = -1; // scrolling inside the same band must still rebind
 	lv_obj_set_height(p->body, p->count ? p->count * ROW_PITCH : ROW_PITCH);
 	if (p->count == 0) {
 		lv_obj_set_hidden(p->empty, false);
@@ -1601,16 +1603,10 @@ static void thumb_timer_cb(lv_timer_t *timer) {
 	}
 }
 
-static void window_update(panel_t *p) {
-	panel_refresh_stale(p);
-
-	if (p->count == 0) {
-		for (int i = 0; i < ROW_POOL; i++) {
-			row_bind(p, &p->rows[i], -1);
-		}
-		return;
-	}
-
+// The first index the pool of rows should cover for the list's current scroll
+// position. The row above the top edge is included, so a one-pixel scroll does
+// not expose an unbound row at the top before the next event runs.
+static int pool_first_for(const panel_t *p) {
 	int scroll = lv_obj_get_scroll_y(p->list);
 	if (scroll < 0) {
 		scroll = 0;
@@ -1623,6 +1619,21 @@ static void window_update(panel_t *p) {
 	if (first < 0) {
 		first = 0;
 	}
+	return first;
+}
+
+static void window_update(panel_t *p) {
+	panel_refresh_stale(p);
+
+	if (p->count == 0) {
+		for (int i = 0; i < ROW_POOL; i++) {
+			row_bind(p, &p->rows[i], -1);
+		}
+		p->pool_first = -1;
+		return;
+	}
+
+	int first = pool_first_for(p);
 
 	// index -> widget index % ROW_POOL, so a one-step slide of the band
 	// rebinds exactly one row instead of renaming all of them.
@@ -1638,6 +1649,7 @@ static void window_update(panel_t *p) {
 	// self-correcting whatever route the list took to get here.
 	panel_refresh_playmarks(p);
 
+	p->pool_first = first;
 	thumbs_update(p);
 }
 
@@ -2274,7 +2286,14 @@ static void scroll_cb(lv_event_t *e) {
 	panel_t *p = lv_event_get_user_data(e);
 	p->saved_scroll = lv_obj_get_scroll_y(p->list);
 	index_flash(p);
-	window_update(p);
+
+	// The rows are on a fixed canvas and move with the list, so nothing has to
+	// be rebound until the band of indices under the viewport actually steps.
+	// A slow scroll is then an integer compare per frame, and only a crossing
+	// rebinds the one row that left or entered.
+	if (pool_first_for(p) != p->pool_first) {
+		window_update(p);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -3346,6 +3365,7 @@ static void build_panel(panel_t *p, gui_config_t *cfg, bool is_tracks, int slot_
 	p->is_tracks = is_tracks;
 	p->slot_base = slot_base;
 	p->window_first = -1;
+	p->pool_first = -1;
 
 	lv_obj_add_style(p->screen, &theme_style_screen, 0);
 	lv_obj_add_event_cb(p->screen, screen_loaded_cb, LV_EVENT_SCREEN_LOADED, p);

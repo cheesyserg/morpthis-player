@@ -438,7 +438,9 @@ static void pick_append(int n) {
 		lv_obj_set_style_pad_column(row, PICK_ROW_GAP, 0);
 		lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
 		lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-		lv_obj_set_scroll_on_focus(row, true);
+		// A press on a partly visible folder starts a scroll, not a request to
+		// animate that folder into view.
+		lv_obj_set_scroll_on_focus(row, false);
 		lv_obj_add_event_cb(row, pick_row_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
 		lv_obj_t *folder = lv_image_create(row);

@@ -1449,10 +1449,11 @@ static pthread_cond_t fb_work = PTHREAD_COND_INITIALIZER;	   // presenter: a pag
 static pthread_cond_t fb_flip_done = PTHREAD_COND_INITIALIZER; // drawing: the flip was taken
 
 // Whether FBIOPAN_DISPLAY itself waits for the panel. soc_fb offers the choice
-// through its pan_display_sync parameter; this device runs with it on, and the
-// call then costs one whole frame. With it off the call only queues the page,
-// and it is still the panel's until it next starts a frame -- so the presenter
-// has to wait for that boundary itself before handing the page back.
+// through its pan_display_sync parameter; this player asks for it on, because
+// a queued flip can change the scanned page mid-frame on this panel. With it
+// off, the presenter falls back to waiting for a frame boundary itself, but
+// that only proves a boundary happened -- not that this driver latched the pan
+// there.
 static bool fb_pan_waits = true;
 
 // One integer out of sysfs. `fallback` when the file is absent or unreadable,
@@ -1839,16 +1840,14 @@ static lv_display_t *try_panned_display(void) {
 	lv_display_set_flush_cb(disp, fb_pan_flush_cb);
 	fb_display = disp;
 
-	// Ask the driver to queue the flip rather than wait for the panel. The wait
-	// is not removed, it is moved: the presenter does it, under the next frame,
-	// and it ends at a frame boundary instead of one whole frame after the call
-	// -- which is what keeps the cadence on the panel's 16.8 ms instead of
-	// drifting past it. Measured on this panel, a queued flip does not tear. If
-	// the attribute is not writable the driver's own setting stands, and the
-	// presenter waits for the call instead.
+	// Keep the driver's synchronous pan. A queued flip is faster to issue but
+	// is not latched reliably on this panel: the address can change while a
+	// frame is being scanned, which is tearing the presenter cannot hide. The
+	// wait costs one panel interval, but it now runs on the presenter thread,
+	// underneath the next frame rather than on top of it.
 	int sync_fd = open("/sys/module/soc_fb/parameters/pan_display_sync", O_WRONLY);
 	if (sync_fd >= 0) {
-		ssize_t wrote = write(sync_fd, "0\n", 2);
+		ssize_t wrote = write(sync_fd, "1\n", 2);
 		(void)wrote;
 		close(sync_fd);
 	}
@@ -2112,6 +2111,94 @@ static bool find_touch_node(char *out, size_t out_size) {
 	return false;
 }
 
+// ---------------------------------------------------------------------------
+// Touch smoothing
+//
+// The CST8xx reports integer panel coordinates. At slow speeds one report can
+// be a one-pixel step and the next can be 1.3 pixels away once the driver's
+// range has been scaled to 240x320, so the pointer walks in visible steps even
+// when the frame rate is steady. This is a low-pass filter over the calibrated
+// point, not over the raw axis: lv_evdev has already done the range mapping,
+// and filtering before that would turn a scale error into lag.
+//
+// The filter is deliberately adaptive. Slow motion is smoothed, but a fast
+// flick increases the coefficient so the finger is not left behind. A large
+// jump is taken whole: that is a new position, or a lift and a new press, not
+// something to ease into. The first point of a press is passed through raw so
+// a tap lands where it touched, and the release uses the filtered point so it
+// does not add a spurious velocity spike to the kinetic throw.
+// ---------------------------------------------------------------------------
+
+#define TOUCH_FILTER_Q 8
+#define TOUCH_FILTER_SLOW 160 // 0.625 of the remaining distance per report
+#define TOUCH_FILTER_FAST 232 // 0.906, for a deliberate movement
+#define TOUCH_FILTER_FAST_PX 8
+#define TOUCH_FILTER_SNAP_PX 18
+#define TOUCH_FILTER_ROUND 64 // quarter-pixel bias, so a 1 px step still moves
+
+typedef struct {
+	int32_t x_q8;
+	int32_t y_q8;
+	bool pressed;
+} touch_filter_t;
+
+static touch_filter_t touch_filter;
+static lv_indev_read_cb_t touch_raw_read_cb;
+
+static int32_t touch_filter_axis(int32_t raw, int32_t *q8) {
+	int32_t want = raw << TOUCH_FILTER_Q;
+	int32_t diff = want - *q8;
+	int32_t distance = diff < 0 ? -diff : diff;
+	int32_t distance_px = distance >> TOUCH_FILTER_Q;
+
+	if (distance_px >= TOUCH_FILTER_SNAP_PX) {
+		*q8 = want;
+	} else {
+		int32_t alpha = distance_px >= TOUCH_FILTER_FAST_PX ? TOUCH_FILTER_FAST : TOUCH_FILTER_SLOW;
+		*q8 += (diff * alpha) >> TOUCH_FILTER_Q;
+	}
+
+	return (*q8 + TOUCH_FILTER_ROUND) >> TOUCH_FILTER_Q;
+}
+
+static void touch_filter_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
+	touch_raw_read_cb(indev, data);
+
+	if (data->state == LV_INDEV_STATE_PRESSED) {
+		if (!touch_filter.pressed) {
+			// The press point is the tap point; do not ease into it.
+			touch_filter.pressed = true;
+			touch_filter.x_q8 = data->point.x << TOUCH_FILTER_Q;
+			touch_filter.y_q8 = data->point.y << TOUCH_FILTER_Q;
+		} else {
+			data->point.x = touch_filter_axis(data->point.x, &touch_filter.x_q8);
+			data->point.y = touch_filter_axis(data->point.y, &touch_filter.y_q8);
+		}
+	} else if (touch_filter.pressed) {
+		// Finish on the filtered position rather than snapping to the last raw
+		// report: the difference is exactly the velocity the filter was still
+		// removing, and releasing it here would throw the list a little further.
+		data->point.x = (touch_filter.x_q8 + TOUCH_FILTER_ROUND) >> TOUCH_FILTER_Q;
+		data->point.y = (touch_filter.y_q8 + TOUCH_FILTER_ROUND) >> TOUCH_FILTER_Q;
+		touch_filter.pressed = false;
+	}
+}
+
+// Wraps the evdev read callback. Everything lv_evdev does -- calibration,
+// touch-data handling, the read timer -- stays in place; only the point handed
+// to LVGL is filtered.
+static void touch_filter_install(lv_indev_t *indev) {
+	if (!indev || touch_raw_read_cb) {
+		return;
+	}
+
+	lv_indev_read_cb_t raw = lv_indev_get_read_cb(indev);
+	if (raw) {
+		touch_raw_read_cb = raw;
+		lv_indev_set_read_cb(indev, touch_filter_read_cb);
+	}
+}
+
 static lv_display_t *init_target_display(void) {
 	// Tear-free page flipping when the framebuffer supports it...
 	lv_display_t *disp = try_panned_display();
@@ -2154,6 +2241,7 @@ static lv_display_t *init_target_display(void) {
 	if (touch) {
 		lv_indev_set_display(touch, disp);
 		tune_pointer(touch);
+		touch_filter_install(touch);
 		fb_touch = touch;
 		printf("Touch screen input driver successfully registered.\n");
 	} else {
