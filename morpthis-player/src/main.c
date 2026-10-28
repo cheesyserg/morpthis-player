@@ -1330,13 +1330,13 @@ uint32_t fb_flush_us_take(void) { return 0; }
 
 #else
 // ---------------------------------------------------------------------------
-// Double-buffered framebuffer with page flipping.
+// Page-flipped framebuffer.
 //
 // LVGL's stock fbdev driver memcpy()s every dirty area straight into the one
 // visible buffer, so the panel scans out a half-updated frame and the
-// interface tears whenever it moves. Here LVGL draws directly into the
-// off-screen half of a double-height framebuffer, refr_sync_areas() keeps the
-// two pages coherent, and the flush of the last area pans with
+// interface tears whenever it moves. Here LVGL draws directly into an
+// off-screen half of a double- or triple-height framebuffer, refr_sync_areas()
+// keeps the pages coherent, and the flush of the last area pans with
 // FBIOPAN_DISPLAY, which the display driver latches on vsync. A framebuffer
 // that cannot give two pages falls back to LVGL's plain driver.
 // ---------------------------------------------------------------------------
@@ -1344,7 +1344,9 @@ uint32_t fb_flush_us_take(void) { return 0; }
 static int fb_fd = -1;
 static uint8_t *fb_mem;
 static size_t fb_page_size;
+static int fb_page_count = 2; // 3 when the framebuffer has room and accepts it
 static struct fb_var_screeninfo fb_var;
+static lv_draw_buf_t fb_buf3; // only used when fb_page_count == 3
 
 // ---------------------------------------------------------------------------
 // 180 degree rotation ("Rotate screen")
@@ -1376,7 +1378,7 @@ static uint8_t *rot_page;		   // the RAM page LVGL draws into while rotated
 // yet (a bounding box each -- cheap, and a frame's damage is one region in
 // practice). Empty is x1 > x2.
 static lv_area_t rot_frame_dirty;
-static lv_area_t rot_page_pending[2];
+static lv_area_t rot_page_pending[3];
 
 static void area_clear(lv_area_t *a) {
 	a->x1 = 1;
@@ -1490,12 +1492,12 @@ static void blit_rotated_180(uint16_t *dst, const uint16_t *src, const lv_area_t
 }
 
 static void fb_pan_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px) {
-	bool second_page;
+	int target = 0;
 	uint64_t flush_started = now_us();
 
 	if (fb_rotated) {
 		// Collect this frame's damage; the copy happens once, on the last
-		// area, into the page that is NOT on screen.
+		// area, into the next page in the ring.
 		area_merge(&rot_frame_dirty, area);
 		if (!lv_display_flush_is_last(disp)) {
 			fb_flush_us_total += now_us() - flush_started;
@@ -1503,27 +1505,44 @@ static void fb_pan_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *
 			return;
 		}
 
-		second_page = (fb_var.yoffset == 0); // flip to the other page
-		int target = second_page ? 1 : 0;
+		int current = (int)(fb_var.yoffset / fb_var.yres);
+		if (current < 0 || current >= fb_page_count) {
+			current = 0;
+		}
+		target = (current + 1) % fb_page_count;
 
 		// Everything this page still owes, plus what just changed.
 		lv_area_t redraw = rot_page_pending[target];
 		area_merge(&redraw, &rot_frame_dirty);
 
 		if (!area_is_empty(&redraw)) {
-			blit_rotated_180((uint16_t *)(fb_mem + (second_page ? fb_page_size : 0)), (const uint16_t *)px, &redraw,
+			blit_rotated_180((uint16_t *)(fb_mem + (size_t)target * fb_page_size), (const uint16_t *)px, &redraw,
 							 (int32_t)fb_var.xres, (int32_t)fb_var.yres);
 		}
 
 		area_clear(&rot_page_pending[target]);
-		area_merge(&rot_page_pending[target ? 0 : 1], &rot_frame_dirty); // the other page still owes it
+		for (int i = 0; i < fb_page_count; i++) {
+			if (i != target) {
+				area_merge(&rot_page_pending[i], &rot_frame_dirty);
+			}
+		}
 		area_clear(&rot_frame_dirty);
 	} else {
-		second_page = (px >= fb_mem + fb_page_size);
+		// In direct mode px is one of the mapped pages; pan to that page.
+		uintptr_t base = (uintptr_t)fb_mem;
+		uintptr_t at = (uintptr_t)px;
+		if (at >= base && at < base + fb_page_size * (size_t)fb_page_count) {
+			target = (int)((at - base) / fb_page_size);
+		}
 	}
 
 	if (lv_display_flush_is_last(disp)) {
-		fb_var.yoffset = second_page ? fb_var.yres : 0;
+		// A wake re-arm sets FB_ACTIVATE_FORCE in the shared fb_var. A pan must
+		// not carry it: depending on the driver it can force a mode re-check or a
+		// vblank wait on every frame. FB_ACTIVATE_NOW is zero, i.e. apply the new
+		// yoffset without forcing anything else.
+		fb_var.activate = FB_ACTIVATE_NOW;
+		fb_var.yoffset = (uint32_t)target * fb_var.yres;
 		if (ioctl(fb_fd, FBIOPAN_DISPLAY, &fb_var) < 0) {
 			// One warning, not one per frame.
 			static bool warned;
@@ -1569,27 +1588,51 @@ static lv_display_t *try_panned_display(void) {
 		return NULL;
 	}
 
-	// Ask for two pages.
-	fb_var.yres_virtual = fb_var.yres * 2;
-	fb_var.xres_virtual = fb_var.xres;
-	fb_var.yoffset = 0;
-	if (ioctl(fb_fd, FBIOPUT_VSCREENINFO, &fb_var) < 0) {
-		close(fb_fd);
-		fb_fd = -1;
-		return NULL;
-	}
-	ioctl(fb_fd, FBIOGET_FSCREENINFO, &fix); // smem_len may have been updated
-
+	// Ask for three pages; fall back to two when the driver or its memory
+	// cannot hold them. The page count is what the pan/rotation bookkeeping
+	// below follows, not a hard-coded pair.
 	fb_page_size = (size_t)fix.line_length * fb_var.yres;
-	if ((size_t)fix.smem_len < fb_page_size * 2) {
-		printf("fb: %u bytes of memory is under the %zu two pages need, so no page flipping\n", fix.smem_len,
-			   fb_page_size * 2);
+	fb_page_count = 3;
+	for (;;) {
+		fb_var.yres_virtual = fb_var.yres * (uint32_t)fb_page_count;
+		fb_var.xres_virtual = fb_var.xres;
+		fb_var.yoffset = 0;
+		fb_var.activate = FB_ACTIVATE_NOW;
+		if (ioctl(fb_fd, FBIOPUT_VSCREENINFO, &fb_var) == 0) {
+			// Read back what the driver actually took rather than what was asked
+			// for. A driver may clamp yres_virtual, and panning to a page that
+			// was never granted fails with the panel left on the old page.
+			ioctl(fb_fd, FBIOGET_VSCREENINFO, &fb_var);
+			ioctl(fb_fd, FBIOGET_FSCREENINFO, &fix); // smem_len may have been updated
+			fb_page_size = (size_t)fix.line_length * fb_var.yres;
+			// Two pages have always worked with only the memory check, and a
+			// driver that does not report yres_virtual back correctly must not
+			// lose them. A third page is new, so there the driver has to say it
+			// granted one, or a pan to it would fail and strand the panel.
+			if (fb_page_size > 0 && (size_t)fix.smem_len >= fb_page_size * (size_t)fb_page_count &&
+			    (fb_page_count == 2 || fb_var.yres_virtual >= fb_var.yres * (uint32_t)fb_page_count)) {
+				break;
+			}
+		}
+		if (fb_page_count == 2) {
+			printf("fb: fb0 gave %u bytes and a %ux%u virtual screen, not the two pages page flipping needs\n",
+				   fix.smem_len, fb_var.xres, fb_var.yres_virtual);
+			close(fb_fd);
+			fb_fd = -1;
+			return NULL;
+		}
+		fb_page_count = 2;
+	}
+
+	if (fix.line_length != fb_var.xres * bytespp) {
+		printf("fb: page setup changed the stride, so no page flipping\n");
 		close(fb_fd);
 		fb_fd = -1;
 		return NULL;
 	}
 
-	fb_mem = mmap(NULL, fb_page_size * 2, PROT_READ | PROT_WRITE, MAP_SHARED, fb_fd, 0);
+	const size_t pages_size = fb_page_size * (size_t)fb_page_count;
+	fb_mem = mmap(NULL, pages_size, PROT_READ | PROT_WRITE, MAP_SHARED, fb_fd, 0);
 	if (fb_mem == MAP_FAILED) {
 		close(fb_fd);
 		fb_fd = -1;
@@ -1598,7 +1641,7 @@ static lv_display_t *try_panned_display(void) {
 
 	lv_display_t *disp = lv_display_create((int32_t)fb_var.xres, (int32_t)fb_var.yres);
 	if (!disp) {
-		munmap(fb_mem, fb_page_size * 2);
+		munmap(fb_mem, pages_size);
 		close(fb_fd);
 		fb_fd = -1;
 		return NULL;
@@ -1607,23 +1650,35 @@ static lv_display_t *try_panned_display(void) {
 	lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
 	lv_display_set_buffers(disp, fb_mem, fb_mem + fb_page_size, (uint32_t)fb_page_size,
 						   LV_DISPLAY_RENDER_MODE_DIRECT);
+	if (fb_page_count == 3) {
+		lv_result_t third = lv_draw_buf_init(&fb_buf3, fb_var.xres, fb_var.yres, LV_COLOR_FORMAT_RGB565, fix.line_length,
+										fb_mem + 2 * fb_page_size, (uint32_t)fb_page_size);
+		if (third == LV_RESULT_OK) {
+			lv_display_set_3rd_draw_buffer(disp, &fb_buf3);
+		} else {
+			// Three pages were accepted by fb0, but LVGL could not describe the
+			// third buffer (it only refuses when the size given does not fit the
+			// stride and height). Two still flip; the extra page stays mapped and
+			// unused, because shrinking the virtual screen again buys nothing.
+			fb_page_count = 2;
+		}
+	}
 	lv_display_set_flush_cb(disp, fb_pan_flush_cb);
 	fb_display = disp;
 
-	printf("fb: double-buffered, page flip on FBIOPAN_DISPLAY (%ux%u)\n", fb_var.xres, fb_var.yres);
+	printf("fb: %d-page buffered, page flip on FBIOPAN_DISPLAY (%ux%u)\n", fb_page_count, fb_var.xres, fb_var.yres);
 	return disp;
 }
 
 // A copy of what the panel is showing right now.
 //
-// fb_var.yoffset says which of the two pages is on screen, and the flush
-// updates it at every swap: zero is the first page, yres the second. Nothing
-// else is needed, not even whether rotation is on, because while rotated the
-// framebuffer already holds the turned image, which is exactly what is
-// visible.
+// fb_var.yoffset says which page is on screen, and the flush updates it at
+// every swap: page N starts at yoffset N * yres. Nothing else is needed, not
+// even whether rotation is on, because while rotated the framebuffer already
+// holds the turned image, which is exactly what is visible.
 uint16_t *display_capture_frame(int *out_w, int *out_h) {
 	if (!fb_mem || fb_page_size == 0) {
-		return NULL; // plain fbdev fallback, no second page
+		return NULL; // plain fbdev fallback, no page flipping
 	}
 
 	// One block, kept for the life of the process instead of allocating one
@@ -1643,7 +1698,14 @@ uint16_t *display_capture_frame(int *out_w, int *out_h) {
 		return NULL;
 	}
 
-	const uint8_t *page = fb_mem + (fb_var.yoffset ? fb_page_size : 0);
+	const uint8_t *page = fb_mem;
+	if (fb_var.yres) {
+		uint32_t page_index = fb_var.yoffset / fb_var.yres;
+		if (page_index >= (uint32_t)fb_page_count) {
+			page_index = 0;
+		}
+		page += (size_t)page_index * fb_page_size;
+	}
 	memcpy(copy, page, fb_page_size);
 
 	if (out_w) {
@@ -1660,8 +1722,8 @@ uint16_t *display_capture_frame(int *out_w, int *out_h) {
 //
 // The sysfs blank/unblank cycle tears down the panel's scan-out, and some
 // drivers also reset the video mode -- which for the page-flipping display
-// means losing the double-height virtual resolution, after which every
-// FBIOPAN_DISPLAY to the second page fails and the panel stays black. So on
+// means losing the multi-page virtual resolution, after which every
+// FBIOPAN_DISPLAY to a later page fails and the panel stays black. So on
 // wake the mode is put back explicitly (ACTIVATE_NOW | FORCE re-arms scan-out
 // even when nothing changed) and the current page is re-panned. The plain
 // fbdev fallback has its own mechanism: force_refresh makes its next flush
@@ -1674,15 +1736,18 @@ uint16_t *display_capture_frame(int *out_w, int *out_h) {
 
 void display_wake_begin(lv_display_t *disp) {
 	if (fb_fd >= 0) {
-		fb_var.activate = FB_ACTIVATE_NOW | FB_ACTIVATE_FORCE;
-		if (ioctl(fb_fd, FBIOPUT_VSCREENINFO, &fb_var) < 0) {
+		// Keep FORCE local to the wake re-arm; the same struct is the one every
+		// normal FBIOPAN_DISPLAY uses.
+		struct fb_var_screeninfo wake_var = fb_var;
+		wake_var.activate = FB_ACTIVATE_NOW | FB_ACTIVATE_FORCE;
+		if (ioctl(fb_fd, FBIOPUT_VSCREENINFO, &wake_var) < 0) {
 			perror("fb: FBIOPUT_VSCREENINFO (wake)");
 		}
 		// A pan is refused with EBUSY while the panel is blanked, so leave it
 		// to the wake repaint after unblank. The backlight is held at zero
 		// through panel init, and that repaint's own flush presents the freshly
 		// drawn page. The guard also keeps this safe if called on a blank panel.
-		if (!power_panel_is_blanked() && ioctl(fb_fd, FBIOPAN_DISPLAY, &fb_var) < 0) {
+		if (!power_panel_is_blanked() && ioctl(fb_fd, FBIOPAN_DISPLAY, &wake_var) < 0) {
 			perror("fb: FBIOPAN_DISPLAY (wake)");
 		}
 		return;
@@ -1749,6 +1814,13 @@ void display_set_rotated(bool rotated) {
 		return;
 	}
 
+	// Turning the picture over invalidates every framebuffer page, whichever
+	// direction the switch goes; the next page flips repaint them all.
+	area_clear(&rot_frame_dirty);
+	for (int i = 0; i < fb_page_count; i++) {
+		area_set_full(&rot_page_pending[i]);
+	}
+
 	if (rotated) {
 		if (!rot_page) {
 			rot_page = malloc(fb_page_size);
@@ -1759,17 +1831,18 @@ void display_set_rotated(bool rotated) {
 		}
 		memset(rot_page, 0, fb_page_size);
 
-		// Both framebuffer pages still hold the picture the right way up, so
-		// they each owe a full frame.
-		area_clear(&rot_frame_dirty);
-		area_set_full(&rot_page_pending[0]);
-		area_set_full(&rot_page_pending[1]);
-
+		// Drop the third buffer before the display is made single-buffered:
+		// lv_display_set_3rd_draw_buffer() refuses to clear it once buf_2 is
+		// NULL, which would leave LVGL describing a buffer it no longer uses.
+		lv_display_set_3rd_draw_buffer(fb_display, NULL);
 		lv_display_set_buffers(fb_display, rot_page, NULL, (uint32_t)fb_page_size, LV_DISPLAY_RENDER_MODE_DIRECT);
 		fb_rotated = true;
 	} else {
 		lv_display_set_buffers(fb_display, fb_mem, fb_mem + fb_page_size, (uint32_t)fb_page_size,
 							   LV_DISPLAY_RENDER_MODE_DIRECT);
+		if (fb_page_count == 3) {
+			lv_display_set_3rd_draw_buffer(fb_display, &fb_buf3);
+		}
 		fb_rotated = false;
 		lv_async_call(free_rot_pages_cb, NULL);
 	}
@@ -1784,11 +1857,11 @@ void display_set_rotated(bool rotated) {
 		}
 	}
 
-	// Both framebuffer pages still hold the picture the other way up. One
-	// invalidation is enough: the page bookkeeping above already has each
-	// page owing a full frame, so the next two flips repaint them both. No
-	// lv_refr_now() here, because this runs inside a settings event handler
-	// and rendering from one is unsafe.
+	// Every framebuffer page still holds the picture the other way up. One
+	// invalidation is enough: the page bookkeeping above already has each page
+	// owing a full frame, so the next flips repaint them all. No lv_refr_now()
+	// here, because this runs inside a settings event handler and rendering
+	// from one is unsafe.
 	lv_obj_invalidate(lv_screen_active());
 	lv_obj_invalidate(lv_layer_top());
 	lv_obj_invalidate(lv_layer_sys());
