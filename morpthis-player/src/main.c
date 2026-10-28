@@ -2420,7 +2420,11 @@ static struct {
 	lv_point_t last;
 	uint32_t started_tick;
 	uint32_t last_tick;
+	uint32_t last_read_tick;
+	uint32_t reads;
+	uint32_t max_read_gap;
 	uint32_t moves;
+	uint32_t first_move_at;
 	uint32_t max_step;
 	uint32_t max_step_at;
 	uint32_t max_gap;
@@ -2451,6 +2455,18 @@ static void touch_filter_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
 	touch_raw_read_cb(indev, data);
 
 	if (data->state == LV_INDEV_STATE_PRESSED) {
+		uint32_t read_tick = 0;
+		if (debug_enabled()) {
+			read_tick = lv_tick_get();
+			if (touch_diag.active) {
+				uint32_t read_gap = read_tick - touch_diag.last_read_tick;
+				if (read_gap > touch_diag.max_read_gap) {
+					touch_diag.max_read_gap = read_gap;
+				}
+				touch_diag.reads++;
+			}
+		}
+
 		if (!touch_filter.pressed) {
 			// The press point is the tap point; do not ease into it.
 			touch_filter.pressed = true;
@@ -2461,8 +2477,9 @@ static void touch_filter_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
 				memset(&touch_diag, 0, sizeof(touch_diag));
 				touch_diag.active = true;
 				touch_diag.last = data->point;
-				touch_diag.started_tick = lv_tick_get();
-				touch_diag.last_tick = touch_diag.started_tick;
+				touch_diag.started_tick = read_tick;
+				touch_diag.last_tick = read_tick;
+				touch_diag.last_read_tick = read_tick;
 			}
 		} else {
 			if (debug_enabled() && touch_diag.active) {
@@ -2472,19 +2489,22 @@ static void touch_filter_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
 				uint32_t step_y = (uint32_t)(dy < 0 ? -dy : dy);
 				uint32_t step = step_x > step_y ? step_x : step_y;
 				if (step > 0) {
-					uint32_t now = lv_tick_get();
-					uint32_t gap = now - touch_diag.last_tick;
+					uint32_t gap = read_tick - touch_diag.last_tick;
+					if (touch_diag.moves == 0) {
+						touch_diag.first_move_at = read_tick - touch_diag.started_tick;
+					}
 					touch_diag.moves++;
 					if (step > touch_diag.max_step) {
 						touch_diag.max_step = step;
-						touch_diag.max_step_at = now - touch_diag.started_tick;
+						touch_diag.max_step_at = read_tick - touch_diag.started_tick;
 					}
 					if (gap > touch_diag.max_gap) {
 						touch_diag.max_gap = gap;
 					}
 					touch_diag.last = data->point;
-					touch_diag.last_tick = now;
+					touch_diag.last_tick = read_tick;
 				}
+				touch_diag.last_read_tick = read_tick;
 			}
 
 			int32_t raw_x = data->point.x;
@@ -2511,9 +2531,11 @@ static void touch_filter_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
 
 		if (debug_enabled() && touch_diag.active) {
 			if (touch_diag.moves > 0) {
-				DEBUG_ERR("input: touch %u moves, max step %u px at %u ms, max gap %u ms, filter snaps %u, max lag %u px\n",
-						  touch_diag.moves, touch_diag.max_step, touch_diag.max_step_at, touch_diag.max_gap,
-						  touch_diag.snaps, touch_diag.max_lag);
+				DEBUG_ERR("input: touch %u moves in %u reads, first move %u ms, max step %u px at %u ms, "
+						  "max move gap %u ms, max read gap %u ms, filter snaps %u, max lag %u px\n",
+						  touch_diag.moves, touch_diag.reads, touch_diag.first_move_at, touch_diag.max_step,
+						  touch_diag.max_step_at, touch_diag.max_gap, touch_diag.max_read_gap, touch_diag.snaps,
+						  touch_diag.max_lag);
 			}
 			touch_diag.active = false;
 		}
