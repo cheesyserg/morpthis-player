@@ -12,12 +12,22 @@
 /* malloc, string and sprintf from the C library rather than LVGL's own. */
 #define LV_USE_STDLIB_MALLOC  LV_STDLIB_CLIB
 
-/* LVGL's assertions, off by default: its internal checks, and NULL pointers and
- * failed allocations caught where they happen, rather than running on with
- * them. A failed one halts in the assert handler, while(1), which stops the
- * interface dead without exiting -- on a device with no console that cannot be
- * told apart from a lock-up. The log, also off by default, gets the line that
- * names it into the log the player already writes. Warnings and errors only. */
+/* The release target is built with -DNDEBUG (Makefile, TARGET_CFLAGS):
+ * assertions, argument checks and LVGL's log are compiled out of it. These
+ * checks run on every public LVGL call, and this is a single-core MIPS device
+ * where the object graph is already the frame budget. The simulator keeps
+ * them, which is where a bad call is cheap to catch.
+ *
+ * The log is inside the same guard because argument-check failures are
+ * reported through it; there is no logging left to configure once the checks
+ * are gone. */
+#ifdef NDEBUG
+#define LV_USE_ASSERT 0
+#define LV_USE_ASSERT_NULL 0
+#define LV_USE_ASSERT_MALLOC 0
+#define LV_USE_LOG 0
+#define LV_USE_CHECK_ARG 0
+#else
 #define LV_USE_ASSERT 1
 #define LV_USE_ASSERT_NULL 1
 #define LV_USE_ASSERT_MALLOC 1
@@ -27,15 +37,14 @@
 /* The player's log puts the time on every line (src/system/core/logging.c);
  * LVGL's own "(373.404, +373404)" would only repeat it. */
 #define LV_LOG_USE_TIMESTAMP 0
-#define LV_USE_STDLIB_STRING  LV_STDLIB_CLIB
-#define LV_USE_STDLIB_SPRINTF LV_STDLIB_CLIB
-
-/* LVGL's public functions check their arguments -- NULL pointers, indexes,
- * ranges -- and skip the call when a check fails. A failed check is logged as a
- * warning naming the LVGL function, file and line, without the condition's
- * text, which would add a string per check. */
+/* A failed argument check is logged naming the LVGL function, file and line,
+ * without the condition's text, which would add a string per check. */
 #define LV_USE_CHECK_ARG 1
 #define LV_CHECK_ARG_LOG_MODE LV_CHECK_ARG_LOG_MODE_MINIMAL
+#endif
+
+#define LV_USE_STDLIB_STRING  LV_STDLIB_CLIB
+#define LV_USE_STDLIB_SPRINTF LV_STDLIB_CLIB
 
 /* No font is built into the binary: every string is rendered through FreeType
  * from the faces in /usr/resource/morpthis/fonts (see src/gui/fonts/fonts.c). */

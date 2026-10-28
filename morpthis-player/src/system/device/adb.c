@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "src/system/core/config.h"
+#include "src/system/core/debug.h"
 #include "src/system/device/system.h"
 #include "src/system/device/usb.h"
 
@@ -457,6 +458,7 @@ bool adb_set_enabled(bool enabled) {
 	wanted = enabled;
 	config_set_bool("system", "adb", enabled);
 	config_save();
+	debug_refresh();
 
 	pthread_t thread;
 	if (pthread_create(&thread, NULL, adb_apply_thread, enabled ? (void *)1 : NULL) != 0) {

@@ -104,7 +104,12 @@ HOST_CFLAGS = $(CFLAGS) -DHOST_BUILD=1 $(shell sdl2-config --cflags) $(shell pkg
 # This fork's target package is for the TempoTec V1. The runtime BOARD value
 # still wins (BOARD=tempotec_v1, or MORPTHIS_PANEL on the simulator), while host
 # builds stay regular unless either is supplied.
-TARGET_CFLAGS = $(CFLAGS) -DBOARD_DEFAULT_TEMPOTEC_V1=1 -march=mips32r2 -mno-madd4 -mplt -I$(LVGL_DIR)/src -I$(FREETYPE_PREFIX)/include/freetype2 \
+# -DNDEBUG is the release switch for debugging: it removes LVGL's per-call
+# argument checks, its assertions and its log (lv_conf.h keys off it), and the
+# C library assertions in the vendored decoders. The host build deliberately
+# does not set it. -g stays: the unstripped morpthis_player_debug is what a
+# crash address is resolved against, and it costs no run time.
+TARGET_CFLAGS = $(CFLAGS) -DNDEBUG -DBOARD_DEFAULT_TEMPOTEC_V1=1 -march=mips32r2 -mno-madd4 -mplt -I$(LVGL_DIR)/src -I$(FREETYPE_PREFIX)/include/freetype2 \
 				-I$(AUDIO_PREFIX)/include -I$(AUDIO_PREFIX)/include/opus \
 				-include src/system/core/glibc_compat.h
 

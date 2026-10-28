@@ -33,6 +33,14 @@ void logging_attach_sd(const char *sd_root);
 void logging_set_to_sd(bool enabled);
 bool logging_to_sd(void);
 
+// True while lines are actually being written to a log file. Kernel-log
+// polling and the periodic card sync are pointless without one.
+bool logging_active(void);
+
+// Brings the timestamping streams in or out of line with debug_enabled().
+// Called by debug_refresh(); not part of the normal logging API.
+void logging_refresh_capture(void);
+
 // Hands every line printed through stdout or stderr to `tap` as well, without
 // its newline and before its stamp, whether or not the log is going anywhere.
 // Called on the printing thread with that stream's lock held: the tap must be

@@ -25,6 +25,7 @@
 
 #include "src/system/bluetooth/bluetooth.h"
 #include "src/system/core/config.h"
+#include "src/system/core/debug.h"
 #include "src/system/core/lang.h"
 #include "src/system/core/logging.h"
 
@@ -952,6 +953,7 @@ void btlog_init(void) {
 void btlog_set_enabled(bool enabled) {
 	config_set_bool("bluetooth", "log", enabled);
 	config_save();
+	debug_refresh();
 	if (!btlog_supported()) {
 		return;
 	}

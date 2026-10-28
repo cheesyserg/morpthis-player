@@ -20,6 +20,7 @@
 #include <unistd.h>
 
 #include "src/system/core/config.h"
+#include "src/system/core/debug.h"
 #include "src/system/core/utils.h"
 #include "src/system/core/lang.h"
 
@@ -50,8 +51,15 @@
 
 static FILE *early_stream;
 
+// The two fopencookie() streams that put a timestamp on every line. They are
+// kept so the pair can be swapped out again when no debugging is enabled: a
+// plain /dev/null stream does not call localtime() or the queue for a line that
+// is only going to be discarded.
+static FILE *stamp_out_file;
+static FILE *stamp_err_file;
+
 static char sd_log_path[512];
-static bool on_sd;
+static volatile bool on_sd; // read by the watchdog thread (logging_active)
 
 // The stream stdout/stderr currently feed. Kept so a switch can close the
 // previous one: dup2 copies the descriptor into 1 and 2, but the original stays
@@ -93,6 +101,12 @@ const char *logging_path(void) {
 // the option made "Log to microSD" flip itself off and stay off, even though
 // nothing had ever written false to the config.
 bool logging_to_sd(void) { return config_get_bool("system", "log_to_sd", false); }
+
+// True while the log is actually going to a file. The kernel reader and the
+// periodic fdatasync exist for that file; with no file they are work for
+// nothing, and on a card that is already the slowest thing in the device they
+// are worth skipping entirely.
+bool logging_active(void) { return on_sd; }
 
 // A place to hold output that cannot go where it belongs yet: a real file on
 // tmpfs, unlinked at once so it has a name for nobody. NULL when tmpfs will
@@ -214,6 +228,7 @@ static size_t queue_head; // oldest byte
 static size_t queue_len;
 static bool queue_writing; // the writer holds bytes it has taken out
 static bool queue_running; // the writer thread exists (never in a forked child)
+static bool queue_started; // queue_start() has run (a forked child keeps it set)
 static unsigned long queue_dropped;
 
 static void ring_put(const char *data, size_t size) {
@@ -388,6 +403,11 @@ static void queue_after_fork_child(void) {
 }
 
 static void queue_start(void) {
+	if (queue_started) {
+		return;
+	}
+	queue_started = true;
+
 	pthread_mutexattr_t mattr;
 	pthread_mutexattr_init(&mattr);
 	// The playback thread prints at real-time priority.
@@ -500,18 +520,72 @@ static FILE *stamp_open(stamp_stream_t *stream) {
 static void stamp_install(void) {
 	fflush(stdout);
 	fflush(stderr);
-	FILE *out = stamp_open(&stamp_out);
+
+	if (!stamp_out_file) {
+		stamp_out.line_start = true;
+		FILE *out = stamp_open(&stamp_out);
+		if (out) {
+			stdout = out;
+			stamp_out_file = out;
+		} else {
+			setvbuf(stdout, NULL, _IOLBF, 0);
+		}
+	}
+
+	if (!stamp_err_file) {
+		stamp_err.line_start = true;
+		FILE *err = stamp_open(&stamp_err);
+		if (err) {
+			stderr = err;
+			stamp_err_file = err;
+		} else {
+			setvbuf(stderr, NULL, _IOLBF, 0);
+		}
+	}
+}
+
+// Replaces the timestamping streams with `sink`. Nothing printed after this
+// pays for a clock read or a queue record: with debugging off the only thing
+// waiting at the other end is /dev/null.
+static void stamp_remove(FILE *sink) {
+	if (!stamp_out_file && !stamp_err_file) {
+		return;
+	}
+
+	fflush(stdout);
+	fflush(stderr);
+
+	FILE *out = stamp_out_file;
+	FILE *err = stamp_err_file;
+	stamp_out_file = NULL;
+	stamp_err_file = NULL;
+
+	stdout = sink;
+	stderr = sink;
+	setvbuf(sink, NULL, _IOFBF, 0);
+
 	if (out) {
-		stdout = out;
-	} else {
-		setvbuf(stdout, NULL, _IOLBF, 0);
+		fclose(out);
 	}
-	FILE *err = stamp_open(&stamp_err);
-	if (err) {
-		stderr = err;
-	} else {
-		setvbuf(stderr, NULL, _IOLBF, 0);
+	if (err && err != out) {
+		fclose(err);
 	}
+}
+
+void logging_refresh_capture(void) {
+	pthread_mutex_lock(&log_lock);
+
+	// Startup output is held in its own file, and the USB hand-over already
+	// owns the stream while the card is away. Neither is ours to change here.
+	if (!early_stream && !usb_stream && active_stream && !on_sd) {
+		if (debug_enabled()) {
+			stamp_install();
+		} else {
+			stamp_remove(active_stream);
+		}
+	}
+
+	pthread_mutex_unlock(&log_lock);
 }
 
 // Points descriptors 1 and 2 -- and so stdout and stderr, which write to them
@@ -547,10 +621,10 @@ static bool redirect_to(FILE *stream) {
 
 void logging_init(void) {
 	stamp_install();
-	queue_start();
 
 	const char *override = getenv("MORPTHIS_LOG");
 	if (override && override[0]) {
+		queue_start();
 		FILE *file = fopen(override, "w");
 		if (file && redirect_to(file)) {
 			on_sd = true;
@@ -592,6 +666,11 @@ static bool open_sd_log(void) {
 		return false;
 	}
 
+	// A file is the only destination that needs the queue, and the stamps are
+	// put back if debugging was switched off while this log was closed.
+	queue_start();
+	stamp_install();
+
 	FILE *file = fopen(sd_log_path, "a");
 	if (!file) {
 		return false;
@@ -618,6 +697,9 @@ static void open_null_log(void) {
 	if (sink) {
 		if (redirect_to(sink)) {
 			usb_stream = NULL; // redirect_to has just closed it
+			if (!debug_enabled()) {
+				stamp_remove(sink);
+			}
 		} else {
 			fclose(sink);
 		}
@@ -744,19 +826,26 @@ static void logging_set_to_sd_locked(bool enabled) {
 	config_set_bool("system", "log_to_sd", enabled);
 	config_save();
 
-	if (enabled == on_sd) {
-		return;
-	}
-
 	if (enabled) {
-		if (!open_sd_log()) {
+		debug_refresh();
+		if (!on_sd && !open_sd_log()) {
 			open_null_log(); // no card, or it would not take the file
 		}
 		return;
 	}
 
+	if (!on_sd) {
+		// Already off. The refresh is still wanted: another switch may be the
+		// last one that was keeping the capture streams alive.
+		debug_refresh();
+		return;
+	}
+
+	// Before the switch takes the stamps away, so the log itself says it was
+	// turned off.
 	printf("log: card logging off\n");
 	fflush(stdout);
+	debug_refresh();
 	open_null_log();
 }
 
@@ -771,6 +860,9 @@ void logging_set_to_sd(bool enabled) {
 // ---------------------------------------------------------------------------
 
 void logging_sync(void) {
+	if (!logging_active()) {
+		return;
+	}
 	if (!queue_running) {
 		sync_card();
 	}
@@ -988,6 +1080,10 @@ static bool kmsg_copy(void) {
 }
 
 void logging_follow_kernel(void) {
+	if (!logging_active()) {
+		return;
+	}
+
 	if (!kmsg_tried) {
 		kmsg_tried = true;
 		kmsg_fd = open("/dev/kmsg", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
@@ -1163,6 +1259,10 @@ static void report_kept_kernel_log(void) {
 }
 
 void logging_report_previous_run(void) {
+	if (!logging_active()) {
+		return;
+	}
+
 	report_kept_kernel_log();
 
 	char *buffer = malloc(KERNEL_BUFFER_BYTES);

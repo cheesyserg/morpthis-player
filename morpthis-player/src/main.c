@@ -37,6 +37,7 @@
 #include "src/system/device/clock.h"
 #include "src/system/device/factoryreset.h"
 #include "src/system/core/config.h"
+#include "src/system/core/debug.h"
 #include "src/system/core/lang.h"
 #include "src/system/device/led.h"
 #include "src/system/audio/eq.h"
@@ -1075,6 +1076,9 @@ static void pointer_pace_cb(lv_event_t *e) {
 	lv_event_code_t code = lv_event_get_code(e);
 	if (code == LV_EVENT_PRESSED) {
 		lv_timer_set_period(read_timer, POINTER_ACTIVE_READ_PERIOD_MS);
+		if (!debug_enabled()) {
+			return;
+		}
 		drag_stats.active = true;
 		lv_indev_get_point(indev, &drag_stats.press_at);
 		drag_stats.last_point = drag_stats.press_at;
@@ -1091,6 +1095,9 @@ static void pointer_pace_cb(lv_event_t *e) {
 			return;
 		}
 		drag_stats.active = false;
+		if (!debug_enabled()) {
+			return;
+		}
 
 		// A tap redraws a button in its pressed state once or twice; only a
 		// gesture that actually travelled is worth a line.
@@ -1101,10 +1108,10 @@ static void pointer_pace_cb(lv_event_t *e) {
 		if (dx * dx + dy * dy <= TAP_SLOP_PX * TAP_SLOP_PX || drag_stats.frames == 0) {
 			return;
 		}
-		fprintf(stderr, "ui: drag %u ms, %u frames, %u moves, pass avg %u max %u ms, flush avg %u max %u ms\n",
-				lv_tick_get() - drag_stats.started, drag_stats.frames, drag_stats.moves,
-				drag_stats.pass_sum / drag_stats.frames, drag_stats.pass_max,
-				drag_stats.flush_sum_us / drag_stats.frames / 1000, drag_stats.flush_max_us / 1000);
+		DEBUG_ERR("ui: drag %u ms, %u frames, %u moves, pass avg %u max %u ms, flush avg %u max %u ms\n",
+				  lv_tick_get() - drag_stats.started, drag_stats.frames, drag_stats.moves,
+				  drag_stats.pass_sum / drag_stats.frames, drag_stats.pass_max,
+				  drag_stats.flush_sum_us / drag_stats.frames / 1000, drag_stats.flush_max_us / 1000);
 	}
 }
 
@@ -2267,6 +2274,10 @@ int main(int argc, char **argv) {
 	factoryreset_clear_stock_data(first_start);
 #endif
 
+	// Now that the switches have been read: whether any of them asks for
+	// diagnostic work at all. Everything below asks this one cached answer.
+	debug_refresh();
+
 	// The interface's own text, before any of it is built. MORPTHIS_LANG_DIR points
 	// it somewhere else for the host build, the same way MORPTHIS_CONFIG does.
 	const char *lang_dir = getenv("MORPTHIS_LANG_DIR");
@@ -2728,55 +2739,58 @@ int main(int argc, char **argv) {
 		ui_heartbeat++;
 		uint32_t pass_started = custom_tick_get();
 		uint32_t time_till_next = lv_timer_handler();
-		uint32_t pass_took = custom_tick_get() - pass_started;
 		// Read every pass so the total never carries over into the next one.
 		uint32_t flush_us = fb_flush_us_take();
-		uint32_t flush_ms = flush_us / 1000;
 
-		// How often the finger's position actually arrives. A stream that
-		// reports at the frame rate updates on most passes; one that reports at
-		// half of it leaves passes with the same point twice, and a slow scroll
-		// then moves in steps however fast the display is.
-		if (drag_stats.active && tuned_pointer) {
-			lv_point_t p;
-			lv_indev_get_point(tuned_pointer, &p);
-			if (p.x != drag_stats.last_point.x || p.y != drag_stats.last_point.y) {
-				drag_stats.moves++;
-				drag_stats.last_point = p;
-			}
-		}
+		if (debug_enabled()) {
+			uint32_t pass_took = custom_tick_get() - pass_started;
+			uint32_t flush_ms = flush_us / 1000;
 
-		// A pass that presented a frame is a frame of the drag. Counted from the
-		// flush rather than from the pass time, because a pass can also be the
-		// input timer on its own and would then read as a frame that never was.
-		if (drag_stats.active && flush_us) {
-			drag_stats.frames++;
-			drag_stats.pass_sum += pass_took;
-			if (pass_took > drag_stats.pass_max) {
-				drag_stats.pass_max = pass_took;
+			// How often the finger's position actually arrives. A stream that
+			// reports at the frame rate updates on most passes; one that reports at
+			// half of it leaves passes with the same point twice, and a slow scroll
+			// then moves in steps however fast the display is.
+			if (drag_stats.active && tuned_pointer) {
+				lv_point_t p;
+				lv_indev_get_point(tuned_pointer, &p);
+				if (p.x != drag_stats.last_point.x || p.y != drag_stats.last_point.y) {
+					drag_stats.moves++;
+					drag_stats.last_point = p;
+				}
 			}
-			drag_stats.flush_sum_us += flush_us;
-			if (flush_us > drag_stats.flush_max_us) {
-				drag_stats.flush_max_us = flush_us;
-			}
-		}
 
-		uint32_t serial = player_cover_serial();
-		if (serial != shown_serial) {
-			shown_serial = serial;
-			swap_ms = pass_took;
-			swap_pending = true;
-		} else if (swap_pending) {
-			swap_pending = false;
-			fprintf(stderr, "cover: artwork change cost %u ms (%u + %u)\n", swap_ms + pass_took, swap_ms, pass_took);
-		} else if (pass_took >= UI_SLOW_PASS_MS) {
-			// One pass that took this long is a stall somebody felt, and it is
-			// the only place it is visible: whatever caused it ran inside
-			// lv_timer_handler() and nothing else can say which. The flush figure
-			// splits it: time in the flush is pixels reaching the panel, time
-			// outside it is the frame being drawn or laid out, and the two have
-			// nothing in common when it comes to fixing them.
-			fprintf(stderr, "ui: pass took %u ms (flush %u)\n", pass_took, flush_ms);
+			// A pass that presented a frame is a frame of the drag. Counted from the
+			// flush rather than from the pass time, because a pass can also be the
+			// input timer on its own and would then read as a frame that never was.
+			if (drag_stats.active && flush_us) {
+				drag_stats.frames++;
+				drag_stats.pass_sum += pass_took;
+				if (pass_took > drag_stats.pass_max) {
+					drag_stats.pass_max = pass_took;
+				}
+				drag_stats.flush_sum_us += flush_us;
+				if (flush_us > drag_stats.flush_max_us) {
+					drag_stats.flush_max_us = flush_us;
+				}
+			}
+
+			uint32_t serial = player_cover_serial();
+			if (serial != shown_serial) {
+				shown_serial = serial;
+				swap_ms = pass_took;
+				swap_pending = true;
+			} else if (swap_pending) {
+				swap_pending = false;
+				DEBUG_ERR("cover: artwork change cost %u ms (%u + %u)\n", swap_ms + pass_took, swap_ms, pass_took);
+			} else if (pass_took >= UI_SLOW_PASS_MS) {
+				// One pass that took this long is a stall somebody felt, and it is
+				// the only place it is visible: whatever caused it ran inside
+				// lv_timer_handler() and nothing else can say which. The flush figure
+				// splits it: time in the flush is pixels reaching the panel, time
+				// outside it is the frame being drawn or laid out, and the two have
+				// nothing in common when it comes to fixing them.
+				DEBUG_ERR("ui: pass took %u ms (flush %u)\n", pass_took, flush_ms);
+			}
 		}
 
 		if (time_till_next > MAIN_LOOP_MAX_SLEEP_MS) {

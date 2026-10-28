@@ -34,6 +34,7 @@
 #include "src/system/remote/dlna.h"
 #include "src/system/bluetooth/btreceiver.h"
 #include "src/system/core/config.h"
+#include "src/system/core/debug.h"
 #include "src/system/core/lang.h"
 #include "src/system/library/library.h"
 #include "src/system/library/lyrics.h"
@@ -4522,8 +4523,10 @@ static bool dragging;
 static bool drag_committed;
 
 static void sheet_anim_x_cb(void *obj, int32_t value) {
-	sheet_anim_steps++;
-	sheet_anim_last_x = value;
+	if (debug_enabled()) {
+		sheet_anim_steps++;
+		sheet_anim_last_x = value;
+	}
 	lv_obj_set_x((lv_obj_t *)obj, (int)value);
 	// The chevron belongs to the sheet while it moves: ride its edge, and
 	// snap back into the page's corner once the sheet is fully away.
@@ -4536,7 +4539,6 @@ static void sheet_arrived_cb(lv_anim_t *a) {
 	// Said out loud because it is the number that says whether the slide itself
 	// is still a problem: the animation is 165 ms by design, and anything much
 	// past that is frames that could not be drawn in time.
-	uint32_t took = (uint32_t)(lv_tick_get() - sheet_slide_started);
 	if (!sheet_open) {
 		lv_obj_set_hidden(player_screen, true);
 		sheet_reveal_page();
@@ -4555,8 +4557,11 @@ static void sheet_arrived_cb(lv_anim_t *a) {
 	if (progress_slider_timer) {
 		lv_timer_resume(progress_slider_timer);
 	}
-	fprintf(stderr, "player: sheet slide %u ms, %d step(s), last x=%d, ends at x=%d\n", (unsigned)took, sheet_anim_steps,
-			(int)sheet_anim_last_x, (int)lv_obj_get_x(player_screen));
+	if (debug_enabled()) {
+		uint32_t took = (uint32_t)(lv_tick_get() - sheet_slide_started);
+		DEBUG_ERR("player: sheet slide %u ms, %d step(s), last x=%d, ends at x=%d\n", (unsigned)took, sheet_anim_steps,
+				  (int)sheet_anim_last_x, (int)lv_obj_get_x(player_screen));
+	}
 }
 
 // Moves the sheet to `x` (0 = fully open, sheet_width = fully out of the way).

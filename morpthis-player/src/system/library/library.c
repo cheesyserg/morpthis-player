@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include "src/system/core/config.h"
+#include "src/system/core/debug.h"
 #include "src/system/db/sqlite3.h"
 #include "src/system/library/cue.h"
 #include "src/system/decode/mp4.h"
@@ -1366,7 +1367,7 @@ bool library_open(const char *db_path) {
 	snprintf(db_file, sizeof(db_file), "%s", db_path);
 	file_identity_read(db_path, &db_identity);
 
-	printf("library: %s open, %d tracks indexed\n", db_path, library_track_count());
+	DEBUG_LOG("library: %s open, %d tracks indexed\n", db_path, library_track_count());
 
 	sortkeys_start_backfill();
 	return true;
@@ -4096,9 +4097,9 @@ static void scan_indexed(const char *path, const char *name, const song_metadata
 			}
 		}
 
-		if (scan_found % SCAN_LOG_EVERY == 0) {
+		if (debug_enabled() && scan_found % SCAN_LOG_EVERY == 0) {
 			long free_kb = mem_available_kb();
-			printf("library: %d tracks, %s (%ld kB free)\n", scan_found, path, free_kb);
+			DEBUG_LOG("library: %d tracks, %s (%ld kB free)\n", scan_found, path, free_kb);
 			fflush(stdout);
 		}
 	}
@@ -5520,8 +5521,8 @@ static int update_added, update_removed, update_replaced;
 
 static void update_run(void) {
 	uint32_t started_ms = now_ms();
-	printf("library: looking for changes in %s%s\n", scan_root,
-		   scan_folder_count > 0 ? " (the chosen folders)" : "");
+	DEBUG_LOG("library: looking for changes in %s%s\n", scan_root,
+			  scan_folder_count > 0 ? " (the chosen folders)" : "");
 	pthread_mutex_lock(&db_lock);
 	if (!prepare_statements() || !prepare_known()) {
 		fprintf(stderr, "library: cannot look for changes, the database is not answering\n");
@@ -5642,9 +5643,9 @@ static void update_run(void) {
 	if (added < 0) {
 		added = 0;
 	}
-	printf("library: %d new track(s), %d removed, %d read again, %d folder(s) noted, in %u ms%s\n", added, removed,
-		   replaced, folders_noted, now_ms() - started_ms,
-		   scan_db_failed ? " (database error)" : scan_cancel ? " (stopped early)" : "");
+	DEBUG_LOG("library: %d new track(s), %d removed, %d read again, %d folder(s) noted, in %u ms%s\n", added,
+			  removed, replaced, folders_noted, now_ms() - started_ms,
+			  scan_db_failed ? " (database error)" : scan_cancel ? " (stopped early)" : "");
 	// Stopped with nothing done -- the card pulled again, a scan asked for --
 	// is not "no changes": nothing was looked at to the end.
 	bool stopped = (scan_cancel || scan_db_failed) && !changed;
@@ -5982,6 +5983,7 @@ bool library_log_database(void) { return config_get_bool("library", "log_databas
 void library_set_log_database(bool enabled) {
 	config_set_bool("library", "log_database", enabled);
 	config_save();
+	debug_refresh();
 	// A scan already under way starts naming files at once, rather than at the
 	// next one: the switch is thrown precisely while trying to catch a crash,
 	// and asking for a restart of the very scan that crashes is asking a lot.
