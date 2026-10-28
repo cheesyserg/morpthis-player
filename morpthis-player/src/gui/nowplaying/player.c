@@ -4058,8 +4058,8 @@ static void play_btn_event_cb(lv_event_t *e) {
 }
 
 // What the on-screen prev/next buttons do. On a book they are jumps of
-// seconds; on a track they are previous/next, Spotify style -- within the
-// first few seconds of a track prev moves to the previous one, later it
+// seconds; on a track they are previous/next, as most players do it -- within
+// the first few seconds of a track prev moves to the previous one, later it
 // restarts the current one. Public so the control centre can do exactly this:
 // the same buttons cannot mean two different things in the two places.
 void player_screen_prev(void) {

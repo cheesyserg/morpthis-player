@@ -53,6 +53,20 @@ lv_obj_t *search_screen;
 // coverloader slot each, out of the page's COVERLOADER_SEARCH_COUNT.
 #define SEARCH_POOL 12
 
+// How long after the last scroll step new artwork stays unasked for. A fling
+// rebinds a row for every place the list crosses, and each row that comes up
+// would ask the worker for a jacket on the same core as the frames the finger
+// is waiting for. The requests go out as soon as the list stops; until then a
+// row shows the glyph it already has.
+#define SEARCH_THUMB_HOLD_MS 150
+static uint32_t thumb_hold_until; // lv_tick_get(); no new requests before this
+
+static bool thumb_requests_held(void) {
+	// Signed difference, so the wrap of the tick counter does not read as
+	// "held for the next forty-nine days".
+	return (int32_t)(lv_tick_get() - thumb_hold_until) < 0;
+}
+
 typedef enum {
 	CAT_TRACKS = 0,
 	CAT_ALBUMS,
@@ -169,6 +183,11 @@ static void thumbs_update(void) {
 
 		int slot = row_slot(row);
 		if (!row->requested) {
+			if (thumb_requests_held()) {
+				// Still moving: ask again once the list stops.
+				pending = true;
+				continue;
+			}
 			coverloader_request(slot, row->path, SEARCH_THUMB);
 			row->requested = true;
 		}
@@ -462,6 +481,7 @@ static void window_update(void) {
 
 static void scroll_cb(lv_event_t *e) {
 	(void)e;
+	thumb_hold_until = lv_tick_get() + SEARCH_THUMB_HOLD_MS;
 	window_update();
 }
 
@@ -892,7 +912,9 @@ void search_init(gui_config_t *cfg) {
 	results = lv_obj_create(search_screen);
 	lv_obj_set_width(results, cfg->screen_width);
 	lv_obj_align(results, LV_ALIGN_TOP_LEFT, 0, results_top + SEARCH_PILLS_H + SEARCH_PILLS_GAP);
-	lv_obj_set_style_bg_opa(results, 0, 0);
+	// Opaque in the page's colour, so a scroll repaints the hits and not the
+	// page behind them: see the note on the library list's viewport.
+	lv_obj_add_style(results, &theme_style_screen, 0);
 	lv_obj_set_style_border_width(results, 0, 0);
 	lv_obj_set_style_radius(results, 0, 0);
 	lv_obj_set_style_pad_hor(results, cfg->padding, 0);

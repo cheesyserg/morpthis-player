@@ -177,7 +177,9 @@ static lv_obj_t *make_viewport(lv_obj_t *screen, gui_config_t *cfg, lv_obj_t **b
 	lv_obj_t *list = lv_obj_create(screen);
 	lv_obj_set_size(list, lv_pct(100), cfg->screen_height - content_top);
 	lv_obj_align(list, LV_ALIGN_TOP_LEFT, 0, content_top);
-	lv_obj_set_style_bg_opa(list, 0, 0);
+	// Opaque in the page's colour, so a scroll repaints the rows and not the
+	// page behind them: see the note on the library list's viewport.
+	lv_obj_add_style(list, &theme_style_screen, 0);
 	lv_obj_set_style_border_width(list, 0, 0);
 	lv_obj_set_style_radius(list, 0, 0);
 	lv_obj_set_style_pad_hor(list, cfg->padding, 0);
@@ -247,6 +249,20 @@ static lv_obj_t *make_viewport(lv_obj_t *screen, gui_config_t *cfg, lv_obj_t **b
 #define PLAYMARK_INSET bp_pick(3, 4) // from the row's left edge
 
 #define THUMB_POLL_MS 150
+
+// How long after the last scroll step new artwork stays unasked for. A fling
+// rebinds a row for every place the list crosses, and each row that comes up
+// would ask the worker for a jacket on the same core as the frames the finger
+// is waiting for. The requests go out as soon as the list stops; until then a
+// row shows the book glyph it already has.
+#define THUMB_HOLD_MS 150
+static uint32_t thumb_hold_until; // lv_tick_get(); no new requests before this
+
+static bool thumb_requests_held(void) {
+	// Signed difference, so the wrap of the tick counter does not read as
+	// "held for the next forty-nine days".
+	return (int32_t)(lv_tick_get() - thumb_hold_until) < 0;
+}
 
 typedef struct {
 	char name[256];
@@ -321,7 +337,6 @@ static void row_show_glyph(row_t *row) {
 	// The glyph is a 64 px bitmap. The V1's 48 px thumb box needs it drawn
 	// smaller, or it hangs out of the row; 176/256 of 64 px is 44 px.
 	lv_image_set_scale(row->icon, (uint32_t)bp_pick(176, LV_SCALE_NONE));
-	lv_obj_add_style(row->icon, &theme_style_icon, 0);
 	lv_obj_set_style_image_recolor_opa(row->icon, LV_OPA_COVER, 0);
 }
 
@@ -436,6 +451,11 @@ static void thumbs_update(void) {
 		}
 
 		if (!row->thumb_requested) {
+			if (thumb_requests_held()) {
+				// Still moving: ask again once the list stops.
+				anything_pending = true;
+				continue;
+			}
 			char first[512];
 			coverloader_request(row_slot(row), cover_source(source, first, sizeof(first)), THUMB_SIZE);
 			row->thumb_requested = true;
@@ -530,6 +550,7 @@ static void window_update(void) {
 
 static void books_scroll_cb(lv_event_t *e) {
 	(void)e;
+	thumb_hold_until = lv_tick_get() + THUMB_HOLD_MS;
 	window_update();
 }
 
@@ -785,6 +806,9 @@ static void build_books_page(gui_config_t *cfg) {
 
 		row->icon = lv_image_create(row->button);
 		lv_obj_set_size(row->icon, THUMB_SIZE, THUMB_SIZE);
+		// Once, not per bind: a fling rebinds a row for every place the list
+		// crosses, and adding a style again is a remove and a re-add.
+		lv_obj_add_style(row->icon, &theme_style_icon, 0);
 		lv_image_set_inner_align(row->icon, LV_IMAGE_ALIGN_CENTER);
 
 		row->label = lv_label_create(row->button);

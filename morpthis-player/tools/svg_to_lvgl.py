@@ -99,7 +99,10 @@ ICONS = [
     # Placeholders that swap in for the music note in the same box: an AirPlay
     # sender and a DLNA renderer are not tracks.
     ("airplay-page-icon.svg", "airplay_page", 128),
-    ("dlna-page-icon.svg", "dlna_page", 128),
+    # The DLNA page's own glyph. 200 like the DAC, SonixLink and receiver page
+    # marks: it is drawn at the same size as those, so a 128 source would be
+    # stretched up on the wide panel and soft next to them.
+    ("dlna-page-icon.svg", "dlna_page", 200),
     # Status bar. The charging shell and its bolt are separate bitmaps so the
     # bolt can be yellow while the shell stays white.
     ("battery.svg", "battery", 38),

@@ -98,6 +98,23 @@ lv_obj_t *medialist_albums_screen;
 // two frames, which is what makes a cached screen look instant.
 #define THUMB_POLL_MS 40
 
+// How long after the last scroll step new artwork stays unasked for.
+//
+// A fling dirties the list forty-odd times a second, and each row that comes
+// up asks the worker for a jacket -- a database read and, on a folder the scan
+// has not reached yet, a decode. That runs on the same core as the frames the
+// finger is waiting for. Holding the requests back for the length of the
+// gesture leaves the fling the frames alone; the artwork follows as soon as
+// the list stops, and until then a row shows the glyph it already has.
+#define THUMB_HOLD_MS 150
+static uint32_t thumb_hold_until; // lv_tick_get(); no new requests before this
+
+static bool thumb_requests_held(void) {
+	// Signed difference, so the wrap of the tick counter does not read as
+	// "held for the next forty-nine days".
+	return (int32_t)(lv_tick_get() - thumb_hold_until) < 0;
+}
+
 // ---------------------------------------------------------------------------
 // The A-Z strip
 //
@@ -685,7 +702,6 @@ static const lv_image_dsc_t *glyph_for(const panel_t *p) {
 
 static void row_show_glyph(panel_t *p, row_t *row) {
 	lv_image_set_src(row->icon, glyph_for(p));
-	lv_obj_add_style(row->icon, &theme_style_icon, 0);
 	lv_obj_set_style_image_recolor_opa(row->icon, LV_OPA_COVER, 0);
 }
 
@@ -1558,6 +1574,11 @@ static void thumbs_update(panel_t *p) {
 		}
 
 		if (!row->thumb_requested) {
+			if (thumb_requests_held()) {
+				// Still moving: ask again once the list stops.
+				anything_pending = true;
+				continue;
+			}
 			coverloader_request(row_slot(p, row), source, THUMB_SIZE);
 			row->thumb_requested = true;
 			snprintf(row->thumb_path, sizeof(row->thumb_path), "%s", source);
@@ -2274,6 +2295,7 @@ static void index_build(panel_t *p, gui_config_t *cfg) {
 static void scroll_cb(lv_event_t *e) {
 	panel_t *p = lv_event_get_user_data(e);
 	p->saved_scroll = lv_obj_get_scroll_y(p->list);
+	thumb_hold_until = lv_tick_get() + THUMB_HOLD_MS;
 	index_flash(p);
 	window_update(p);
 }
@@ -3358,10 +3380,18 @@ static void build_panel(panel_t *p, gui_config_t *cfg, bool is_tracks, int slot_
 	// Full-width viewport with the rows inset by the padding, exactly like
 	// the browser: that puts the scrollbar out in the margin, beside the
 	// rows, instead of drawing it on top of them.
+	//
+	// Opaque, in the page's own colour, and that is a drawing optimisation and
+	// not a look: LVGL looks for the topmost object that covers a dirty area
+	// and redraws only that. A scroll dirties exactly this viewport, so with a
+	// background of its own the list is that object and the page behind it --
+	// which the rows cover completely -- is not filled again under every
+	// frame. Transparent, it was not, and every scroll repainted the page's
+	// background as well as the rows.
 	p->list = lv_obj_create(p->screen);
 	lv_obj_set_size(p->list, cfg->screen_width, cfg->screen_height - content_top);
 	lv_obj_align(p->list, LV_ALIGN_TOP_LEFT, 0, content_top);
-	lv_obj_set_style_bg_opa(p->list, 0, 0);
+	lv_obj_add_style(p->list, &theme_style_screen, 0);
 	lv_obj_set_style_border_width(p->list, 0, 0);
 	lv_obj_set_style_radius(p->list, 0, 0);
 	lv_obj_set_style_pad_hor(p->list, cfg->padding, 0);
@@ -3477,6 +3507,10 @@ static void build_panel(panel_t *p, gui_config_t *cfg, bool is_tracks, int slot_
 
 		row->icon = lv_image_create(row->button);
 		lv_obj_set_size(row->icon, THUMB_SIZE, THUMB_SIZE);
+		// The tint lives here for the life of the row, not per bind: adding a
+		// style again is a remove and a re-add with a full refresh, and a fling
+		// rebinds a row for every place the list crosses.
+		lv_obj_add_style(row->icon, &theme_style_icon, 0);
 		lv_image_set_inner_align(row->icon, LV_IMAGE_ALIGN_CENTER);
 
 		// The title, and under it the quality badge and the artist. A column

@@ -79,6 +79,18 @@
 // is decoded here, so this is just a polling rate.
 #define THUMB_TICK_PERIOD_MS 40
 
+// How long after the last scroll step new artwork stays unasked for. A fling
+// dirties the list forty-odd times a second, and every row that comes up asks
+// the worker for a jacket on the same core as the frames the finger is waiting
+// for. The requests go out as soon as the list stops; until then a row shows
+// the folder or file glyph it already has.
+#define THUMB_HOLD_MS 150
+static uint32_t thumb_hold_until; // lv_tick_get(); no new requests before this
+
+static bool thumb_requests_held(void) {
+	return (int32_t)(lv_tick_get() - thumb_hold_until) < 0;
+}
+
 // How many big audio files a folder's cue sheets may claim between them. One
 // sheet per album is the normal case; a handful covers a folder holding several
 // discs of one set.
@@ -291,7 +303,6 @@ static void row_show_glyph(row_t *row, bool is_dir) {
 	// Audio files get the note, not a generic sheet of paper -- everything a
 	// browser row can show besides a folder is playable anyway.
 	lv_image_set_src(row->icon, is_dir ? &icon_folder : &icon_music2);
-	lv_obj_add_style(row->icon, &theme_style_icon, 0);
 	// A folder wears the colour the palette gives this page -- the accent --
 	// so it reads as the thing that can be entered. The note keeps the shared
 	// icon colour. Rows are recycled between folders and files, so the local
@@ -452,6 +463,7 @@ static void window_update(void) {
 static void list_scroll_cb(lv_event_t *e) {
 	(void)e;
 
+	thumb_hold_until = lv_tick_get() + THUMB_HOLD_MS;
 	window_update();
 
 	if (thumb_timer) {
@@ -494,6 +506,11 @@ static void thumbs_update(void) {
 		}
 
 		if (!row->thumb_requested) {
+			if (thumb_requests_held()) {
+				// Still moving: ask again once the list stops.
+				busy = true;
+				continue;
+			}
 			char entry_path[sizeof(current_path) + 256 + 1];
 			snprintf(entry_path, sizeof(entry_path), "%s/%s", current_path, entry_file((size_t)row->index));
 
@@ -1530,6 +1547,10 @@ static void build_rows(int width) {
 
 		row->icon = lv_image_create(row->button);
 		lv_obj_set_size(row->icon, THUMB_SIZE, THUMB_SIZE);
+		// The tint lives here for the life of the row, not per bind: adding a
+		// style again is a remove and a re-add with a full refresh, and a fling
+		// rebinds a row for every place the list crosses.
+		lv_obj_add_style(row->icon, &theme_style_icon, 0);
 		lv_image_set_inner_align(row->icon, LV_IMAGE_ALIGN_CENTER);
 
 		row->label = lv_label_create(row->button);
@@ -1673,9 +1694,14 @@ void browser_init(gui_config_t *cfg) {
 
 	// The viewport. It scrolls; nothing inside it is laid out by LVGL, because
 	// the rows are positioned by hand from the scroll offset.
+	//
+	// Opaque in the page's colour: a scroll dirties this viewport and nothing
+	// else, and LVGL redraws the topmost object that covers a dirty area -- so
+	// the page's background behind the rows is not filled again on every
+	// frame of the scroll.
 	file_list = lv_obj_create(screen_container);
 	lv_obj_set_width(file_list, lv_pct(100));
-	lv_obj_set_style_bg_opa(file_list, 0, 0);
+	lv_obj_add_style(file_list, &theme_style_screen, 0);
 	lv_obj_set_style_border_width(file_list, 0, 0);
 	lv_obj_set_style_radius(file_list, 0, 0);
 	lv_obj_set_style_pad_hor(file_list, cfg->padding, 0);

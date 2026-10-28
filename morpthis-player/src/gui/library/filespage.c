@@ -1213,7 +1213,9 @@ void filespage_init(gui_config_t *cfg) {
 	file_list = lv_obj_create(filespage_screen);
 	lv_obj_set_size(file_list, lv_pct(100), cfg->screen_height - content_top);
 	lv_obj_align(file_list, LV_ALIGN_TOP_LEFT, 0, content_top);
-	lv_obj_set_style_bg_opa(file_list, 0, 0);
+	// Opaque in the page's colour, so a scroll repaints the rows and not the
+	// page behind them: see the note on the library list's viewport.
+	lv_obj_add_style(file_list, &theme_style_screen, 0);
 	lv_obj_set_style_border_width(file_list, 0, 0);
 	lv_obj_set_style_radius(file_list, 0, 0);
 	lv_obj_set_style_pad_hor(file_list, cfg->padding, 0);
@@ -1327,7 +1329,8 @@ void filespage_init(gui_config_t *cfg) {
 	pick_list = lv_obj_create(pick_layer);
 	lv_obj_set_size(pick_list, lv_pct(100), cfg->screen_height - content_top - 64 - 2 * cfg->padding);
 	lv_obj_align(pick_list, LV_ALIGN_TOP_LEFT, 0, content_top);
-	lv_obj_set_style_bg_opa(pick_list, 0, 0);
+	// Opaque in the page's colour, like the file list underneath it.
+	lv_obj_add_style(pick_list, &theme_style_screen, 0);
 	lv_obj_set_style_border_width(pick_list, 0, 0);
 	lv_obj_set_style_radius(pick_list, 0, 0);
 	lv_obj_set_style_pad_hor(pick_list, cfg->padding, 0);

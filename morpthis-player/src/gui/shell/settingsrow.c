@@ -162,7 +162,12 @@ lv_obj_t *settingsrow_page(lv_obj_t *screen, gui_config_t *cfg, const char *titl
 	lv_obj_t *container = lv_obj_create(screen);
 	lv_obj_set_size(container, lv_pct(100), cfg->screen_height - top);
 	lv_obj_align(container, LV_ALIGN_TOP_LEFT, 0, top);
-	lv_obj_set_style_bg_opa(container, 0, 0);
+	// Opaque in the page's colour. A scroll dirties this container and
+	// nothing else, and LVGL redraws the topmost object that covers a dirty
+	// area: with a background of its own the container is that object, and the
+	// page behind it -- which the rows cover -- is not filled again under
+	// every frame of the scroll.
+	lv_obj_add_style(container, &theme_style_screen, 0);
 	lv_obj_set_style_border_width(container, 0, 0);
 	lv_obj_set_style_radius(container, 0, 0);
 	lv_obj_set_style_pad_hor(container, cfg->padding, 0);

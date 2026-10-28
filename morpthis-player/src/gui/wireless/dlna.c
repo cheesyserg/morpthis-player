@@ -358,13 +358,24 @@ void dlna_page_init(gui_config_t *cfg) {
 
 	settingsrow_toggle(container, "dlna", &toggle, toggle_changed_cb);
 
+	// The same treatment as the DAC, receiver and SonixLink pages: the glyph
+	// belongs in the flow, at the size this panel can give it. An image
+	// positioned by alignment leaves the flow altogether -- the labels below
+	// were laid out as if it were not there and it sat over them.
+	const bool compact = cfg->screen_width < 320;
 	glyph = lv_image_create(container);
 	lv_image_set_src(glyph, &icon_dlna_page);
 	lv_obj_add_style(glyph, &theme_style_icon, 0);
 	lv_obj_set_style_image_opa(glyph, LV_OPA_40, 0);
-	lv_obj_set_style_margin_top(glyph, 40, 0);
+	int icon_size = compact ? 96 : 200;
+	int source_side = LV_MAX((int)icon_dlna_page.header.w, (int)icon_dlna_page.header.h);
+	lv_obj_set_size(glyph, icon_size, icon_size);
+	lv_image_set_inner_align(glyph, LV_IMAGE_ALIGN_CENTER);
+	if (source_side > 0) {
+		lv_image_set_scale(glyph, (uint32_t)(LV_SCALE_NONE * icon_size / source_side));
+	}
+	lv_obj_set_style_margin_top(glyph, compact ? 8 : 40, 0);
 	lv_obj_set_style_margin_bottom(glyph, 28, 0);
-	lv_obj_set_style_align(glyph, LV_ALIGN_CENTER, 0);
 
 	title_label = lv_label_create(container);
 	lv_obj_set_width(title_label, lv_pct(100));
