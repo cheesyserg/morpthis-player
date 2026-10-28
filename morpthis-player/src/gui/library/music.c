@@ -76,6 +76,10 @@ static void music_remove_edges(lv_obj_t *obj) {
 	lv_obj_set_style_border_width(obj, 0, 0);
 	lv_obj_set_style_outline_width(obj, 0, 0);
 	lv_obj_set_style_shadow_width(obj, 0, 0);
+	// A press on a partly visible row is the start of a scroll, not a request
+	// to focus that row and animate it into view. Button defaults would scroll
+	// it on LV_EVENT_FOCUSED, which reads as a jump before the drag begins.
+	lv_obj_set_scroll_on_focus(obj, false);
 }
 
 // The index tiles load their list from the database and then switch screen,
