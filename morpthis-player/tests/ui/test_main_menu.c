@@ -253,7 +253,7 @@ static void check_native_icon(lv_obj_t *icon, int tile, int size) {
 }
 
 static void check_native_assets(void) {
-	for (int tile = 0; tile < 6; tile++) {
+	for (int tile = 0; tile < 5; tile++) {
 		for (int size = 1; size <= 173; size++) {
 			const lv_image_dsc_t *glyph = main_menu_icon_native(tile, true, size);
 			const lv_image_dsc_t *color = main_menu_icon_native(tile, false, size);
@@ -274,7 +274,7 @@ static void check_native_assets(void) {
 		}
 	}
 	assert(!main_menu_icon_native(-1, true, 47));
-	assert(!main_menu_icon_native(6, false, 74));
+	assert(!main_menu_icon_native(5, false, 74));
 	assert(!main_menu_icon_native(0, true, -1));
 	assert(!main_menu_icon_native(0, true, 0));
 	assert(!main_menu_icon_native(0, false, 174));

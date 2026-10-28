@@ -80,6 +80,17 @@ void clock_format_hm(char *out, size_t out_size, int hour, int minute) {
 bool power_screen_is_on(void) { return screen_on; }
 void power_notify_activity(void) {}
 void power_pause_in_standby(lv_timer_t *timer) { (void)timer; }
+
+/* ---- the shell: the page the screensaver covers --------------------------- */
+
+// The real one hides the active screen while an opaque panel is over it. Here
+// the screensaver is the only panel and the test looks at the top layer, so
+// there is nothing to hide.
+void gui_cover_screen(unsigned reason, bool cover) {
+	(void)reason;
+	(void)cover;
+}
+void gui_cover_screen_follow(void) {}
 void screensaverpics_set_root(const char *card_root) { (void)card_root; }
 // The largest picture the screensaver last asked the folder for, and how many
 // times it has asked. The folder itself is tested on its own

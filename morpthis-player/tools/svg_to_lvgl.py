@@ -12,12 +12,12 @@ new one is added:
 
 Two kinds of icon come out of this:
 
-  * SVGs are emitted as ARGB8888 *white* shapes. The colour comes from LVGL at
-    draw time via `lv_obj_set_style_image_recolor()`, so the same bitmap serves
-    an active and an inactive button.
+  * Monochrome SVGs are emitted as A8 masks. The colour comes from LVGL at
+    draw time via `lv_obj_set_style_image_recolor()`, so the same mask serves
+    an active and an inactive button, and one byte per pixel is enough.
   * The main menu and section tiles keep their own colours, listed separately
     below with the ink each one is drawn in. They use the same source SVGs with
-    `currentColor` replaced by that ink before rasterising.
+    `currentColor` replaced by that ink before rasterising, and stay ARGB8888.
 """
 
 import io
@@ -397,21 +397,24 @@ COLOR_ICONS = [
 
 
 def render(svg_path, size):
-    """SVG -> list of BGRA bytes, forced to white so recolouring works.
+    """SVG -> A8 alpha mask so LVGL can tint it with image_recolor.
 
     `size` is a side in pixels for the square glyphs, or an explicit
-    (width, height) for the AirPods artwork, which is not square.
+    (width, height) for the AirPods artwork, which is not square. Rows are
+    padded to 4 bytes for the target's 32-bit mask blitter.
     """
     width, height = size if isinstance(size, tuple) else (size, size)
     png = cairosvg.svg2png(url=svg_path, output_width=width, output_height=height)
     img = Image.open(io.BytesIO(png)).convert("RGBA")
 
-    raw = img.tobytes()  # RGBA, 4 bytes per pixel
-    out = bytearray()
-    for i in range(0, len(raw), 4):
-        # LVGL's ARGB8888 is stored blue, green, red, alpha in memory.
-        out += bytes((255, 255, 255, raw[i + 3]))
-    return bytes(out), img.width, img.height
+    # What the rasteriser actually produced, not what was asked for: the
+    # descriptor is built from this, so a rounding difference would shear the
+    # mask.
+    width, height = img.size
+    alpha = img.getchannel("A").tobytes()
+    stride = (width + 3) & ~3
+    rows = [alpha[y * width:(y + 1) * width] + bytes(stride - width) for y in range(height)]
+    return b"".join(rows), width, height, stride, "A8"
 
 
 def render_color(path, size, color=None):
@@ -434,7 +437,7 @@ def render_color(path, size, color=None):
     for i in range(0, len(raw), 4):
         # LVGL's ARGB8888 is stored blue, green, red, alpha in memory.
         out += bytes((raw[i + 2], raw[i + 1], raw[i], raw[i + 3]))
-    return bytes(out), img.width, img.height
+    return bytes(out), img.width, img.height, img.width * 4, "ARGB8888"
 
 
 def c_array(data, per_line=12):
@@ -457,7 +460,7 @@ def main():
         if not os.path.exists(path):
             sys.exit("missing icon: %s" % path)
 
-        data, w, h = render_color(path, size, color) if keep_colour else render(path, size)
+        data, w, h, stride, fmt = render_color(path, size, color) if keep_colour else render(path, size)
 
         parts_c.append(
             "// %s, %dx%d\n"
@@ -465,7 +468,7 @@ def main():
             "const lv_image_dsc_t icon_%s = {\n"
             "\t.header = {\n"
             "\t\t.magic = LV_IMAGE_HEADER_MAGIC,\n"
-            "\t\t.cf = LV_COLOR_FORMAT_ARGB8888,\n"
+            "\t\t.cf = LV_COLOR_FORMAT_%s,\n"
             "\t\t.w = %d,\n"
             "\t\t.h = %d,\n"
             "\t\t.stride = %d,\n"
@@ -473,7 +476,7 @@ def main():
             "\t.data_size = sizeof(icon_%s_data),\n"
             "\t.data = icon_%s_data,\n"
             "};\n"
-            % (filename, w, h, name, c_array(data), name, w, h, w * 4, name, name)
+            % (filename, w, h, name, c_array(data), name, fmt, w, h, stride, name, name)
         )
         parts_h.append("extern const lv_image_dsc_t icon_%s;" % name)
 
@@ -482,8 +485,8 @@ def main():
         " * GENERATED FILE -- do not edit by hand.\n"
         " * Produced from the SVGs in assets/icons by tools/svg_to_lvgl.py.\n"
         " *\n"
-        " * White and coloured ARGB8888 bitmaps. The white ones are tinted with\n"
-        " * lv_obj_set_style_image_recolor().\n"
+        " * Monochrome icons are A8 masks, tinted with\n"
+        " * lv_obj_set_style_image_recolor(). Coloured art is ARGB8888.\n"
         " */\n\n"
     )
 

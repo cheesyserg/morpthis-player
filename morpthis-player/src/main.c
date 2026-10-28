@@ -1403,20 +1403,54 @@ uint32_t fb_flush_us_take(void) {
 	return value;
 }
 
+// Two pixels of a row, read and written as one word. `memcpy` rather than a
+// cast, because a run of pixels does not begin on a word boundary in general and
+// the compiler is free to assume that a uint32_t pointer does.
+static inline uint32_t load_pair(const uint16_t *p) {
+	uint32_t v;
+	memcpy(&v, p, sizeof(v));
+	return v;
+}
+
+static inline void store_pair(uint16_t *p, uint32_t v) { memcpy(p, &v, sizeof(v)); }
+
 // Copies one dirty rectangle into `dst` (a whole framebuffer page) rotated by
 // 180 degrees: the pixel at (x, y) lands at (W-1-x, H-1-y).
+//
+// This is the one piece of the player that runs over every pixel it shows, on
+// every frame, so it is written a word at a time: two pixels are read together,
+// their halves swapped, and written together. That is half the loads and half
+// the stores of the obvious loop, and the loop itself is half as long, which is
+// what decides how much of the frame budget a sliding page has left for the
+// page itself.
 static void blit_rotated_180(uint16_t *dst, const uint16_t *src, const lv_area_t *area, int32_t width,
 							 int32_t height) {
 	int32_t x1 = area->x1 < 0 ? 0 : area->x1;
 	int32_t y1 = area->y1 < 0 ? 0 : area->y1;
 	int32_t x2 = area->x2 >= width ? width - 1 : area->x2;
 	int32_t y2 = area->y2 >= height ? height - 1 : area->y2;
+	if (x1 > x2 || y1 > y2) {
+		return;
+	}
+
+	// The source run x1..x2 lands, reversed, at dest_x .. dest_x + run - 1.
+	int32_t run = x2 - x1 + 1;
+	int32_t dest_x = width - 1 - x2;
 
 	for (int32_t y = y1; y <= y2; y++) {
-		const uint16_t *src_row = src + (size_t)y * width;
-		uint16_t *dst_row = dst + (size_t)(height - 1 - y) * width;
-		for (int32_t x = x1; x <= x2; x++) {
-			dst_row[width - 1 - x] = src_row[x];
+		const uint16_t *src_row = src + (size_t)y * width + x1;
+		uint16_t *dst_row = dst + (size_t)(height - 1 - y) * width + dest_x;
+
+		int32_t i = 0;
+		for (; i + 1 < run; i += 2) {
+			uint32_t pair = load_pair(src_row + i);
+			// The first pixel of the pair belongs after the second once the row
+			// is turned, so the halves trade places on the way through.
+			store_pair(dst_row + (run - 2 - i), (pair >> 16) | (pair << 16));
+		}
+		if (i < run) {
+			// Odd run: the last source pixel is the first of the destination.
+			dst_row[0] = src_row[i];
 		}
 	}
 }

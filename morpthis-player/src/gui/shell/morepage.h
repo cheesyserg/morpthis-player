@@ -7,11 +7,10 @@
 
 // The More page: the door to everything that does not fit on the home screen.
 //
-// It holds the DAC, and whatever comes next
-// goes there too.
+// It holds the DAC, and whatever comes next goes there too.
 //
-// It is a section page like Music, Wireless and Streaming: same grid, same
-// tiles, same size.
+// It is a section page like Music and Wireless: same grid, same tiles, same
+// size.
 
 extern lv_obj_t *morepage_screen;
 

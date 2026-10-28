@@ -22,6 +22,31 @@ typedef struct {
 
 void gui_init(gui_config_t *cfg);
 
+// ---------------------------------------------------------------------------
+// Covering the page
+//
+// LVGL paints the active screen for every dirty area, and an opaque panel on
+// the top layer does not stop it: the panel is a different tree, drawn after
+// the screen. So while a full-screen panel is up -- the player sheet, the
+// screensaver -- every label that scrolls or slider that moves in the panel
+// also recomposites the page behind it, which nobody can see.
+//
+// Taking the page out of the drawing for as long as the panel is over it makes
+// those passes the panel's alone. A reason rather than a plain call, because
+// more than one panel can be up at once: the page goes back only when the last
+// reason is cleared.
+// ---------------------------------------------------------------------------
+#define GUI_COVER_PLAYER 0x1u
+#define GUI_COVER_SCREENSAVER 0x2u
+#define GUI_COVER_COVERFLOW 0x4u
+
+void gui_cover_screen(unsigned reason, bool cover);
+
+// Points the covered page at whatever screen is on show now. For a caller that
+// changes screens while a panel is up: the panel belongs to the top layer and
+// stays, the page it was covering does not.
+void gui_cover_screen_follow(void);
+
 // The bridge from any thread to the UI thread: `cb(user)` runs on the UI
 // thread within a few tens of milliseconds.
 //

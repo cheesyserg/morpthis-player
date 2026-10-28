@@ -13,6 +13,10 @@ static void spin_cb(void *obj, int32_t angle) { lv_image_set_rotation((lv_obj_t 
 lv_obj_t *spinner_create(lv_obj_t *parent, const lv_image_dsc_t *icon) {
 	lv_obj_t *img = lv_image_create(parent);
 	lv_image_set_src(img, icon);
+	// The whole point of the spinner is that it is redrawn every frame. A
+	// rotated bitmap at this size does not need bilinear filtering to read as
+	// a turning circle, and skipping it keeps the rotation cheap.
+	lv_image_set_antialias(img, false);
 	lv_obj_add_style(img, &theme_style_icon, 0);
 	lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER, 0);
 

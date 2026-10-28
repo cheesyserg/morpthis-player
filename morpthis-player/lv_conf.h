@@ -105,8 +105,15 @@
 #define LV_THEME_DEFAULT_GROW 0
 #define LV_THEME_DEFAULT_TRANSITION_TIME 0
 
-/* The QR code on the Tidal sign-in page, which carries a phone straight to
- * link.tidal.com with the code already filled in. */
+/* Keep the software drawer's corner masks warm. The interface uses the same
+ * small radii for every card, pill and slider knob, so the cache avoids
+ * rebuilding an anti-aliased corner mask on every repaint. The shadow cache is
+ * 32 x 32 bytes and the circle cache holds eight radii. */
+#define LV_DRAW_SW_SHADOW_CACHE_SIZE 32
+#define LV_DRAW_SW_CIRCLE_CACHE_SIZE 8
+
+/* The QR code an app can put on screen through the SDK (SDK_WIDGET_QRCODE):
+ * a sign-in code or an address, scanned off the panel by a phone. */
 #define LV_USE_QRCODE 1
 
 /* The widgets that are never built. LVGL turns most of them on by default and

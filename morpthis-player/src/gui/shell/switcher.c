@@ -184,6 +184,31 @@ static void back_underlay_destroy(void) {
 	}
 }
 
+// The iOS dimming, painted into the picture instead of over it.
+//
+// The underlay used to carry a black veil at thirty per cent over the whole
+// page. It is one alpha blend per pixel, and the page is under the finger for
+// the length of the drag: every frame of it paid for a screen-sized blend that
+// never changed. A copy of the snapshot already exists and nothing else reads
+// it, so the shadow goes into its pixels once, when the drag starts, and the
+// frame goes back to being two opaque blits.
+static void dim_snapshot(lv_draw_buf_t *buf) {
+	if (!buf || buf->header.cf != LV_COLOR_FORMAT_RGB565 || !buf->data) {
+		return;
+	}
+	const uint32_t mul = 180; // 0.70 in eighths: three levels off a five-bit channel
+	for (uint32_t y = 0; y < buf->header.h; y++) {
+		uint16_t *row = (uint16_t *)(void *)(buf->data + (size_t)y * buf->header.stride);
+		for (uint32_t x = 0; x < buf->header.w; x++) {
+			uint16_t p = row[x];
+			uint32_t r = (p >> 11) & 0x1F;
+			uint32_t g = (p >> 5) & 0x3F;
+			uint32_t b = p & 0x1F;
+			row[x] = (uint16_t)(((r * mul >> 8) << 11) | ((g * mul >> 8) << 5) | (b * mul >> 8));
+		}
+	}
+}
+
 // Builds what shows under the sliding page: a snapshot of the page the drag
 // goes back to. Inside a browser subfolder the "previous page" is the same
 // screen showing the parent folder -- that can't be rendered ahead of time,
@@ -226,6 +251,7 @@ static void back_underlay_build(void) {
 		target = main_menu_screen;
 	}
 
+	bool dimmed = false;
 	if (target) {
 		bool was_hidden = lv_obj_is_hidden(target);
 		if (was_hidden) {
@@ -236,6 +262,8 @@ static void back_underlay_build(void) {
 			lv_obj_set_hidden(target, true);
 		}
 		if (back_snapshot) {
+			dim_snapshot(back_snapshot);
+			dimmed = true;
 			lv_obj_t *img = lv_image_create(back_underlay);
 			lv_image_set_src(img, back_snapshot);
 			lv_obj_set_pos(img, 0, 0);
@@ -260,18 +288,27 @@ static void back_underlay_build(void) {
 			lv_obj_set_style_image_recolor(chevron, theme()->text_primary, 0);
 		}
 		lv_obj_set_style_image_recolor_opa(chevron, LV_OPA_COVER, 0);
+		if (dimmed) {
+			// The chevron sat under the veil with everything else, so keep it at
+			// the weight it had there. One 36 px glyph: the alpha blend is free.
+			lv_obj_set_style_image_opa(chevron, LV_OPA_70, 0);
+		}
 	}
 
-	// The iOS dimming: the parked page sits in shadow until it comes forward.
-	lv_obj_t *veil = lv_obj_create(back_underlay);
-	lv_obj_set_size(veil, lv_pct(100), lv_pct(100));
-	lv_obj_set_pos(veil, 0, 0);
-	lv_obj_set_style_bg_color(veil, lv_color_black(), 0);
-	lv_obj_set_style_bg_opa(veil, LV_OPA_30, 0);
-	lv_obj_set_style_border_width(veil, 0, 0);
-	lv_obj_set_style_radius(veil, 0, 0);
-	lv_obj_set_scrollable(veil, false);
-	lv_obj_set_clickable(veil, false);
+	if (!dimmed) {
+		// Nothing to paint the shadow into (no snapshot to show, or a page
+		// made of a plain panel): dim the panel the old way. It is a flat
+		// colour, so this is the one case where the veil costs nothing.
+		lv_obj_t *veil = lv_obj_create(back_underlay);
+		lv_obj_set_size(veil, lv_pct(100), lv_pct(100));
+		lv_obj_set_pos(veil, 0, 0);
+		lv_obj_set_style_bg_color(veil, lv_color_black(), 0);
+		lv_obj_set_style_bg_opa(veil, LV_OPA_30, 0);
+		lv_obj_set_style_border_width(veil, 0, 0);
+		lv_obj_set_style_radius(veil, 0, 0);
+		lv_obj_set_scrollable(veil, false);
+		lv_obj_set_clickable(veil, false);
+	}
 }
 
 static void back_anim_exec_cb(void *var, int32_t v) {
@@ -505,6 +542,10 @@ static void load_screen(lv_obj_t *target_screen) {
 	theme_notify_screen_shown(target_screen);
 
 	lv_screen_load(target_screen);
+
+	// A panel over the old page (the player sheet, the screensaver) is still
+	// over this one, so the page it was hiding follows the screen change.
+	gui_cover_screen_follow();
 }
 
 // Pages that have something to say before they will let go of the chevron.

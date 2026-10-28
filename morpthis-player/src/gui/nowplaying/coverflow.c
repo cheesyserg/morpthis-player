@@ -158,6 +158,13 @@
 // step over artwork is worth some eight to ten levels of alpha, so half of one
 // is enough to break a contour and little enough not to read as noise.
 #define CF_GLOW_DITHER 5
+// The glow is a soft falloff, so its map does not need a new width every frame:
+// an 8 px step is invisible in the blur and cuts the per-frame paint cost by
+// several times while a record turns.
+#define CF_GLOW_WIDTH_STEP 8
+// The faces are re-warped when their projected width changes. A 6 px step keeps
+// the turning edge smooth enough while cutting the warp work by about six.
+#define CF_TURN_WIDTH_STEP 6
 
 #define CF_GLOW_MAX_W (CF_MID_W - 2 * CF_GLOW_INSET + 2 * CF_GLOW_REACH)
 #define CF_GLOW_MAX_H CF_GLOW_MAX_W
@@ -218,6 +225,8 @@ static lv_obj_t *glow_obj;
 static lv_image_dsc_t glow_dsc;
 static uint8_t *glow_map; // the alpha map, always CF_GLOW_MAX_W wide whatever is drawn in it
 static int glow_map_w = -1, glow_map_h = -1; // the caster it was painted for
+static uint32_t glow_painted_tone = UINT32_MAX; // the recolour it was given
+static lv_opa_t glow_painted_opa = UINT8_MAX;   // and the strength it was drawn at
 // Filled in as the places are laid out: the record nearest the middle wins.
 static int32_t glow_best;
 static int glow_centre_x;
@@ -434,8 +443,9 @@ static void face_fill(uint16_t *face, lv_color_t colour) {
 	}
 }
 
-// Lays an ARGB8888 glyph (which is what every icon in this player is) over the
-// card, tinted, with its own alpha.
+// Lays an icon over the card, tinted, with its own alpha. The glyphs this
+// player uses are A8 masks, so the mask byte is the alpha; the ARGB form is
+// kept here too for any colour glyph a caller may hand in.
 //
 // Drawn at its own size, one pixel to one pixel. The glyph handed in must be
 // rasterised at the size it is drawn at (icon_album_big): enlarging a small
@@ -446,6 +456,7 @@ static void face_draw_glyph(uint16_t *face, const lv_image_dsc_t *glyph, lv_colo
 	if (gw <= 0 || gh <= 0 || gw > CF_MID_W || gh > CF_MID_W) {
 		return;
 	}
+	bool mask = glyph->header.cf == LV_COLOR_FORMAT_A8;
 	int ox = (CF_MID_W - gw) / 2;
 	int oy = (CF_MID_W - gh) / 2;
 	unsigned tr = tint.red, tg = tint.green, tb = tint.blue;
@@ -454,7 +465,7 @@ static void face_draw_glyph(uint16_t *face, const lv_image_dsc_t *glyph, lv_colo
 		const uint8_t *srow = glyph->data + (size_t)y * glyph->header.stride;
 		uint16_t *drow = face + (size_t)(oy + y) * CF_MID_W + ox;
 		for (int x = 0; x < gw; x++) {
-			unsigned a = srow[x * 4 + 3] * opa / 255;
+			unsigned a = (mask ? srow[x] : srow[x * 4 + 3]) * opa / 255;
 			if (!a) {
 				continue;
 			}
@@ -625,6 +636,13 @@ static void slot_turn(int i, int width) {
 	if (width > slot->warp_max_w) {
 		width = slot->warp_max_w;
 	}
+	// Quantise the turned width: the position still moves every frame, but a
+	// re-warp is only paid when the projected edge has moved far enough to see.
+	int quantised = ((width + CF_TURN_WIDTH_STEP / 2) / CF_TURN_WIDTH_STEP) * CF_TURN_WIDTH_STEP;
+	if (quantised > slot->warp_max_w) {
+		quantised = slot->warp_max_w;
+	}
+	width = quantised;
 	if (slot->warp_w == width) {
 		return;
 	}
@@ -859,13 +877,17 @@ static void glow_paint(int gw, int gh) {
 		qxs[x] = (off < 0 ? -off : off) - (hw - r);
 	}
 
-	for (int y = 0; y < h; y++) {
+	for (int y = 0; y < h; y += 2) {
 		int off = y - cy;
 		int qy = (off < 0 ? -off : off) - (hh - r);
 		uint8_t *row = glow_map + (size_t)y * CF_GLOW_MAX_W;
+		uint8_t *row_next = y + 1 < h ? row + CF_GLOW_MAX_W : NULL;
 		const uint8_t *dither = &bayer[(y & 3) * 4];
 
-		for (int x = 0; x < w; x++) {
+		// A soft 52 px falloff does not need a mask per pixel. A 2 x 2 block
+		// shares one value, which quarters the work while keeping the halo
+		// smooth; the dither is only there to break the ramp's banding.
+		for (int x = 0; x < w; x += 2) {
 			int qx = qxs[x];
 			int d;
 			if (qx > 0 && qy > 0) {
@@ -876,19 +898,27 @@ static void glow_paint(int gw, int gh) {
 			if (d < 0) {
 				d = 0;
 			}
-			if (d >= CF_GLOW_REACH) {
-				row[x] = 0;
-				continue;
+			uint8_t a = 0;
+			if (d < CF_GLOW_REACH) {
+				a = fall[d];
+				// Only where there is room to move it. At the very top and the very
+				// bottom of the ramp there is no band to break, and a dither there
+				// is just speckle in the dark or a flat patch made rough.
+				if (a > CF_GLOW_DITHER && a < 255 - CF_GLOW_DITHER) {
+					int moved = a + (dither[x & 3] - 8) * CF_GLOW_DITHER / 8;
+					a = (uint8_t)(moved < 0 ? 0 : (moved > 255 ? 255 : moved));
+				}
 			}
-
-			int a = fall[d];
-			// Only where there is room to move it. At the very top and the very
-			// bottom of the ramp there is no band to break, and a dither there
-			// is just speckle in the dark or a flat patch made rough.
-			if (a > CF_GLOW_DITHER && a < 255 - CF_GLOW_DITHER) {
-				a += (dither[x & 3] - 8) * CF_GLOW_DITHER / 8;
+			row[x] = a;
+			if (x + 1 < w) {
+				row[x + 1] = a;
+				if (row_next) {
+					row_next[x + 1] = a;
+				}
 			}
-			row[x] = (uint8_t)(a < 0 ? 0 : (a > 255 ? 255 : a));
+			if (row_next) {
+				row_next[x] = a;
+			}
 		}
 	}
 
@@ -937,6 +967,12 @@ static void place_glow(void) {
 	if (gh < CF_GLOW_MIN_H) {
 		gh = CF_GLOW_MIN_H;
 	}
+	// The halo is a slow falloff: an 8 px step in its caster is imperceptible
+	// and keeps the 80 KB alpha map off the per-frame path.
+	gw = ((gw + CF_GLOW_WIDTH_STEP / 2) / CF_GLOW_WIDTH_STEP) * CF_GLOW_WIDTH_STEP;
+	if (gw < CF_GLOW_MIN_H) {
+		gw = CF_GLOW_MIN_H;
+	}
 
 	// The map is repainted only when the caster's shape changes, which during a
 	// drag is once a frame and while the row is still is never.
@@ -951,11 +987,19 @@ static void place_glow(void) {
 	lv_obj_set_hidden(glow_obj, false);
 	lv_obj_set_pos(glow_obj, glow_centre_x - source_w / 2, mid_y - source_h / 2);
 	// The colour is the image's recolour, which is what lets one alpha map serve
-	// every album.
-	lv_obj_set_style_image_recolor(glow_obj, lv_color_hex(glow_tone ? glow_tone : lv_color_to_u32(theme()->accent)),
-								   0);
-	lv_obj_set_style_image_recolor_opa(glow_obj, LV_OPA_COVER, 0);
-	lv_obj_set_style_image_opa(glow_obj, (lv_opa_t)opa, 0);
+	// every album. Written only when it changes: a style write invalidates the
+	// object, and this runs again for every frame of a drag and for every pass
+	// that merely re-reads the row.
+	uint32_t tone = glow_tone ? glow_tone : lv_color_to_u32(theme()->accent);
+	if (tone != glow_painted_tone) {
+		glow_painted_tone = tone;
+		lv_obj_set_style_image_recolor(glow_obj, lv_color_hex(tone), 0);
+		lv_obj_set_style_image_recolor_opa(glow_obj, LV_OPA_COVER, 0);
+	}
+	if ((lv_opa_t)opa != glow_painted_opa) {
+		glow_painted_opa = (lv_opa_t)opa;
+		lv_obj_set_style_image_opa(glow_obj, (lv_opa_t)opa, 0);
+	}
 }
 
 static void relayout(void) {
@@ -1489,6 +1533,10 @@ static void sheet_park(void) {
 	sheet_open = false;
 	lv_obj_set_y(sheet, sheet_h);
 	lv_obj_set_hidden(sheet, true);
+	// The page comes back with the sheet gone. Also the way out when a track is
+	// picked from the back of the record and the player opens over it: the
+	// player covers the page again in the same pass.
+	gui_cover_screen(GUI_COVER_COVERFLOW, false);
 	if (!sheet_ready) {
 		return;
 	}
@@ -1514,15 +1562,26 @@ static void sheet_parked_cb(lv_anim_t *a) {
 	(void)a;
 	if (!sheet_open) {
 		sheet_park();
+	} else {
+		// Parked at the top: the whole screen is this sheet, so the page under
+		// it can stop being drawn. A drag of the crate then only repaints the
+		// records that actually moved.
+		gui_cover_screen(GUI_COVER_COVERFLOW, true);
 	}
 }
 
 static void sheet_slide_to(int y, bool animate) {
 	lv_anim_delete(sheet, sheet_anim_y_cb);
+	if (y == sheet_h) {
+		// Leaving: the page shows under the sheet from the first pixel it moves.
+		gui_cover_screen(GUI_COVER_COVERFLOW, false);
+	}
 	if (!animate) {
 		lv_obj_set_y(sheet, y);
 		if (!sheet_open) {
 			sheet_park();
+		} else if (y == 0) {
+			gui_cover_screen(GUI_COVER_COVERFLOW, true);
 		}
 		return;
 	}
@@ -1564,6 +1623,10 @@ static void sheet_drag_update(int dy) {
 	}
 	if (y > sheet_h) {
 		y = sheet_h;
+	}
+	if (sheet_open && y > 0) {
+		// Dragged off the top: the page is looked at again.
+		gui_cover_screen(GUI_COVER_COVERFLOW, false);
 	}
 	lv_obj_set_y(sheet, y);
 }
@@ -1983,6 +2046,11 @@ void coverflow_init(gui_config_t *cfg) {
 		slot->index = -1;
 		slot->warp_w = -1;
 		slot->image = lv_image_create(viewport);
+		// The row is transformed every frame while it is dragged. Software
+		// bilinear filtering of six RGB565 faces is the most expensive part of
+		// that frame, and the pictures are already pre-warped: nearest-neighbour
+		// keeps the motion responsive without visibly changing the artwork.
+		lv_image_set_antialias(slot->image, false);
 		lv_obj_set_event_bubble(slot->image, true);
 		lv_obj_set_hidden(slot->image, true);
 	}

@@ -3084,6 +3084,108 @@ static void wave_paint(int played_px) {
 	lv_obj_invalidate(wave_canvas);
 }
 
+// Repaints only the columns whose played/unplayed ink changed. Dragging the
+// waveform asks for a new playhead on every touch event, and a full 80 KB
+// clear plus every bar each time is what made that drag feel heavy. The
+// columns are independent -- each one is either before or after the playhead
+// -- so only the span between the old and new playhead has to be redrawn.
+static void wave_paint_delta(int from_px, int to_px) {
+	if (!wave_buf || !wave_canvas || wave_w <= 0) {
+		return;
+	}
+	if (from_px < 0 || from_px > wave_w || to_px < 0 || to_px > wave_w) {
+		wave_paint(to_px);
+		return;
+	}
+
+	int w = wave_w;
+	int h = wave_h;
+	int x1 = from_px < to_px ? from_px : to_px;
+	int x2 = from_px < to_px ? to_px : from_px;
+	if (x1 == x2) {
+		return;
+	}
+	// A seek or a fast drag across a large part of the strip is cheaper as one
+	// full pass than as a column-by-column walk with a new invalidation each.
+	if (x2 - x1 > w / 3) {
+		wave_paint(to_px);
+		return;
+	}
+
+	uint16_t *colour = (uint16_t *)wave_buf;
+	uint8_t *alpha = wave_buf + (size_t)w * h * 2;
+	lv_color_t tint = cover_tint && album_tone ? cover_mark() : alt_mark();
+	uint16_t packed = (uint16_t)(((tint.red & 0xF8) << 8) | ((tint.green & 0xFC) << 3) | (tint.blue >> 3));
+
+	// Clear only the changed columns first. The gaps between bars stay clear,
+	// and a column's alpha is wholly rewritten below when it is inside one.
+	for (int x = x1; x < x2; x++) {
+		for (int y = 0; y < h; y++) {
+			alpha[(size_t)y * w + x] = 0;
+		}
+	}
+
+	int bar_w, left;
+	wave_geometry(&bar_w, &left);
+	int solid = bar_w - WAVE_BAR_GAP;
+	if (solid < 1) {
+		solid = 1;
+	}
+	int middle = h / 2;
+	int reach = h / 2 - 1 - solid / 2;
+	if (reach < WAVE_MIN_BAR) {
+		reach = WAVE_MIN_BAR;
+	}
+
+	int first_bar = (x1 - left) / bar_w;
+	if (first_bar < 0) {
+		first_bar = 0;
+	}
+	int last_bar = (x2 - 1 - left) / bar_w;
+	if (last_bar >= WAVEFORM_BARS) {
+		last_bar = WAVEFORM_BARS - 1;
+	}
+
+	for (int i = first_bar; i <= last_bar; i++) {
+		int value = wave_have ? wave_bars[i] : 0;
+		int half = value * reach / 255;
+		if (half < WAVE_MIN_BAR) {
+			half = WAVE_MIN_BAR;
+		}
+		int x0 = left + i * bar_w;
+		int dx_first = x1 > x0 ? x1 - x0 : 0;
+		int dx_last = (x2 < x0 + solid ? x2 : x0 + solid) - x0;
+		for (int dx = dx_first; dx < dx_last; dx++) {
+			int x = x0 + dx;
+			if (x < 0 || x >= w) {
+				continue;
+			}
+			uint8_t opa = x < to_px ? WAVE_PAST_OPA : WAVE_TODO_OPA;
+			int d2 = 2 * dx - (solid - 1);
+			int cap = (solid - (int)utils_isqrt32((uint32_t)(solid * solid - d2 * d2))) / 2;
+			for (int y = middle - half + cap; y <= middle + half - cap; y++) {
+				if (y < 0 || y >= h) {
+					continue;
+				}
+				size_t at = (size_t)y * w + x;
+				colour[at] = packed;
+				alpha[at] = opa;
+			}
+		}
+	}
+
+	// Invalidation takes screen coordinates, not the canvas's own: the columns
+	// have to be placed where the canvas actually is, or the wrong strip of the
+	// page is redrawn and the waveform never updates at all.
+	lv_area_t canvas;
+	lv_obj_get_coords(wave_canvas, &canvas);
+	lv_area_t dirty = {.x1 = canvas.x1 + x1,
+					   .y1 = canvas.y1,
+					   .x2 = canvas.x1 + x2 - 1,
+					   .y2 = canvas.y1 + h - 1};
+	lv_obj_invalidate_area(wave_canvas, &dirty);
+}
+
 // Moves the played part of the shape to `seconds`, if that has moved it at all.
 //
 // The guard is what keeps this cheap enough to call at fifteen frames a second:
@@ -3097,8 +3199,13 @@ static void wave_preview(double seconds) {
 	if (px == wave_drawn) {
 		return;
 	}
+	int old = wave_drawn;
 	wave_drawn = px;
-	wave_paint(px);
+	if (old < 0) {
+		wave_paint(px);
+	} else {
+		wave_paint_delta(old, px);
+	}
 }
 
 // Asks for this track's shape and repaints when either the shape or the
@@ -3110,6 +3217,8 @@ static void wave_refresh(const char *path, double position) {
 	}
 
 	bool had = wave_have;
+	uint8_t previous[WAVEFORM_BARS];
+	memcpy(previous, wave_bars, sizeof(previous));
 	if (path && path[0]) {
 		wave_have = waveform_get(path, wave_bars);
 	} else {
@@ -3118,12 +3227,19 @@ static void wave_refresh(const char *path, double position) {
 
 	int px = wave_played_px(position);
 	uint32_t tone = album_tone;
-	if (px == wave_drawn && wave_have == had && tone == wave_drawn_tone) {
+	bool shape_changed = wave_have != had || tone != wave_drawn_tone ||
+						 memcmp(previous, wave_bars, sizeof(previous)) != 0;
+	if (px == wave_drawn && !shape_changed) {
 		return;
 	}
+	int old = wave_drawn;
 	wave_drawn = px;
 	wave_drawn_tone = tone;
-	wave_paint(px);
+	if (shape_changed || old < 0) {
+		wave_paint(px);
+	} else {
+		wave_paint_delta(old, px);
+	}
 }
 
 // Takes the picture, and everything on the page made from it, down now.
@@ -4363,6 +4479,21 @@ static int sheet_width;
 static lv_obj_t *sheet_under; // the page the sheet first slid over
 static uint32_t sheet_slide_started; // lv_tick_get() when the current slide began
 
+// The page taken out of the drawing while the sheet is over it.
+//
+// An opaque panel on the top layer does not stop LVGL drawing the page under
+// it: the page is a different tree, and the top layer is painted after it. So
+// with the sheet fully open, every progress tick or waveform column the player
+// repaints also recomposited the library rows behind it.
+//
+// gui_cover_screen() owns the hiding, because the screensaver covers the page
+// the same way and the two must not uncover it from under each other. It goes
+// back exactly where it was before the sheet moves again: the close reveals it
+// first, so the first frame of the slide already has it underneath.
+static void sheet_reveal_page(void) { gui_cover_screen(GUI_COVER_PLAYER, false); }
+
+static void sheet_cover_page(void) { gui_cover_screen(GUI_COVER_PLAYER, true); }
+
 // How many frames the slide actually got, and where its last one put the page.
 //
 // LVGL steps an animation once per rendered frame and works the value out from
@@ -4408,10 +4539,15 @@ static void sheet_arrived_cb(lv_anim_t *a) {
 	uint32_t took = (uint32_t)(lv_tick_get() - sheet_slide_started);
 	if (!sheet_open) {
 		lv_obj_set_hidden(player_screen, true);
+		sheet_reveal_page();
 		// Whatever page the close landed on, the chevron's visibility is settled
 		// once more now that the last animation frame has run -- the fix for the
 		// chevron flashing on the main menu for a frame on the way back to it.
 		back_btn_sync_visibility();
+	} else {
+		// Landed open and fully covering the page: from here on it is the only
+		// thing on screen, so the page underneath has nothing to contribute.
+		sheet_cover_page();
 	}
 	sheet_travelling = false;
 	// Whatever was held for the duration of the slide has a pass of its own
@@ -4513,6 +4649,10 @@ static void sheet_open_run(bool animate) {
 	topbar_set_hidden(true);
 
 	sheet_move_to(0, animate);
+	if (!animate) {
+		// No slide to land from: the page is covered from this pass on.
+		sheet_cover_page();
+	}
 
 	// What the open costs before anything is drawn. The pass this lands in
 	// always looks expensive and never says why; this splits off the part that
@@ -4529,6 +4669,9 @@ void player_sheet_open(void) { sheet_open_run(false); }
 static void sheet_close_run(bool animate) {
 	bool was_open = sheet_open;
 	sheet_open = false;
+	// The page has to be back in the drawing before the sheet moves off it:
+	// the slide is exactly the frames in which it becomes visible again.
+	sheet_reveal_page();
 	back_btn_player_mode(false);
 	lyrics_screen_hold_update();
 	topbar_set_hidden(false);
@@ -4630,6 +4773,11 @@ static void sheet_drag_cb(lv_event_t *e) {
 				return;
 			}
 			drag_committed = true;
+			if (!opening) {
+				// A close that started on the sheet: the page it was hiding comes
+				// back before the first pixel of it shows.
+				sheet_reveal_page();
+			}
 		}
 
 		sheet_move_to(drag_origin_x + dx, false);

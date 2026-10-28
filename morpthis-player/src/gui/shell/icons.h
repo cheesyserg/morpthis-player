@@ -2,8 +2,8 @@
  * GENERATED FILE -- do not edit by hand.
  * Produced from the SVGs in assets/icons by tools/svg_to_lvgl.py.
  *
- * White and coloured ARGB8888 bitmaps. The white ones are tinted with
- * lv_obj_set_style_image_recolor().
+ * Monochrome icons are A8 masks, tinted with
+ * lv_obj_set_style_image_recolor(). Coloured art is ARGB8888.
  */
 
 #ifndef ICONS_H

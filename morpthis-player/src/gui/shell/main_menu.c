@@ -41,6 +41,11 @@ static lv_timer_t *mini_player_timer;
 static gui_config_t *menu_cfg;
 static void main_menu_refresh_tiles(void);
 
+// Set when the footer is laid out again: the halo is placed against the icon's
+// laid-out box, so a reflow has to put it back even if the glyph has not
+// changed. Cleared by the next read of the strip.
+static bool mini_icon_reflowed;
+
 // lv_btn supplies state-specific focus and shadow styles. Those do not inherit
 // the zero-width default style below, and on the compact footer their bottom
 // edge is visible as the unwanted grey/cyan bar. Keep the footer flat in every
@@ -243,12 +248,23 @@ static void main_menu_layout_morpthis_home(bool force) {
 	int bottom = (int)menu_cfg->padding + footer_height + 1;
 	int top = (int)menu_cfg->top_bar_height + HOME_HEADER_HEIGHT;
 	gridpage_set_layout(menu_grid, menu_cfg, top, bottom, menu_cfg->padding, 6, 2, 3);
+	mini_icon_reflowed = true;
 	main_menu_refresh_tiles();
 }
 
 // The mini-player shows the live title and artist only. LVGL owns its label
 // text after lv_label_set_text(), so the metadata may safely come from this
 // local state snapshot; one-line dot mode clips long text without overlap.
+//
+// The strip is read once a second whether anything moved or not, so the glyph
+// is only written when it really changes. Setting the same source again
+// invalidates the icon, resizes it and re-aligns the halo around it, and that
+// relayout is a repaint of the footer of a page that is otherwise standing
+// still.
+static const lv_image_dsc_t *mini_icon_shown;
+static lv_color_t mini_icon_colour;
+static bool mini_icon_state_known;
+
 static void main_menu_refresh_now_playing(void) {
 	if (!mini_player || !menu_cfg) {
 		return;
@@ -260,11 +276,11 @@ static void main_menu_refresh_now_playing(void) {
 	bool loaded = state.current_file[0] != '\0';
 	const char *title = NULL;
 	const char *artist = "";
+	const lv_image_dsc_t *glyph = &icon_music2;
+	lv_color_t glyph_colour = theme()->text_secondary;
 
 	if (!loaded) {
 		title = tr("player_no_track_loaded");
-		lv_image_set_src(mini_player_icon, &icon_music2);
-		lv_obj_set_style_image_recolor(mini_player_icon, theme()->text_secondary, 0);
 	} else {
 		if (state.metadata.title[0]) {
 			title = state.metadata.title;
@@ -276,23 +292,31 @@ static void main_menu_refresh_now_playing(void) {
 			artist = state.metadata.artist;
 		}
 
-		lv_image_set_src(mini_player_icon,
-						 state.status == AUDIO_STATUS_PLAYING ? &icon_pause : &icon_play);
-		lv_obj_set_style_image_recolor(mini_player_icon, theme_semantic_color(THEME_SEMANTIC_CYAN), 0);
+		glyph = state.status == AUDIO_STATUS_PLAYING ? &icon_pause : &icon_play;
+		glyph_colour = theme_semantic_color(THEME_SEMANTIC_CYAN);
 	}
 
-	const lv_image_dsc_t *mini_source = lv_image_get_src(mini_player_icon);
-	fit_menu_icon(mini_player_icon, mini_source, 15);
-	lv_obj_set_style_image_recolor_opa(mini_player_icon, LV_OPA_COVER, 0);
-	if (mini_player_halo) {
-		lv_image_set_src(mini_player_halo, mini_source);
-		fit_menu_icon(mini_player_halo, mini_source, 21);
-		lv_obj_set_style_image_recolor(mini_player_halo, theme_semantic_color(THEME_SEMANTIC_CYAN), 0);
-		lv_obj_set_style_image_recolor_opa(mini_player_halo, LV_OPA_COVER, 0);
-		lv_obj_set_style_image_opa(mini_player_halo, LV_OPA_20, 0);
-		lv_obj_set_hidden(mini_player_halo, !loaded);
-		lv_obj_update_layout(mini_player);
-		lv_obj_align_to(mini_player_halo, mini_player_icon, LV_ALIGN_CENTER, 0, 0);
+	if (mini_icon_reflowed || !mini_icon_state_known || mini_icon_shown != glyph ||
+		!lv_color_eq(mini_icon_colour, glyph_colour)) {
+		mini_icon_state_known = true;
+		mini_icon_shown = glyph;
+		mini_icon_colour = glyph_colour;
+		mini_icon_reflowed = false;
+
+		lv_image_set_src(mini_player_icon, glyph);
+		fit_menu_icon(mini_player_icon, glyph, 15);
+		lv_obj_set_style_image_recolor(mini_player_icon, glyph_colour, 0);
+		lv_obj_set_style_image_recolor_opa(mini_player_icon, LV_OPA_COVER, 0);
+		if (mini_player_halo) {
+			lv_image_set_src(mini_player_halo, glyph);
+			fit_menu_icon(mini_player_halo, glyph, 21);
+			lv_obj_set_style_image_recolor(mini_player_halo, theme_semantic_color(THEME_SEMANTIC_CYAN), 0);
+			lv_obj_set_style_image_recolor_opa(mini_player_halo, LV_OPA_COVER, 0);
+			lv_obj_set_style_image_opa(mini_player_halo, LV_OPA_20, 0);
+			lv_obj_set_hidden(mini_player_halo, !loaded);
+			lv_obj_update_layout(mini_player);
+			lv_obj_align_to(mini_player_halo, mini_player_icon, LV_ALIGN_CENTER, 0, 0);
+		}
 	}
 	set_label_if_changed(mini_player_title, title ? title : "");
 	set_label_if_changed(mini_player_subtitle, artist);
@@ -384,7 +408,7 @@ void main_menu_init(gui_config_t *cfg) {
 	};
 
 	menu_grid = gridpage_build(main_menu_screen, cfg, entries, (int)(sizeof(entries) / sizeof(entries[0])), 2, 3, false);
-	// Music takes the width the removed Streaming tile used to occupy.
+	// Music takes the whole first row, above the four square tiles.
 	gridpage_set_wide_first(menu_grid, true);
 	// Cover Flow is a main-menu destination: pull up from the bottom edge,
 	// just as the music grid used to, without entering Music first.

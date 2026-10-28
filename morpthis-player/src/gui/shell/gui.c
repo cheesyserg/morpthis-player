@@ -185,6 +185,45 @@ bool gui_post(void (*cb)(void *), void *user) {
 	return queued;
 }
 
+// ---- covering the page ----------------------------------------------------
+//
+// See gui.h. The page is hidden while at least one reason is set, and the
+// caller's reason is remembered rather than the fact that it hid the page, so
+// two panels over the same page cannot uncover it from under each other.
+static unsigned cover_reasons;
+static lv_obj_t *covered_page;
+
+// Hides the page on show, or brings the covered one back when there is no
+// reason left to hide it. Called again whenever either answer may have moved.
+static void cover_reconcile(void) {
+	lv_obj_t *page = cover_reasons ? lv_screen_active() : NULL;
+	if (page == covered_page) {
+		return;
+	}
+	if (covered_page) {
+		lv_obj_set_hidden(covered_page, false);
+		covered_page = NULL;
+	}
+	// A page that is already hidden is somebody else's to bring back, so it is
+	// not recorded here.
+	if (!page || lv_obj_is_hidden(page)) {
+		return;
+	}
+	lv_obj_set_hidden(page, true);
+	covered_page = page;
+}
+
+void gui_cover_screen(unsigned reason, bool cover) {
+	if (cover) {
+		cover_reasons |= reason;
+	} else {
+		cover_reasons &= ~reason;
+	}
+	cover_reconcile();
+}
+
+void gui_cover_screen_follow(void) { cover_reconcile(); }
+
 static void post_drain_cb(lv_timer_t *timer) {
 	// Reading the eventfd clears its counter. It happens here rather than in the
 	// main loop so it also applies when the safety-net timer did the waking, and
