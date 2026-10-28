@@ -1030,6 +1030,35 @@ static void tune_kinetic_scroll(lv_indev_t *indev) {
 	lv_indev_set_scroll_limit(indev, SCROLL_START_LIMIT_PX);
 }
 
+// What one drag cost, reported when the finger lifts.
+//
+// A pass is one lv_timer_handler(). The flush on this panel costs a whole
+// refresh interval -- 16 to 17 ms in the log, which is the page flip waiting
+// for the panel -- so a pass that presents a frame cannot be shorter than that.
+// What matters is whether a scroll frame fits inside one interval: a frame that
+// misses the next refresh is shown one interval late, and while that keeps
+// happening the interface runs at half rate and the motion is felt as jumps
+// rather than as a low frame rate. One line per gesture, printed after the
+// finger is off the glass, so it never lands in the middle of one.
+static struct {
+	bool active;
+	lv_point_t press_at;
+	lv_point_t last_point;
+	uint32_t started;
+	uint32_t frames;
+	uint32_t moves;
+	uint32_t pass_sum;
+	uint32_t pass_max;
+	uint32_t flush_sum_us;
+	uint32_t flush_max_us;
+} drag_stats;
+
+// The pointer the stats above are gathered from (the touch panel on the
+// device, the mouse in the simulator). Read directly so a drag can be told
+// apart from a slow scroll: a position that changes every pass means the touch
+// stream is keeping up, one that changes every other pass does not.
+static lv_indev_t *tuned_pointer;
+
 // Kinetic scrolling and the tap guard, for the touch panel and the simulator mouse.
 // Speed the pointer reads up only while a press is active. The read timer is
 // what drains evdev, so the press has to raise the rate before the gesture can
@@ -1046,8 +1075,36 @@ static void pointer_pace_cb(lv_event_t *e) {
 	lv_event_code_t code = lv_event_get_code(e);
 	if (code == LV_EVENT_PRESSED) {
 		lv_timer_set_period(read_timer, POINTER_ACTIVE_READ_PERIOD_MS);
+		drag_stats.active = true;
+		lv_indev_get_point(indev, &drag_stats.press_at);
+		drag_stats.last_point = drag_stats.press_at;
+		drag_stats.started = lv_tick_get();
+		drag_stats.frames = 0;
+		drag_stats.moves = 0;
+		drag_stats.pass_sum = 0;
+		drag_stats.pass_max = 0;
+		drag_stats.flush_sum_us = 0;
+		drag_stats.flush_max_us = 0;
 	} else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
 		lv_timer_set_period(read_timer, POINTER_IDLE_READ_PERIOD_MS);
+		if (!drag_stats.active) {
+			return;
+		}
+		drag_stats.active = false;
+
+		// A tap redraws a button in its pressed state once or twice; only a
+		// gesture that actually travelled is worth a line.
+		lv_point_t p;
+		lv_indev_get_point(indev, &p);
+		int32_t dx = p.x - drag_stats.press_at.x;
+		int32_t dy = p.y - drag_stats.press_at.y;
+		if (dx * dx + dy * dy <= TAP_SLOP_PX * TAP_SLOP_PX || drag_stats.frames == 0) {
+			return;
+		}
+		fprintf(stderr, "ui: drag %u ms, %u frames, %u moves, pass avg %u max %u ms, flush avg %u max %u ms\n",
+				lv_tick_get() - drag_stats.started, drag_stats.frames, drag_stats.moves,
+				drag_stats.pass_sum / drag_stats.frames, drag_stats.pass_max,
+				drag_stats.flush_sum_us / drag_stats.frames / 1000, drag_stats.flush_max_us / 1000);
 	}
 }
 
@@ -1056,6 +1113,7 @@ static void tune_pointer(lv_indev_t *indev) {
 		return;
 	}
 	tune_kinetic_scroll(indev);
+	tuned_pointer = indev;
 	lv_timer_t *read_timer = lv_indev_get_read_timer(indev);
 	if (read_timer) {
 		lv_timer_set_period(read_timer, POINTER_IDLE_READ_PERIOD_MS);
@@ -2552,7 +2610,36 @@ int main(int argc, char **argv) {
 		uint32_t time_till_next = lv_timer_handler();
 		uint32_t pass_took = custom_tick_get() - pass_started;
 		// Read every pass so the total never carries over into the next one.
-		uint32_t flush_ms = fb_flush_us_take() / 1000;
+		uint32_t flush_us = fb_flush_us_take();
+		uint32_t flush_ms = flush_us / 1000;
+
+		// How often the finger's position actually arrives. A stream that
+		// reports at the frame rate updates on most passes; one that reports at
+		// half of it leaves passes with the same point twice, and a slow scroll
+		// then moves in steps however fast the display is.
+		if (drag_stats.active && tuned_pointer) {
+			lv_point_t p;
+			lv_indev_get_point(tuned_pointer, &p);
+			if (p.x != drag_stats.last_point.x || p.y != drag_stats.last_point.y) {
+				drag_stats.moves++;
+				drag_stats.last_point = p;
+			}
+		}
+
+		// A pass that presented a frame is a frame of the drag. Counted from the
+		// flush rather than from the pass time, because a pass can also be the
+		// input timer on its own and would then read as a frame that never was.
+		if (drag_stats.active && flush_us) {
+			drag_stats.frames++;
+			drag_stats.pass_sum += pass_took;
+			if (pass_took > drag_stats.pass_max) {
+				drag_stats.pass_max = pass_took;
+			}
+			drag_stats.flush_sum_us += flush_us;
+			if (flush_us > drag_stats.flush_max_us) {
+				drag_stats.flush_max_us = flush_us;
+			}
+		}
 
 		uint32_t serial = player_cover_serial();
 		if (serial != shown_serial) {
