@@ -98,23 +98,6 @@ lv_obj_t *medialist_albums_screen;
 // two frames, which is what makes a cached screen look instant.
 #define THUMB_POLL_MS 40
 
-// How long after the last scroll step new artwork stays unasked for.
-//
-// A fling dirties the list forty-odd times a second, and each row that comes
-// up asks the worker for a jacket -- a database read and, on a folder the scan
-// has not reached yet, a decode. That runs on the same core as the frames the
-// finger is waiting for. Holding the requests back for the length of the
-// gesture leaves the fling the frames alone; the artwork follows as soon as
-// the list stops, and until then a row shows the glyph it already has.
-#define THUMB_HOLD_MS 150
-static uint32_t thumb_hold_until; // lv_tick_get(); no new requests before this
-
-static bool thumb_requests_held(void) {
-	// Signed difference, so the wrap of the tick counter does not read as
-	// "held for the next forty-nine days".
-	return (int32_t)(lv_tick_get() - thumb_hold_until) < 0;
-}
-
 // ---------------------------------------------------------------------------
 // The A-Z strip
 //
@@ -1574,11 +1557,6 @@ static void thumbs_update(panel_t *p) {
 		}
 
 		if (!row->thumb_requested) {
-			if (thumb_requests_held()) {
-				// Still moving: ask again once the list stops.
-				anything_pending = true;
-				continue;
-			}
 			coverloader_request(row_slot(p, row), source, THUMB_SIZE);
 			row->thumb_requested = true;
 			snprintf(row->thumb_path, sizeof(row->thumb_path), "%s", source);
@@ -2295,7 +2273,6 @@ static void index_build(panel_t *p, gui_config_t *cfg) {
 static void scroll_cb(lv_event_t *e) {
 	panel_t *p = lv_event_get_user_data(e);
 	p->saved_scroll = lv_obj_get_scroll_y(p->list);
-	thumb_hold_until = lv_tick_get() + THUMB_HOLD_MS;
 	index_flash(p);
 	window_update(p);
 }

@@ -79,18 +79,6 @@
 // is decoded here, so this is just a polling rate.
 #define THUMB_TICK_PERIOD_MS 40
 
-// How long after the last scroll step new artwork stays unasked for. A fling
-// dirties the list forty-odd times a second, and every row that comes up asks
-// the worker for a jacket on the same core as the frames the finger is waiting
-// for. The requests go out as soon as the list stops; until then a row shows
-// the folder or file glyph it already has.
-#define THUMB_HOLD_MS 150
-static uint32_t thumb_hold_until; // lv_tick_get(); no new requests before this
-
-static bool thumb_requests_held(void) {
-	return (int32_t)(lv_tick_get() - thumb_hold_until) < 0;
-}
-
 // How many big audio files a folder's cue sheets may claim between them. One
 // sheet per album is the normal case; a handful covers a folder holding several
 // discs of one set.
@@ -463,7 +451,6 @@ static void window_update(void) {
 static void list_scroll_cb(lv_event_t *e) {
 	(void)e;
 
-	thumb_hold_until = lv_tick_get() + THUMB_HOLD_MS;
 	window_update();
 
 	if (thumb_timer) {
@@ -506,11 +493,6 @@ static void thumbs_update(void) {
 		}
 
 		if (!row->thumb_requested) {
-			if (thumb_requests_held()) {
-				// Still moving: ask again once the list stops.
-				busy = true;
-				continue;
-			}
 			char entry_path[sizeof(current_path) + 256 + 1];
 			snprintf(entry_path, sizeof(entry_path), "%s/%s", current_path, entry_file((size_t)row->index));
 

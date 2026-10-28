@@ -53,20 +53,6 @@ lv_obj_t *search_screen;
 // coverloader slot each, out of the page's COVERLOADER_SEARCH_COUNT.
 #define SEARCH_POOL 12
 
-// How long after the last scroll step new artwork stays unasked for. A fling
-// rebinds a row for every place the list crosses, and each row that comes up
-// would ask the worker for a jacket on the same core as the frames the finger
-// is waiting for. The requests go out as soon as the list stops; until then a
-// row shows the glyph it already has.
-#define SEARCH_THUMB_HOLD_MS 150
-static uint32_t thumb_hold_until; // lv_tick_get(); no new requests before this
-
-static bool thumb_requests_held(void) {
-	// Signed difference, so the wrap of the tick counter does not read as
-	// "held for the next forty-nine days".
-	return (int32_t)(lv_tick_get() - thumb_hold_until) < 0;
-}
-
 typedef enum {
 	CAT_TRACKS = 0,
 	CAT_ALBUMS,
@@ -183,11 +169,6 @@ static void thumbs_update(void) {
 
 		int slot = row_slot(row);
 		if (!row->requested) {
-			if (thumb_requests_held()) {
-				// Still moving: ask again once the list stops.
-				pending = true;
-				continue;
-			}
 			coverloader_request(slot, row->path, SEARCH_THUMB);
 			row->requested = true;
 		}
@@ -481,7 +462,6 @@ static void window_update(void) {
 
 static void scroll_cb(lv_event_t *e) {
 	(void)e;
-	thumb_hold_until = lv_tick_get() + SEARCH_THUMB_HOLD_MS;
 	window_update();
 }
 

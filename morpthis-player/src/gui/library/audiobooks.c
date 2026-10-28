@@ -250,20 +250,6 @@ static lv_obj_t *make_viewport(lv_obj_t *screen, gui_config_t *cfg, lv_obj_t **b
 
 #define THUMB_POLL_MS 150
 
-// How long after the last scroll step new artwork stays unasked for. A fling
-// rebinds a row for every place the list crosses, and each row that comes up
-// would ask the worker for a jacket on the same core as the frames the finger
-// is waiting for. The requests go out as soon as the list stops; until then a
-// row shows the book glyph it already has.
-#define THUMB_HOLD_MS 150
-static uint32_t thumb_hold_until; // lv_tick_get(); no new requests before this
-
-static bool thumb_requests_held(void) {
-	// Signed difference, so the wrap of the tick counter does not read as
-	// "held for the next forty-nine days".
-	return (int32_t)(lv_tick_get() - thumb_hold_until) < 0;
-}
-
 typedef struct {
 	char name[256];
 	char path[512];
@@ -451,11 +437,6 @@ static void thumbs_update(void) {
 		}
 
 		if (!row->thumb_requested) {
-			if (thumb_requests_held()) {
-				// Still moving: ask again once the list stops.
-				anything_pending = true;
-				continue;
-			}
 			char first[512];
 			coverloader_request(row_slot(row), cover_source(source, first, sizeof(first)), THUMB_SIZE);
 			row->thumb_requested = true;
@@ -550,7 +531,6 @@ static void window_update(void) {
 
 static void books_scroll_cb(lv_event_t *e) {
 	(void)e;
-	thumb_hold_until = lv_tick_get() + THUMB_HOLD_MS;
 	window_update();
 }
 
