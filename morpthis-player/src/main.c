@@ -1832,8 +1832,19 @@ static lv_display_t *try_panned_display(void) {
 	lv_display_set_flush_cb(disp, fb_pan_flush_cb);
 	fb_display = disp;
 
-	// The driver's own choice, read once: whether the flip waits for the panel
-	// or only queues the page.
+	// Ask the driver to queue the flip rather than wait for the panel. The wait
+	// is not removed, it is moved: the presenter does it, under the next frame,
+	// and it ends at a frame boundary instead of one whole frame after the call
+	// -- which is what keeps the cadence on the panel's 16.8 ms instead of
+	// drifting past it. Measured on this panel, a queued flip does not tear. If
+	// the attribute is not writable the driver's own setting stands, and the
+	// presenter waits for the call instead.
+	int sync_fd = open("/sys/module/soc_fb/parameters/pan_display_sync", O_WRONLY);
+	if (sync_fd >= 0) {
+		ssize_t wrote = write(sync_fd, "0\n", 2);
+		(void)wrote;
+		close(sync_fd);
+	}
 	fb_pan_waits = read_sysfs_int("/sys/module/soc_fb/parameters/pan_display_sync", 1) != 0;
 
 	if (pthread_create(&fb_presenter, NULL, fb_present_thread, NULL) != 0) {
