@@ -1601,7 +1601,21 @@ static void fb_pan_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *
 		// yoffset without forcing anything else.
 		fb_var.activate = FB_ACTIVATE_NOW;
 		fb_var.yoffset = (uint32_t)target * fb_var.yres;
-		if (ioctl(fb_fd, FBIOPAN_DISPLAY, &fb_var) < 0) {
+		uint64_t pan_started = now_us();
+		int panned = ioctl(fb_fd, FBIOPAN_DISPLAY, &fb_var);
+		// Said twice, because it decides what the rest of the frame budget can be:
+		// a pan that waits for the panel costs a whole refresh interval, and the
+		// drawing then happens on top of it instead of under it. Measured here
+		// rather than inferred from the flush total, which also carries the
+		// rotated copy when that is on. The first flip can be the slow one (the
+		// panel has just been mode-set), so the thirty-first says what it settled
+		// at.
+		static uint32_t pan_seen;
+		pan_seen++;
+		if (pan_seen == 1 || pan_seen == 31) {
+			printf("fb: page flip #%u took %llu us\n", pan_seen, (unsigned long long)(now_us() - pan_started));
+		}
+		if (panned < 0) {
 			// One warning, not one per frame.
 			static bool warned;
 			if (!warned) {
@@ -1895,6 +1909,7 @@ void display_set_rotated(bool rotated) {
 		lv_display_set_3rd_draw_buffer(fb_display, NULL);
 		lv_display_set_buffers(fb_display, rot_page, NULL, (uint32_t)fb_page_size, LV_DISPLAY_RENDER_MODE_DIRECT);
 		fb_rotated = true;
+		printf("fb: screen turned 180 degrees, drawing through a RAM page\n");
 	} else {
 		lv_display_set_buffers(fb_display, fb_mem, fb_mem + fb_page_size, (uint32_t)fb_page_size,
 							   LV_DISPLAY_RENDER_MODE_DIRECT);
