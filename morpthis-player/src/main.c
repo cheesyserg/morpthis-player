@@ -1892,10 +1892,64 @@ static void fb_stage_publish(const uint8_t *px) {
 	}
 }
 
-// The last area of a frame. The drawing is already in the RAM page; this
-// takes a snapshot of what changed and returns. It does not wait for the panel
-// and it does not touch a framebuffer page, so touch input and the next frame
-// keep running while the presenter waits for vsync.
+// The queued-flip path: one frame, copied straight into the page the panel is
+// not showing and panned in the flush itself.  There is no staging page and no
+// presenter thread: with the driver's synchronous pan off, FBIOPAN_DISPLAY
+// returns as soon as the address is taken, so the copy the flush would have
+// made into a stage can be made into the framebuffer page instead.  The panel
+// latches the queued page at its own boundary, and the next flush is one
+// display refresh later, on the far side of it.
+static void fb_present_direct(const uint8_t *px) {
+	uint64_t started = now_us();
+	pthread_mutex_lock(&fb_lock);
+
+	int target = fb_shown ? 0 : 1;
+	lv_area_t redraw;
+	if (fb_resync) {
+		area_set_full(&redraw);
+		// The other page has not seen this geometry either.
+		area_set_full(&page_owed[target ? 0 : 1]);
+		fb_resync = false;
+	} else {
+		redraw = page_owed[target];
+		area_merge(&redraw, &frame_dirty);
+	}
+
+	if (!area_is_empty(&redraw)) {
+		blit_page((uint16_t *)(fb_mem + (size_t)target * fb_page_size), (const uint16_t *)px, &redraw,
+				  (int32_t)fb_var.xres, (int32_t)fb_var.yres, fb_rotated);
+	}
+
+	fb_var.activate = FB_ACTIVATE_NOW;
+	fb_var.yoffset = (uint32_t)target * fb_var.yres;
+	int flipped = ioctl(fb_fd, FBIOPAN_DISPLAY, &fb_var);
+	if (flipped == 0) {
+		fb_shown = target;
+		presented_frames++;
+		area_clear(&page_owed[target]);
+		area_merge(&page_owed[target ? 0 : 1], &frame_dirty);
+	} else {
+		static bool warned;
+		if (!warned) {
+			perror("fb: FBIOPAN_DISPLAY");
+			warned = true;
+		}
+		fb_resync_locked();
+	}
+
+	static uint32_t seen;
+	seen++;
+	if (seen == 1 || seen == 31) {
+		printf("fb: direct flip #%u took %llu us\n", seen, (unsigned long long)(now_us() - started));
+	}
+
+	pthread_mutex_unlock(&fb_lock);
+}
+
+// The last area of a frame.  The drawing is already in the RAM page; this
+// presents it and returns.  Queued mode copies the damaged rectangle straight
+// into the back framebuffer page and pans there; synchronous mode snapshots it
+// for the presenter thread.  Neither waits for the panel on the drawing thread.
 static void fb_pan_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px) {
 	uint64_t flush_started = now_us();
 
@@ -1906,7 +1960,9 @@ static void fb_pan_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *
 		return;
 	}
 
-	if (fb_presenter_started) {
+	if (!fb_pan_waits) {
+		fb_present_direct(px);
+	} else if (fb_presenter_started) {
 		fb_stage_publish(px);
 	} else {
 		// No presenter: whichever page is written next has to carry this frame.
@@ -2008,16 +2064,42 @@ static lv_display_t *try_panned_display(void) {
 	}
 	memset(draw_page, 0, fb_page_size);
 
-	// Two snapshots, so the drawing thread can prepare the next frame while
-	// the presenter is waiting for the panel to take the current one.
+	// The panel latches a queued pan at the next frame boundary; the queueing
+	// mode is what makes the direct flush below possible.  The module parameter
+	// is global, so the player sets it to match the config on every start rather
+	// than leaving whatever the last process or the boot default put there.
+	// [display] pan_sync = 1 asks for the driver's synchronous call back, which
+	// blocks for a panel interval and needs the staging pages and presenter.
+	const char *sync_path = "/sys/module/soc_fb/parameters/pan_display_sync";
+	int want_sync = config_get_int("display", "pan_sync", 0) != 0;
+	int sync_fd = open(sync_path, O_WRONLY);
+	if (sync_fd >= 0) {
+		char sync[4];
+		int len = snprintf(sync, sizeof(sync), "%d\n", want_sync ? 1 : 0);
+		if (len > 0 && write(sync_fd, sync, (size_t)len) < 0) {
+			perror("fb: pan_display_sync");
+		}
+		close(sync_fd);
+	}
+	// If the parameter cannot be read at all, assume the driver waits: the
+	// presenter path is the one that works with either behaviour, and queued
+	// paging without the module is not something to guess at.
+	fb_pan_waits = read_sysfs_int(sync_path, 1) != 0;
+
+	// Staging pages exist only for the synchronous mode: there the presenter
+	// waits for the panel, and the drawing thread needs somewhere to put the
+	// next frame meanwhile.  Queued mode copies straight into the back page in
+	// the flush and needs none of them.
 	bool stages_ok = true;
-	for (int i = 0; i < FB_STAGE_COUNT; i++) {
-		fb_stages[i].buf = malloc(fb_page_size);
-		fb_stages[i].state = FB_STAGE_FREE;
-		area_clear(&fb_stages[i].rect);
-		if (!fb_stages[i].buf) {
-			stages_ok = false;
-			break;
+	if (fb_pan_waits) {
+		for (int i = 0; i < FB_STAGE_COUNT; i++) {
+			fb_stages[i].buf = malloc(fb_page_size);
+			fb_stages[i].state = FB_STAGE_FREE;
+			area_clear(&fb_stages[i].rect);
+			if (!fb_stages[i].buf) {
+				stages_ok = false;
+				break;
+			}
 		}
 	}
 	if (!stages_ok) {
@@ -2064,48 +2146,37 @@ static lv_display_t *try_panned_display(void) {
 	lv_display_set_flush_cb(disp, fb_pan_flush_cb);
 	fb_display = disp;
 
-	// The panel latches a queued pan at the next frame boundary and the presenter
-	// does not wait for it; see fb_present_thread().  Measured on this device
-	// that is smoother than making FBIOPAN_DISPLAY block: the synchronous call
-	// costs a full panel interval, and one flip per interval empties the staging
-	// pool and stalls the drawing thread.  The module parameter is global, so the
-	// player sets it to match the config on every start rather than leaving
-	// whatever the last process or the boot default put there.  [display]
-	// pan_sync = 1 asks for the synchronous call back.
-	const char *sync_path = "/sys/module/soc_fb/parameters/pan_display_sync";
-	int want_sync = config_get_int("display", "pan_sync", 0) != 0;
-	int sync_fd = open(sync_path, O_WRONLY);
-	if (sync_fd >= 0) {
-		char sync[4];
-		int len = snprintf(sync, sizeof(sync), "%d\n", want_sync ? 1 : 0);
-		if (len > 0 && write(sync_fd, sync, (size_t)len) < 0) {
-			perror("fb: pan_display_sync");
-		}
-		close(sync_fd);
-	}
-	fb_pan_waits = read_sysfs_int(sync_path, want_sync ? 1 : 0) != 0;
+	// The synchronous mode needs a thread to carry the panel wait; queued mode
+	// presents from the flush itself, see fb_present_direct().
 
-	if (pthread_create(&fb_presenter, NULL, fb_present_thread, NULL) != 0) {
-		fprintf(stderr, "fb: no presenter thread, so no page flipping\n");
-		lv_display_delete(disp);
-		fb_display = NULL;
-		for (int i = 0; i < FB_STAGE_COUNT; i++) {
-			free(fb_stages[i].buf);
-			fb_stages[i].buf = NULL;
+	if (fb_pan_waits) {
+		if (pthread_create(&fb_presenter, NULL, fb_present_thread, NULL) != 0) {
+			fprintf(stderr, "fb: no presenter thread, so no page flipping\n");
+			lv_display_delete(disp);
+			fb_display = NULL;
+			for (int i = 0; i < FB_STAGE_COUNT; i++) {
+				free(fb_stages[i].buf);
+				fb_stages[i].buf = NULL;
+			}
+			free(draw_page);
+			draw_page = NULL;
+			munmap(fb_mem, pages_size);
+			fb_mem = NULL;
+			close(fb_fd);
+			fb_fd = -1;
+			return NULL;
 		}
-		free(draw_page);
-		draw_page = NULL;
-		munmap(fb_mem, pages_size);
-		fb_mem = NULL;
-		close(fb_fd);
-		fb_fd = -1;
-		return NULL;
+		pthread_detach(fb_presenter);
+		fb_presenter_started = true;
 	}
-	pthread_detach(fb_presenter);
-	fb_presenter_started = true;
 
-	printf("fb: two pages, %d staging pages, flipped from a presenter thread (%ux%u); pan_display_sync %s\n",
-		   FB_STAGE_COUNT, fb_var.xres, fb_var.yres, fb_pan_waits ? "on" : "off");
+	if (fb_pan_waits) {
+		printf("fb: two pages, %d staging pages, flipped from a presenter thread (%ux%u); pan_display_sync on\n",
+			   FB_STAGE_COUNT, fb_var.xres, fb_var.yres);
+	} else {
+		printf("fb: two pages, flipped directly from the flush (%ux%u); pan_display_sync off\n", fb_var.xres,
+			   fb_var.yres);
+	}
 	return disp;
 }
 
