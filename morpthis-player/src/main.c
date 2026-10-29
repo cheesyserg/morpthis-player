@@ -60,6 +60,7 @@
 #include "src/system/device/sysinfo.h"
 #include "src/system/net/tls.h"
 #include "src/system/device/system.h"
+#include "src/system/device/touchcal.h"
 #include "src/system/device/usb.h"
 #include "src/system/core/utils.h"
 #include "src/system/net/webcgi.h"
@@ -2446,22 +2447,12 @@ static lv_indev_read_cb_t touch_raw_read_cb;
 // in X.
 // ---------------------------------------------------------------------------
 
-// Band edges in calibrated coordinates with the display unrotated.  Observed
-// crossings run from 127..143 to 161..178, so these edges sit inside the band
-// and outside the plateau values.  The 180-degree calibration mirrors Y around
-// the last row, so touch_seam_reset() mirrors these too.
-#define TOUCH_SEAM_BAND_LO 146
-#define TOUCH_SEAM_BAND_HI 160
-#define TOUCH_SEAM_MIN_STEP 16 // a crossing is at least the gap plus a report
-#define TOUCH_SEAM_FOLD 28     // the band's own width
-#define TOUCH_SEAM_RELAX 2     // counts per report back toward the true position
-
-// The two values the panel holds while the finger is inside the band.  They are
-// what a tap lands on when the finger happens to be in the seam, so both are
-// treated as the middle of the band.
-#define TOUCH_SEAM_PLATEAU_LO 140
-#define TOUCH_SEAM_PLATEAU_HI 166
-#define TOUCH_SEAM_TAP_SNAP 4 // captured held values stay within 3 of these
+// The band, its edges, the fold and the tap snap live in touchcal.c: the
+// calibration page under Developer options measures them on the device and
+// stores them in device_config.ini, with the V1's values as the defaults until
+// it has.  The relax stays here because it is a property of the correction, not
+// of the panel.
+#define TOUCH_SEAM_RELAX 2 // counts per report back toward the true position
 
 typedef struct {
 	int32_t prev_raw;
@@ -2472,6 +2463,9 @@ typedef struct {
 	int32_t tap_lo;
 	int32_t tap_hi;
 	int32_t tap_offset;
+	int32_t min_step;
+	int32_t fold;
+	int32_t tap_snap;
 } touch_seam_t;
 
 static touch_seam_t touch_seam_y;
@@ -2500,16 +2494,24 @@ static void touch_seam_reset(touch_seam_t *s, int32_t y) {
 	if (disp) {
 		last = (int32_t)lv_display_get_vertical_resolution(disp) - 1;
 	}
+	int32_t band_lo = touchcal_band_lo();
+	int32_t band_hi = touchcal_band_hi();
+	int32_t plateau_lo = touchcal_low();
+	int32_t plateau_hi = touchcal_high();
+	s->min_step = touchcal_min_step();
+	s->fold = touchcal_gap();
+	s->tap_snap = touchcal_tap_snap();
+
 	if (display_get_rotated()) {
-		s->lo = last - TOUCH_SEAM_BAND_HI;
-		s->hi = last - TOUCH_SEAM_BAND_LO;
-		s->tap_lo = last - TOUCH_SEAM_PLATEAU_HI;
-		s->tap_hi = last - TOUCH_SEAM_PLATEAU_LO;
+		s->lo = last - band_hi;
+		s->hi = last - band_lo;
+		s->tap_lo = last - plateau_hi;
+		s->tap_hi = last - plateau_lo;
 	} else {
-		s->lo = TOUCH_SEAM_BAND_LO;
-		s->hi = TOUCH_SEAM_BAND_HI;
-		s->tap_lo = TOUCH_SEAM_PLATEAU_LO;
-		s->tap_hi = TOUCH_SEAM_PLATEAU_HI;
+		s->lo = band_lo;
+		s->hi = band_hi;
+		s->tap_lo = plateau_lo;
+		s->tap_hi = plateau_hi;
 	}
 
 	// Once per orientation, so a hardware report shows the band this build is
@@ -2517,7 +2519,8 @@ static void touch_seam_reset(touch_seam_t *s, int32_t y) {
 	if (debug_enabled() && (s->lo != touch_seam_logged_lo || s->hi != touch_seam_logged_hi)) {
 		touch_seam_logged_lo = s->lo;
 		touch_seam_logged_hi = s->hi;
-		DEBUG_ERR("input: seam band %d..%d (rotated=%d)\n", s->lo, s->hi, display_get_rotated());
+		DEBUG_ERR("input: seam band %d..%d fold=%d (rotated=%d)\n", s->lo, s->hi, s->fold,
+				  display_get_rotated());
 	}
 }
 
@@ -2525,11 +2528,11 @@ static void touch_seam_reset(touch_seam_t *s, int32_t y) {
 // press that did not land on a plateau, which is most of them.
 static int32_t touch_seam_tap_offset(const touch_seam_t *s, int32_t y) {
 	int32_t d = y - s->tap_lo;
-	if (d >= -TOUCH_SEAM_TAP_SNAP && d <= TOUCH_SEAM_TAP_SNAP) {
+	if (d >= -s->tap_snap && d <= s->tap_snap) {
 		return (s->tap_lo + s->tap_hi) / 2 - y;
 	}
 	d = y - s->tap_hi;
-	if (d >= -TOUCH_SEAM_TAP_SNAP && d <= TOUCH_SEAM_TAP_SNAP) {
+	if (d >= -s->tap_snap && d <= s->tap_snap) {
 		return (s->tap_lo + s->tap_hi) / 2 - y;
 	}
 	return 0;
@@ -2542,7 +2545,7 @@ static int32_t touch_seam_axis(touch_seam_t *s, int32_t raw) {
 	// A crossing starts on one side of the band and ends on the other.  The
 	// previous report is the held plateau when the panel was stuck, which is
 	// exactly what the two inequalities ask for.
-	bool crossed = adelta >= TOUCH_SEAM_MIN_STEP &&
+	bool crossed = adelta >= s->min_step &&
 				   ((s->prev_raw < s->lo && raw > s->hi) ||
 					(s->prev_raw > s->hi && raw < s->lo));
 	if (crossed) {
@@ -2550,16 +2553,16 @@ static int32_t touch_seam_axis(touch_seam_t *s, int32_t raw) {
 		// did not report while it held the coordinate.  Anything past the far
 		// side is the finger's own movement and passes through in this report.
 		int32_t fold = delta;
-		if (fold > TOUCH_SEAM_FOLD) {
-			fold = TOUCH_SEAM_FOLD;
-		} else if (fold < -TOUCH_SEAM_FOLD) {
-			fold = -TOUCH_SEAM_FOLD;
+		if (fold > s->fold) {
+			fold = s->fold;
+		} else if (fold < -s->fold) {
+			fold = -s->fold;
 		}
 		s->offset -= fold;
-		if (s->offset > TOUCH_SEAM_FOLD) {
-			s->offset = TOUCH_SEAM_FOLD;
-		} else if (s->offset < -TOUCH_SEAM_FOLD) {
-			s->offset = -TOUCH_SEAM_FOLD;
+		if (s->offset > s->fold) {
+			s->offset = s->fold;
+		} else if (s->offset < -s->fold) {
+			s->offset = -s->fold;
 		}
 		touch_seam_fixes++;
 		DEBUG_ERR("input: seam Y raw=%d delta=%d fold=%d offset=%d\n", raw, delta, fold, s->offset);
@@ -2614,6 +2617,20 @@ static int32_t touch_filter_axis(int32_t raw, int32_t *q8) {
 
 static void touch_filter_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
 	touch_raw_read_cb(indev, data);
+
+	// The calibration page measures the panel itself, before the seam and the
+	// filter, so what it records is the discontinuity rather than the correction
+	// of it.  Coordinates are brought back to the unrotated frame: the values in
+	// device_config.ini mean the same thing either way up.
+	if (touchcal_active()) {
+		int32_t last = 319;
+		lv_display_t *disp = lv_display_get_default();
+		if (disp) {
+			last = (int32_t)lv_display_get_vertical_resolution(disp) - 1;
+		}
+		int32_t y = display_get_rotated() ? last - data->point.y : data->point.y;
+		touchcal_feed(y, data->state == LV_INDEV_STATE_PRESSED);
+	}
 
 	if (data->state == LV_INDEV_STATE_PRESSED) {
 		uint32_t read_tick = 0;
