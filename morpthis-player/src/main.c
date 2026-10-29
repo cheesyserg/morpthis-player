@@ -1042,12 +1042,12 @@ static void tune_kinetic_scroll(lv_indev_t *indev) {
 
 // What one drag cost, reported when the finger lifts.
 //
-// A pass is one lv_timer_handler(). The flush now only snapshots the damaged
-// rectangle into a staging page; the vsync wait is the presenter's. What
-// matters is how many frames a drag produced, how often the pointer actually
-// moved, and whether a pass ran long, because the presenter can only put one
-// frame on the glass per panel interval. One line per gesture, printed after
-// the finger is off the glass, so it never lands in the middle of one.
+// A pass is one lv_timer_handler(). The flush presents the damaged rectangle
+// (directly, in queued mode) or hands it to the presenter. What matters is how
+// many frames a drag produced, how often the pointer actually moved, whether a
+// pass ran long, and whether the gap between two presented frames ran long:
+// the last one is the difference between a busy pass and a frame the panel
+// skipped.
 static struct {
 	bool active;
 	lv_point_t press_at;
@@ -1060,6 +1060,10 @@ static struct {
 	uint32_t flush_sum_us;
 	uint32_t flush_max_us;
 	uint32_t presented_start;
+	uint32_t frame_gap_sum_us;
+	uint32_t frame_gap_max_us;
+	uint32_t late_frames;
+	uint64_t last_frame_us;
 } drag_stats;
 
 // The pointer the stats above are gathered from (the touch panel on the
@@ -1102,6 +1106,10 @@ static void pointer_pace_cb(lv_event_t *e) {
 		drag_stats.flush_sum_us = 0;
 		drag_stats.flush_max_us = 0;
 		drag_stats.presented_start = presented_frames;
+		drag_stats.frame_gap_sum_us = 0;
+		drag_stats.frame_gap_max_us = 0;
+		drag_stats.late_frames = 0;
+		drag_stats.last_frame_us = 0;
 	} else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
 		lv_timer_set_period(read_timer, POINTER_IDLE_READ_PERIOD_MS);
 		if (debug_enabled() && indev->pointer.scroll_obj) {
@@ -1128,9 +1136,12 @@ static void pointer_pace_cb(lv_event_t *e) {
 		if (dx * dx + dy * dy <= TAP_SLOP_PX * TAP_SLOP_PX || drag_stats.frames == 0) {
 			return;
 		}
-		DEBUG_ERR("ui: drag %u ms, %u frames, %u moves, %u shown, pass avg %u max %u ms, flush avg %u max %u ms\n",
+		uint32_t gaps = drag_stats.frames > 1 ? drag_stats.frames - 1 : 1;
+		DEBUG_ERR("ui: drag %u ms, %u frames, %u moves, %u shown, gap avg %u max %u ms, late %u, "
+				  "pass avg %u max %u ms, flush avg %u max %u ms\n",
 				  lv_tick_get() - drag_stats.started, drag_stats.frames, drag_stats.moves,
-				  presented_frames - drag_stats.presented_start, drag_stats.pass_sum / drag_stats.frames,
+				  presented_frames - drag_stats.presented_start, drag_stats.frame_gap_sum_us / gaps / 1000,
+				  drag_stats.frame_gap_max_us / 1000, drag_stats.late_frames, drag_stats.pass_sum / drag_stats.frames,
 				  drag_stats.pass_max, drag_stats.flush_sum_us / drag_stats.frames / 1000,
 				  drag_stats.flush_max_us / 1000);
 	}
@@ -1892,6 +1903,26 @@ static void fb_stage_publish(const uint8_t *px) {
 	}
 }
 
+// The panel scans a frame every 16.67 ms (60 Hz). LVGL's default refresh
+// period is 16 ms, which is 4% fast: the renderer produces a frame the panel
+// cannot show about three times a second, and that beat reads as a regular
+// hitch no matter how the frame is copied or flipped.  A repeating 17/17/16 ms
+// cycle averages 16.67 ms, so the render clock and the panel stay in step
+// without waiting for vsync (and without stalling the drawing thread).
+static void display_pace_refresh(lv_display_t *disp, bool advance) {
+	static const uint8_t periods[3] = {17, 17, 16};
+	static uint8_t phase;
+
+	lv_timer_t *timer = lv_display_get_refr_timer(disp);
+	if (!timer) {
+		return;
+	}
+	if (advance) {
+		phase = (uint8_t)((phase + 1) % 3);
+	}
+	lv_timer_set_period(timer, periods[phase]);
+}
+
 // The queued-flip path: one frame, copied straight into the page the panel is
 // not showing and panned in the flush itself.  There is no staging page and no
 // presenter thread: with the driver's synchronous pan off, FBIOPAN_DISPLAY
@@ -1973,6 +2004,28 @@ static void fb_pan_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *
 
 	fb_flush_us_total += now_us() - flush_started;
 	lv_display_flush_ready(disp);
+
+	// How far apart two presented frames were. This is the number that says
+	// whether a stutter is a slow pass or a frame the panel skipped: a slow
+	// pass shows in pass_max, a skipped frame here while pass_max stays small.
+	if (drag_stats.active) {
+		uint64_t now = now_us();
+		if (drag_stats.last_frame_us) {
+			uint32_t gap = (uint32_t)(now - drag_stats.last_frame_us);
+			drag_stats.frame_gap_sum_us += gap;
+			if (gap > drag_stats.frame_gap_max_us) {
+				drag_stats.frame_gap_max_us = gap;
+			}
+			if (gap > 25000) {
+				drag_stats.late_frames++;
+			}
+		}
+		drag_stats.last_frame_us = now;
+	}
+
+	// See display_pace_refresh(): the next refresh is 17 or 16 ms, so the
+	// average is one panel interval.
+	display_pace_refresh(disp, true);
 }
 
 static lv_display_t *try_panned_display(void) {
@@ -2145,6 +2198,7 @@ static lv_display_t *try_panned_display(void) {
 	lv_display_set_buffers(disp, draw_page, NULL, (uint32_t)fb_page_size, LV_DISPLAY_RENDER_MODE_DIRECT);
 	lv_display_set_flush_cb(disp, fb_pan_flush_cb);
 	fb_display = disp;
+	display_pace_refresh(disp, false);
 
 	// The synchronous mode needs a thread to carry the panel wait; queued mode
 	// presents from the flush itself, see fb_present_direct().
