@@ -1431,8 +1431,8 @@ uint32_t fb_flush_us_take(void) { return 0; }
 // full-page staging buffers and handed over; the flush returns immediately.
 // The presenter is the only one that touches the framebuffer pages, copies
 // the staging buffer into the page the panel is not scanning, and flips to it.
-// The flip is queued and followed by an explicit wait for the frame boundary
-// (see fb_pan_waits), so the wait happens underneath the next frame.
+// The flip is queued -- no wait for the panel is made here -- so the presenter
+// keeps draining the staging pool at the rate the drawing thread fills it.
 //
 // This is the third buffer that made triple buffering possible here: fb0 has
 // room for exactly two scan-out pages, but the staging buffers are ordinary
@@ -1504,11 +1504,12 @@ static pthread_cond_t fb_work = PTHREAD_COND_INITIALIZER;	   // presenter: a sta
 static pthread_cond_t fb_stage_free = PTHREAD_COND_INITIALIZER; // drawing: a stage is free
 static pthread_cond_t fb_flip_done = PTHREAD_COND_INITIALIZER;  // idle waiters
 
-// Whether FBIOPAN_DISPLAY itself waits for the panel.  soc_fb offers the choice
-// through its pan_display_sync parameter; the presenter prefers it off and
-// waits for the frame boundary itself with FBIO_WAITFORVSYNC, which measured
-// smoother here.  [display] pan_sync = 1 asks the driver to do the waiting
-// inside the call instead.
+// Whether the driver's synchronous pan is in use.  soc_fb offers the choice
+// through its pan_display_sync parameter.  The player asks for the queued mode
+// (0, the default) and the presenter does not add its own wait: that wait was
+// measured to make the interface stutter, because it caps the presenter at one
+// flip per panel interval and empties the staging pool.  [display] pan_sync = 1
+// asks the driver to wait inside FBIOPAN_DISPLAY instead.
 static bool fb_pan_waits;
 
 // One integer out of sysfs. `fallback` when the file is absent or unreadable,
@@ -1744,15 +1745,14 @@ static void *fb_present_thread(void *arg) {
 		fb_var.yoffset = (uint32_t)target * fb_var.yres;
 		uint64_t started = now_us();
 		int flipped = ioctl(fb_fd, FBIOPAN_DISPLAY, &fb_var);
-		if (flipped == 0 && !fb_pan_waits) {
-			// The driver only queued the page. It stays the panel's until the
-			// next frame starts, and until then the drawing thread must not
-			// write it.
-			uint32_t crtc = 0;
-			if (ioctl(fb_fd, FBIO_WAITFORVSYNC, &crtc) < 0) {
-				usleep(20000); // no vsync to wait on: be late rather than tear
-			}
-		}
+		// With the driver's synchronous pan off, nothing here waits.  The panel
+		// latches the queued page at its own frame boundary, and the drawing
+		// thread is paced by the display refresh, so the next page is written on
+		// the far side of that boundary.  Waiting here -- with FBIO_WAITFORVSYNC
+		// or a sleep -- was the regression: it put the presenter back on one flip
+		// per panel interval, the three staging pages filled, and the drawing
+		// thread stopped at fb_stage_publish() exactly as it did with the
+		// synchronous pan.
 		uint64_t took = now_us() - started;
 		// Said twice: the first flip can be the slow one (the panel has just
 		// been mode-set), and the thirty-first says what it settled at. This is
@@ -2064,14 +2064,14 @@ static lv_display_t *try_panned_display(void) {
 	lv_display_set_flush_cb(disp, fb_pan_flush_cb);
 	fb_display = disp;
 
-	// The panel latches a queued pan at the next frame boundary, and the
-	// presenter waits for that boundary itself (FBIO_WAITFORVSYNC).  Measured on
-	// this device that is smoother than making FBIOPAN_DISPLAY block: the
-	// synchronous call costs a full panel interval inside the driver, and the
-	// explicit wait lands where the presenter can absorb it.  The module
-	// parameter is global, so the player sets it to match the config on every
-	// start rather than leaving whatever the last process or the boot default
-	// put there.  [display] pan_sync = 1 asks for the synchronous call back.
+	// The panel latches a queued pan at the next frame boundary and the presenter
+	// does not wait for it; see fb_present_thread().  Measured on this device
+	// that is smoother than making FBIOPAN_DISPLAY block: the synchronous call
+	// costs a full panel interval, and one flip per interval empties the staging
+	// pool and stalls the drawing thread.  The module parameter is global, so the
+	// player sets it to match the config on every start rather than leaving
+	// whatever the last process or the boot default put there.  [display]
+	// pan_sync = 1 asks for the synchronous call back.
 	const char *sync_path = "/sys/module/soc_fb/parameters/pan_display_sync";
 	int want_sync = config_get_int("display", "pan_sync", 0) != 0;
 	int sync_fd = open(sync_path, O_WRONLY);
