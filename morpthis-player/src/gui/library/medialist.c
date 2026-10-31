@@ -1598,12 +1598,6 @@ static void thumbs_update(panel_t *p) {
 	}
 
 	bool anything_pending = false;
-	// A decode is seconds' worth of JPEG work on a single core, and the worker
-	// runs below the interface -- but it still takes its share of the cycles, and
-	// a fling asks for a new band every few rows. Nothing is requested while the
-	// list is moving; the rows are asked for when it stops, which is also when
-	// their covers can be seen. Results already on their way are still collected.
-	bool scrolling = lv_obj_is_scrolling(p->list);
 
 	for (int i = 0; i < ROW_POOL; i++) {
 		row_t *row = &p->rows[i];
@@ -1628,10 +1622,6 @@ static void thumbs_update(panel_t *p) {
 		}
 
 		if (!row->thumb_requested) {
-			if (scrolling) {
-				anything_pending = true; // ask again once the list has stopped
-				continue;
-			}
 			coverloader_request(row_slot(p, row), source, THUMB_SIZE);
 			row->thumb_requested = true;
 			snprintf(row->thumb_path, sizeof(row->thumb_path), "%s", source);

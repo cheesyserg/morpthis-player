@@ -424,10 +424,6 @@ static const char *cover_source(const char *book, char *first, size_t size) {
 // finished.
 static void thumbs_update(void) {
 	bool anything_pending = false;
-	// One core, and a jacket decode is not short: nothing is asked for while the
-	// list is moving. The rows are asked for when it stops, which is also when
-	// their covers can be looked at.
-	bool scrolling = lv_obj_is_scrolling(book_list);
 
 	for (int i = 0; i < ROW_POOL; i++) {
 		row_t *row = &rows[i];
@@ -442,10 +438,6 @@ static void thumbs_update(void) {
 		}
 
 		if (!row->thumb_requested) {
-			if (scrolling) {
-				anything_pending = true;
-				continue;
-			}
 			char first[512];
 			coverloader_request(row_slot(row), cover_source(source, first, sizeof(first)), THUMB_SIZE);
 			row->thumb_requested = true;

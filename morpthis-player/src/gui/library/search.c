@@ -160,7 +160,6 @@ static void art_drop_cb(lv_timer_t *timer) {
 // results as they arrive.
 static void thumbs_update(void) {
 	bool pending = false;
-	bool scrolling = lv_obj_is_scrolling(results);
 
 	for (int i = 0; i < SEARCH_POOL; i++) {
 		row_t *row = &rows[i];
@@ -170,12 +169,6 @@ static void thumbs_update(void) {
 
 		int slot = row_slot(row);
 		if (!row->requested) {
-			// Decoding art takes the core away from a fling, and a fling asks
-			// for a new band every few rows. Asked for once it stops.
-			if (scrolling) {
-				pending = true;
-				continue;
-			}
 			coverloader_request(slot, row->path, SEARCH_THUMB);
 			row->requested = true;
 		}
