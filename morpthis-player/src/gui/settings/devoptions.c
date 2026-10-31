@@ -16,6 +16,7 @@
 #include "src/system/library/library.h"
 #include "src/system/core/logging.h"
 #include "src/system/core/config.h"
+#include "src/system/core/fputest.h"
 #include "src/system/device/bootlogo.h"
 
 lv_obj_t *devoptions_screen;
@@ -28,6 +29,7 @@ static lv_obj_t *log_path_label;
 static lv_obj_t *bt_log_switch;
 static lv_obj_t *bt_log_name_label;
 static lv_obj_t *bt_log_path_label;
+static lv_obj_t *fpu_result_label;
 static lv_timer_t *adb_poll_timer;
 
 // Turning ADB on or off happens on its own thread and takes a second or two:
@@ -159,6 +161,17 @@ static void adb_poll_cb(lv_timer_t *timer) {
 	update_adb_row();
 }
 
+static void fpu_test_cb(lv_event_t *e) {
+	(void)e;
+
+	char result[192];
+	fputest_run(result, sizeof result);
+	if (fpu_result_label) {
+		lv_label_set_text(fpu_result_label, result);
+	}
+	fprintf(stderr, "fputest: %s\n", result);
+}
+
 static void screen_loaded_cb(lv_event_t *e) {
 	(void)e;
 	update_adb_row();
@@ -224,6 +237,22 @@ void devoptions_init(gui_config_t *cfg) {
 	// The panel's seam is a per-unit measurement. The page swipes across the
 	// middle, reports the band it found and keeps it in device_config.ini.
 	settingsrow_add(container, "Touch calibration", NULL, switch_screen_cb, touchcalpage_screen);
+
+	// A few arithmetic checks and the float ABI the compiler selected. The
+	// binary is the only place that knows whether it was built hard-float or
+	// soft-float, and the page is where somebody asks the question on the
+	// device rather than at a build log.
+	settingsrow_action(container, "FPU test", fpu_test_cb, NULL);
+	fpu_result_label = lv_label_create(container);
+	lv_label_set_long_mode(fpu_result_label, LV_LABEL_LONG_WRAP);
+	lv_obj_set_width(fpu_result_label, lv_pct(100));
+	lv_obj_add_style(fpu_result_label, &theme_style_text_dim, 0);
+	lv_obj_set_style_text_font(fpu_result_label, &font_ui_18, 0);
+	{
+		char hint[96];
+		snprintf(hint, sizeof hint, "Not run yet. Build: %s.", fputest_abi());
+		lv_label_set_text(fpu_result_label, hint);
+	}
 
 	update_adb_row();
 	update_log_row();
