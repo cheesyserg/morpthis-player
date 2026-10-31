@@ -1413,11 +1413,23 @@ static double biquad_power_ratio_at(const biquad_t *f, double cos1, double sin1,
 	return num2 / den2;
 }
 
-static double biquad_gain_db_at(const biquad_t *f, double w) {
-	double ratio = biquad_power_ratio_at(f, cos(w), sin(w), cos(2.0 * w), sin(2.0 * w));
-	// 10*log10 of the power ratio: it is already a squared magnitude, which
-	// saves a square root.
-	return 10.0 * log10(ratio);
+// The same in single precision, for the graph. The coefficients are floats and
+// the device has a hard-float FP32 unit but no double-precision one, so every
+// double multiply here is a libcall. The plot resolves a tenth of a decibel,
+// which float carries with room to spare.
+static float biquad_power_ratio_at_f(const biquad_t *f, float cos1, float sin1, float cos2, float sin2) {
+	// z^-1 = cos(w) - j sin(w), hence the minus signs on the imaginary parts.
+	float num_re = f->b0 + f->b1 * cos1 + f->b2 * cos2;
+	float num_im = -(f->b1 * sin1 + f->b2 * sin2);
+	float den_re = 1.0f + f->a1 * cos1 + f->a2 * cos2;
+	float den_im = -(f->a1 * sin1 + f->a2 * sin2);
+
+	float num2 = num_re * num_re + num_im * num_im;
+	float den2 = den_re * den_re + den_im * den_im;
+	if (den2 <= 0.0f || num2 <= 0.0f) {
+		return 1.0f; // nothing sensible to report: read as 0 dB
+	}
+	return num2 / den2;
 }
 
 // ---------------------------------------------------------------------------
@@ -1656,32 +1668,69 @@ static void filters_rebuild(int rate) {
 // ---------------------------------------------------------------------------
 
 int peq_response_tenths(int freq, int sample_rate) {
-	if (sample_rate <= 0 || freq <= 0 || freq * 2 >= sample_rate) {
-		return 0;
+	int out = 0;
+	peq_response_curve(sample_rate, &freq, &out, 1);
+	return out;
+}
+
+void peq_response_curve(int sample_rate, const int *freqs, int *out_tenths, int count) {
+	if (!freqs || !out_tenths || count <= 0) {
+		return;
 	}
 
-	double total_db = peq_enabled ? (double)peq_preamp_tenths / 10.0 : 0.0;
-	double w = 2.0 * M_PI * (double)freq / (double)sample_rate;
-
+	// The coefficients of a band do not depend on the frequency it is evaluated
+	// at, so they are designed once for the whole curve. The obvious loop called
+	// biquad_set_coeffs() per point per band -- sixty-one times ten biquad
+	// designs, each with its own sin/cos/pow/sinh -- and that is what made
+	// dragging a band slider cost a frame per step.
+	biquad_t filters[PEQ_BANDS];
+	int used = 0;
 	for (int i = 0; i < PEQ_BANDS; i++) {
 		const peq_band_t *b = &peq_bands[i];
 		if (!b->on) {
 			continue;
 		}
-		int type = peq_filter_type(b->type);
-
 		biquad_t f;
 		memset(&f, 0, sizeof(f));
-		if (!biquad_set_coeffs(&f, type, b->freq, (double)b->gain_tenths / 10.0, (double)b->q_cent / 100.0,
-							   sample_rate)) {
+		if (!biquad_set_coeffs(&f, peq_filter_type(b->type), b->freq, (double)b->gain_tenths / 10.0,
+							   (double)b->q_cent / 100.0, sample_rate)) {
 			continue;
 		}
-		total_db += biquad_gain_db_at(&f, w);
+		filters[used++] = f;
 	}
 
-	// Rounded to the nearest tenth rather than truncated towards zero: half a
-	// tenth lost at every point drags the whole curve below the real one.
-	return (int)(total_db >= 0 ? total_db * 10.0 + 0.5 : total_db * 10.0 - 0.5);
+	float base_f = peq_enabled ? (float)peq_preamp_tenths / 10.0f : 0.0f;
+	const float two_pi = (float)(2.0 * M_PI);
+
+	for (int p = 0; p < count; p++) {
+		int freq = freqs[p];
+		if (sample_rate <= 0 || freq <= 0 || freq * 2 >= sample_rate) {
+			out_tenths[p] = 0;
+			continue;
+		}
+
+		// One set of trigonometry per point, shared by every band, and single
+		// precision throughout: sinf and cosf run on the FPU, sin and cos on the
+		// soft-double library.
+		float w = two_pi * (float)freq / (float)sample_rate;
+		float cos1 = cosf(w);
+		float sin1 = sinf(w);
+		float cos2 = cosf(2.0f * w);
+		float sin2 = sinf(2.0f * w);
+
+		// Filters in series multiply, so the whole chain is one product and one
+		// logarithm per point -- not one logarithm per filter.
+		float power = 1.0f;
+		for (int k = 0; k < used; k++) {
+			power *= biquad_power_ratio_at_f(&filters[k], cos1, sin1, cos2, sin2);
+		}
+		float total_db = power > 0.0f ? 10.0f * log10f(power) : -120.0f;
+		total_db += base_f;
+
+		// Rounded to the nearest tenth rather than truncated towards zero: half a
+		// tenth lost at every point drags the whole curve below the real one.
+		out_tenths[p] = (int)(total_db >= 0.0f ? total_db * 10.0f + 0.5f : total_db * 10.0f - 0.5f);
+	}
 }
 
 // What the engine does to the level on its own, recomputed here for the UI

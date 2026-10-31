@@ -184,19 +184,31 @@ void libraryscan_begin(void) {
 #define PICK_ROW_GAP bp_pick(6, 10)
 #define PICK_BUTTON_HEIGHT bp_pick(44, 56)
 #define PICK_BUTTON_GAP bp_pick(8, 12)
-// Rows are made this many at a time, more as the list nears its end.
-#define PICK_BATCH 30
+
+// What a screen of the picker can show. The folders are a list of names that
+// can run to hundreds, so only these rows exist: the scroller moves the body
+// they sit on and each row is bound to whatever folder is under it now.
+#define PICK_ROW_POOL 14
+#define PICK_ROW_PITCH (PICK_ROW_HEIGHT + PICK_LIST_GAP)
+
+typedef struct {
+	lv_obj_t *button;
+	lv_obj_t *label;
+	lv_obj_t *mark;
+	int index;
+} pick_row_t;
 
 static gui_config_t *pick_cfg;
 static lv_obj_t *pick_veil;
 static lv_obj_t *pick_list;
+static lv_obj_t *pick_body;
 static lv_obj_t *pick_scan_btn;
 static char **pick_names;
 static bool *pick_on;
-static lv_obj_t **pick_marks;
+static pick_row_t pick_rows[PICK_ROW_POOL];
+static int pick_pool_first = -1;
 static int pick_count;
 static int pick_capacity;
-static int pick_built; // rows made so far, the first pick_built names
 
 static int name_cmp(const void *a, const void *b) { return strcasecmp(*(const char *const *)a, *(const char *const *)b); }
 
@@ -205,7 +217,6 @@ static void pick_clear(void) {
 		free(pick_names[i]);
 	}
 	pick_count = 0;
-	pick_built = 0;
 }
 
 static bool pick_add(const char *name) {
@@ -219,11 +230,7 @@ static bool pick_add(const char *name) {
 		if (on) {
 			pick_on = on;
 		}
-		lv_obj_t **marks = realloc(pick_marks, (size_t)grown * sizeof(*marks));
-		if (marks) {
-			pick_marks = marks;
-		}
-		if (!names || !on || !marks) {
+		if (!names || !on) {
 			return false;
 		}
 		pick_capacity = grown;
@@ -233,7 +240,6 @@ static bool pick_add(const char *name) {
 		return false;
 	}
 	pick_on[pick_count] = false;
-	pick_marks[pick_count] = NULL;
 	pick_count++;
 	return true;
 }
@@ -283,21 +289,28 @@ static void pick_load_selection(void) {
 	library_scan_folders_free(saved, saved_count);
 }
 
+static void pick_row_paint(pick_row_t *row) {
+	if (!row->mark || row->index < 0 || row->index >= pick_count) {
+		return;
+	}
+	lv_obj_set_style_image_opa(row->mark, pick_on[row->index] ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+}
+
 static void pick_paint(void) {
 	int on = 0;
 	for (int i = 0; i < pick_count; i++) {
-		if (i < pick_built && pick_marks[i]) {
-			lv_obj_set_style_image_opa(pick_marks[i], pick_on[i] ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
-		}
 		on += pick_on[i];
+	}
+	for (int i = 0; i < PICK_ROW_POOL; i++) {
+		pick_row_paint(&pick_rows[i]);
 	}
 	lv_obj_set_style_opa(pick_scan_btn, (pick_count == 0 || on > 0) ? LV_OPA_COVER : LV_OPA_40, 0);
 }
 
 static void pick_row_cb(lv_event_t *e) {
-	int i = (int)(intptr_t)lv_event_get_user_data(e);
-	if (i >= 0 && i < pick_count) {
-		pick_on[i] = !pick_on[i];
+	pick_row_t *row = lv_event_get_user_data(e);
+	if (row && row->index >= 0 && row->index < pick_count) {
+		pick_on[row->index] = !pick_on[row->index];
 		pick_paint();
 	}
 }
@@ -409,11 +422,60 @@ static void pick_build(void) {
 	// What the panel leaves once the title, the note and the buttons are in.
 	lv_obj_set_style_max_height(pick_list, cfg->screen_height - cfg->top_bar_height - 2 * cfg->padding - PICK_CHROME_H,
 								0);
-	lv_obj_set_style_pad_row(pick_list, PICK_LIST_GAP, 0);
-	lv_obj_set_flex_flow(pick_list, LV_FLEX_FLOW_COLUMN);
 	lv_obj_set_scroll_dir(pick_list, LV_DIR_VER);
 	lv_obj_set_scrollbar_mode(pick_list, LV_SCROLLBAR_MODE_AUTO);
 	lv_obj_add_event_cb(pick_list, pick_scroll_cb, LV_EVENT_SCROLL, NULL);
+
+	// All the folders as one canvas under a fixed pool of rows. A card with two
+	// hundred folders then scrolls the canvas, not two hundred buttons, and only
+	// the ones on screen are bound to a name.
+	pick_body = lv_obj_create(pick_list);
+	lv_obj_remove_style_all(pick_body);
+	lv_obj_set_width(pick_body, lv_pct(100));
+	lv_obj_set_height(pick_body, 0);
+	lv_obj_set_scrollable(pick_body, false);
+	lv_obj_set_clickable(pick_body, false);
+
+	for (int i = 0; i < PICK_ROW_POOL; i++) {
+		pick_row_t *row = &pick_rows[i];
+		row->index = -2;
+
+		row->button = lv_btn_create(pick_body);
+		lv_obj_set_size(row->button, lv_pct(100), PICK_ROW_HEIGHT);
+		lv_obj_set_x(row->button, 0);
+		lv_obj_set_style_bg_color(row->button, theme()->surface_pressed, 0);
+		lv_obj_set_style_radius(row->button, 10, 0);
+		lv_obj_set_style_shadow_width(row->button, 0, 0);
+		lv_obj_set_style_border_width(row->button, 0, 0);
+		lv_obj_set_style_pad_hor(row->button, PICK_ROW_PAD, 0);
+		lv_obj_set_style_pad_column(row->button, PICK_ROW_GAP, 0);
+		lv_obj_set_flex_flow(row->button, LV_FLEX_FLOW_ROW);
+		lv_obj_set_flex_align(row->button, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+		// A press on a partly visible folder starts a scroll, not a request to
+		// animate that folder into view.
+		lv_obj_set_scroll_on_focus(row->button, false);
+		lv_obj_set_hidden(row->button, true);
+		lv_obj_add_event_cb(row->button, pick_row_cb, LV_EVENT_CLICKED, row);
+
+		lv_obj_t *folder = lv_image_create(row->button);
+		lv_image_set_src(folder, &icon_folder);
+		lv_obj_add_style(folder, &theme_style_icon, 0);
+
+		row->label = lv_label_create(row->button);
+		lv_label_set_long_mode(row->label, LV_LABEL_LONG_DOT);
+		lv_obj_set_flex_grow(row->label, 1);
+		const lv_font_t *row_font = bp_is_tempotec_v1() ? &font_ui_16 : &font_ui_22;
+		lv_obj_set_height(row->label, lv_font_get_line_height(row_font));
+		lv_obj_add_style(row->label, &theme_style_text, 0);
+		lv_obj_set_style_text_font(row->label, row_font, 0);
+
+		row->mark = lv_image_create(row->button);
+		lv_image_set_src(row->mark, &icon_check);
+		lv_obj_add_style(row->mark, &theme_style_icon, 0);
+		lv_obj_set_style_image_recolor(row->mark, theme()->accent, 0);
+		lv_obj_set_style_image_recolor_opa(row->mark, LV_OPA_COVER, 0);
+		lv_obj_set_style_image_opa(row->mark, LV_OPA_TRANSP, 0);
+	}
 
 	lv_obj_t *buttons = lv_obj_create(card);
 	lv_obj_remove_style_all(buttons);
@@ -424,60 +486,67 @@ static void pick_build(void) {
 	pick_scan_btn = pick_button(buttons, "scan", true, pick_scan_cb);
 }
 
-// Makes up to `n` more rows, after the ones already there.
-static void pick_append(int n) {
-	int last = pick_built + n < pick_count ? pick_built + n : pick_count;
-	for (int i = pick_built; i < last; i++) {
-		lv_obj_t *row = lv_btn_create(pick_list);
-		lv_obj_set_size(row, lv_pct(100), PICK_ROW_HEIGHT);
-		lv_obj_set_style_bg_color(row, theme()->surface_pressed, 0);
-		lv_obj_set_style_radius(row, 10, 0);
-		lv_obj_set_style_shadow_width(row, 0, 0);
-		lv_obj_set_style_border_width(row, 0, 0);
-		lv_obj_set_style_pad_hor(row, PICK_ROW_PAD, 0);
-		lv_obj_set_style_pad_column(row, PICK_ROW_GAP, 0);
-		lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-		lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-		// A press on a partly visible folder starts a scroll, not a request to
-		// animate that folder into view.
-		lv_obj_set_scroll_on_focus(row, false);
-		lv_obj_add_event_cb(row, pick_row_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
-
-		lv_obj_t *folder = lv_image_create(row);
-		lv_image_set_src(folder, &icon_folder);
-		lv_obj_add_style(folder, &theme_style_icon, 0);
-
-		lv_obj_t *label = lv_label_create(row);
-		lv_label_set_text(label, pick_names[i]);
-		lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
-		lv_obj_set_flex_grow(label, 1);
-		const lv_font_t *row_font = bp_is_tempotec_v1() ? &font_ui_16 : &font_ui_22;
-		lv_obj_set_height(label, lv_font_get_line_height(row_font));
-		lv_obj_add_style(label, &theme_style_text, 0);
-		lv_obj_set_style_text_font(label, row_font, 0);
-
-		pick_marks[i] = lv_image_create(row);
-		lv_image_set_src(pick_marks[i], &icon_check);
-		lv_obj_add_style(pick_marks[i], &theme_style_icon, 0);
-		lv_obj_set_style_image_recolor(pick_marks[i], theme()->accent, 0);
-		lv_obj_set_style_image_recolor_opa(pick_marks[i], LV_OPA_COVER, 0);
-		lv_obj_set_style_image_opa(pick_marks[i], pick_on[i] ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+// Points one pool row at folder `index`, reading its name in place.
+static void pick_row_bind(pick_row_t *row, int index) {
+	if (row->index == index) {
+		return;
 	}
-	pick_built = last;
+	if (index < 0 || index >= pick_count) {
+		row->index = -1;
+		lv_obj_set_hidden(row->button, true);
+		return;
+	}
+
+	row->index = index;
+	lv_obj_set_hidden(row->button, false);
+	lv_obj_set_y(row->button, index * PICK_ROW_PITCH);
+	lv_label_set_text(row->label, pick_names[index]);
+	pick_row_paint(row);
 }
 
-// Within a screenful of the last row made, the next batch.
+static int pick_pool_first_for(void) {
+	if (pick_count <= 0) {
+		return 0;
+	}
+	int scroll = lv_obj_get_scroll_y(pick_list);
+	if (scroll < 0) {
+		scroll = 0;
+	}
+	int first = scroll / PICK_ROW_PITCH - 1;
+	if (first + PICK_ROW_POOL > pick_count) {
+		first = pick_count - PICK_ROW_POOL;
+	}
+	if (first < 0) {
+		first = 0;
+	}
+	return first;
+}
+
+static void pick_window_update(void) {
+	int first = pick_pool_first_for();
+	for (int i = 0; i < PICK_ROW_POOL; i++) {
+		int index = first + i;
+		pick_row_bind(&pick_rows[index % PICK_ROW_POOL], index < pick_count ? index : -1);
+	}
+	pick_pool_first = first;
+}
+
 static void pick_scroll_cb(lv_event_t *e) {
 	(void)e;
-	if (pick_built < pick_count && lv_obj_get_scroll_bottom(pick_list) < lv_obj_get_height(pick_list)) {
-		pick_append(PICK_BATCH);
+	if (pick_pool_first_for() != pick_pool_first) {
+		pick_window_update();
 	}
 }
 
 static void pick_fill(void) {
-	lv_obj_clean(pick_list);
-	pick_built = 0;
-	pick_append(PICK_BATCH);
+	for (int i = 0; i < PICK_ROW_POOL; i++) {
+		pick_rows[i].index = -2; // the folder under this row is a different one now
+		lv_obj_set_hidden(pick_rows[i].button, true);
+	}
+	pick_pool_first = -1;
+	lv_obj_set_height(pick_body, pick_count > 0 ? pick_count * PICK_ROW_PITCH - PICK_LIST_GAP : 0);
+	lv_obj_scroll_to_y(pick_list, 0, LV_ANIM_OFF);
+	pick_window_update();
 }
 
 void libraryscan_choose_folders(void) {

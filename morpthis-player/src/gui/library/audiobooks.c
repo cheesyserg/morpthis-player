@@ -14,6 +14,7 @@
 #include "src/gui/shell/confirm.h"
 #include "src/gui/shell/gridpage.h"
 #include "src/gui/shell/icons.h"
+#include "src/gui/shell/iconscale.h"
 #include "src/gui/shell/popover.h"
 #include "src/gui/shell/settingsrow.h"
 #include "src/gui/shell/switcher.h"
@@ -319,10 +320,10 @@ static audiobookdb_index_t *books_index_open(void) {
 }
 
 static void row_show_glyph(row_t *row) {
-	lv_image_set_src(row->icon, &icon_book_headphones_row);
-	// The glyph is a 64 px bitmap. The V1's 48 px thumb box needs it drawn
-	// smaller, or it hangs out of the row; 176/256 of 64 px is 44 px.
-	lv_image_set_scale(row->icon, (uint32_t)bp_pick(176, LV_SCALE_NONE));
+	// The glyph is a 64 px bitmap, and the V1's 48 px thumb box needs it at 44 px
+	// or it hangs out of the row. Scaled once and kept, rather than resampled
+	// inside every frame the list is scrolled in.
+	iconscale_set(row->icon, &icon_book_headphones_row, bp_pick(44, 64));
 	lv_obj_set_style_image_recolor_opa(row->icon, LV_OPA_COVER, 0);
 }
 
@@ -423,6 +424,10 @@ static const char *cover_source(const char *book, char *first, size_t size) {
 // finished.
 static void thumbs_update(void) {
 	bool anything_pending = false;
+	// One core, and a jacket decode is not short: nothing is asked for while the
+	// list is moving. The rows are asked for when it stops, which is also when
+	// their covers can be looked at.
+	bool scrolling = lv_obj_is_scrolling(book_list);
 
 	for (int i = 0; i < ROW_POOL; i++) {
 		row_t *row = &rows[i];
@@ -437,6 +442,10 @@ static void thumbs_update(void) {
 		}
 
 		if (!row->thumb_requested) {
+			if (scrolling) {
+				anything_pending = true;
+				continue;
+			}
 			char first[512];
 			coverloader_request(row_slot(row), cover_source(source, first, sizeof(first)), THUMB_SIZE);
 			row->thumb_requested = true;

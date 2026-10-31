@@ -149,6 +149,13 @@ int peq_preset_for_each(peq_preset_name_cb_t cb, void *user);
 // what is shown is what is heard.
 int peq_response_tenths(int freq, int sample_rate);
 
+// The same response at `count` frequencies at once, written to `out_tenths`.
+// Each band's coefficients are designed once for the whole curve instead of
+// once per point: the graph is sixty-one points over ten bands, and rebuilding
+// the same ten designs sixty-one times is what used to make a slider drag cost
+// a frame per step.
+void peq_response_curve(int sample_rate, const int *freqs, int *out_tenths, int count);
+
 // What the engine does to the level on its own, in tenths of a dB. Two stages
 // added together, because that is what the ear gets:
 //

@@ -49,16 +49,18 @@ static bool gesture_not_tap(void) {
 #define MAX_ENTRIES 2000
 #define PATH_MAX_LEN 640
 
-// The listing is built a screenful at a time: every row is a card with a
-// glyph and two labels, and LVGL measures all of them before it can draw the
-// first. What somebody is waiting for is the first six.
+// The listing is a fixed pool of rows over the entries, not one widget per
+// file. A folder can hold MAX_ENTRIES names, and LVGL's scroll moves every
+// descendant of the scroller on every event: with a widget per file, an eight
+// hundred file folder is eight hundred rows walked per frame, whether or not
+// they are on screen. The pool bounds that work the same way the library lists
+// bound theirs.
 //
-// It matters more here than there, because a row also costs a stat() on the
-// card to find out how big the file is -- and a stat on a slow card, two
-// thousand times, is a folder that takes seconds to open. Built this way, it is
-// a stat for each row that is actually on screen.
-#define ROWS_FIRST 14
-#define ROWS_MORE 14
+// It also bounds the stat()s. A row asks the card for a file's size only when
+// it is bound, which is once per row entering the band, rather than once per
+// file while opening the folder.
+#define FILE_ROW_POOL 12
+#define FILE_ROW_PITCH (ROW_HEIGHT + FILE_ROW_GAP)
 
 // This page was written only for the 480-px players: at 76 px a row the V1
 // showed three of them.  Every number a row is built from goes through
@@ -74,14 +76,24 @@ static bool gesture_not_tap(void) {
 typedef struct {
 	char *name;	 // in the pool
 	bool dir;
+	bool size_known;
+	long long size;
 } entry_t;
+
+typedef struct {
+	lv_obj_t *button;
+	lv_obj_t *glyph;
+	lv_obj_t *label;
+	lv_obj_t *size_label;
+	lv_obj_t *dots;
+	int index;
+} file_row_t;
 
 static char root_path[PATH_MAX_LEN];  // the card, which is as far up as this goes
 static char path[PATH_MAX_LEN];		  // the folder on screen
 
 static entry_t *entries;
 static int entry_count;
-static int entries_built;  // how many rows are on the list
 static int skipped;		   // entries the cap left out
 
 // Set while rebuild() is pulling the list apart and putting it back.
@@ -94,8 +106,11 @@ static int skipped;		   // entries the cap left out
 static bool rebuilding;
 
 static lv_obj_t *file_list;
+static lv_obj_t *file_body;
 static lv_obj_t *empty_label;
 static lv_obj_t *title_label;
+static file_row_t file_rows[FILE_ROW_POOL];
+static int file_pool_first = -1;
 
 
 // The name dialog, in the shape the playlist page uses: a full-screen layer
@@ -155,6 +170,26 @@ static lv_obj_t *pick_title;
 static lv_obj_t *pick_here_btn;
 static lv_obj_t *pick_here_label;
 static char pick_path[PATH_MAX_LEN];
+
+// The picker is a folder list of its own, and a card's root can hold as many
+// folders as the file list holds entries. It gets the same treatment: one
+// canvas, a fixed pool of rows over it, and the names kept in one array that a
+// row reads from when it is bound, rather than a copy owned by each row.
+#define PICK_ROW_POOL 12
+#define PICK_ROW_GAP 8
+#define PICK_ROW_PITCH (ROW_HEIGHT + PICK_ROW_GAP)
+
+typedef struct {
+	lv_obj_t *button;
+	lv_obj_t *label;
+	int index;
+} pick_row_t;
+
+static lv_obj_t *pick_body;
+static pick_row_t pick_rows[PICK_ROW_POOL];
+static int pick_pool_first = -1;
+static char (*pick_names)[NAME_MAX + 1];
+static int pick_name_count;
 
 static void rebuild(void);
 
@@ -230,12 +265,31 @@ static bool ext_is_known(const char *name) {
 }
 
 // The player's own way of putting a size on screen, the same one the transfer
-// page uses.
+// page uses. Integer arithmetic on purpose: this runs when a row is bound, in
+// the middle of a scroll, and a printf floating-point conversion is a detour
+// through the C library for two digits nobody needs more precisely than this.
 static void human_size(long long bytes, char *out, size_t size) {
+	if (bytes < 0) {
+		bytes = 0;
+	}
 	if (bytes >= 1073741824LL) {
-		snprintf(out, size, "%.2f GB", (double)bytes / 1073741824.0);
+		long long whole = bytes / 1073741824LL;
+		long long rem = bytes % 1073741824LL;
+		long long frac = (rem * 100 + 536870912LL) / 1073741824LL;
+		if (frac >= 100) {
+			whole++;
+			frac -= 100;
+		}
+		snprintf(out, size, "%lld.%02lld GB", whole, frac);
 	} else if (bytes >= 1048576LL) {
-		snprintf(out, size, "%.1f MB", (double)bytes / 1048576.0);
+		long long whole = bytes / 1048576LL;
+		long long rem = bytes % 1048576LL;
+		long long frac = (rem * 10 + 524288LL) / 1048576LL;
+		if (frac >= 10) {
+			whole++;
+			frac -= 10;
+		}
+		snprintf(out, size, "%lld.%lld MB", whole, frac);
 	} else if (bytes >= 1024LL) {
 		snprintf(out, size, "%lld KB", bytes / 1024);
 	} else {
@@ -267,7 +321,6 @@ static void entries_free(void) {
 	free(entries);
 	entries = NULL;
 	entry_count = 0;
-	entries_built = 0;
 	skipped = 0;
 }
 
@@ -673,7 +726,11 @@ static void pick_row_cb(lv_event_t *e) {
 	if (gesture_not_tap()) {
 		return;
 	}
-	const char *name = lv_event_get_user_data(e);
+	pick_row_t *row = lv_event_get_user_data(e);
+	if (!row || row->index < 0 || row->index >= pick_name_count) {
+		return;
+	}
+	const char *name = pick_names[row->index];
 	char next[PATH_MAX_LEN];
 	int wrote = snprintf(next, sizeof(next), "%s/%s", pick_path, name);
 	if (wrote < 0 || (size_t)wrote >= sizeof(next)) {
@@ -687,8 +744,69 @@ static void pick_row_cb(lv_event_t *e) {
 
 // Folders only: nothing else can be a destination, and a list of every track on
 // the card would bury the three folders that can.
+static int pick_name_cmp(const void *a, const void *b) { return strcasecmp((const char *)a, (const char *)b); }
+
+static void pick_row_bind(pick_row_t *row, int index) {
+	if (row->index == index) {
+		return;
+	}
+	if (index < 0 || index >= pick_name_count) {
+		row->index = -1;
+		lv_obj_set_hidden(row->button, true);
+		return;
+	}
+	row->index = index;
+	lv_obj_set_hidden(row->button, false);
+	lv_obj_set_y(row->button, index * PICK_ROW_PITCH);
+	lv_label_set_text(row->label, pick_names[index]);
+}
+
+static int pick_pool_first_for(void) {
+	if (pick_name_count <= 0) {
+		return 0;
+	}
+	int scroll = lv_obj_get_scroll_y(pick_list);
+	if (scroll < 0) {
+		scroll = 0;
+	}
+	int first = scroll / PICK_ROW_PITCH - 1;
+	if (first + PICK_ROW_POOL > pick_name_count) {
+		first = pick_name_count - PICK_ROW_POOL;
+	}
+	if (first < 0) {
+		first = 0;
+	}
+	return first;
+}
+
+static void pick_window_update(void) {
+	int first = pick_pool_first_for();
+	for (int i = 0; i < PICK_ROW_POOL; i++) {
+		int index = first + i;
+		pick_row_bind(&pick_rows[index % PICK_ROW_POOL], index < pick_name_count ? index : -1);
+	}
+	pick_pool_first = first;
+}
+
+static void pick_scroll_cb(lv_event_t *e) {
+	(void)e;
+	if (pick_pool_first_for() != pick_pool_first) {
+		pick_window_update();
+	}
+}
+
+static void pick_rows_reset(void) {
+	for (int i = 0; i < PICK_ROW_POOL; i++) {
+		pick_rows[i].index = -2; // the folder under this row is a different one now
+		lv_obj_set_hidden(pick_rows[i].button, true);
+	}
+	pick_pool_first = -1;
+}
+
 static void pick_rebuild(void) {
-	lv_obj_clean(pick_list);
+	free(pick_names);
+	pick_names = NULL;
+	pick_name_count = 0;
 
 	const char *slash = strrchr(pick_path, '/');
 	lv_label_set_text(pick_title, strcmp(pick_path, root_path) == 0 ? tr("file_explorer") : (slash ? slash + 1 : pick_path));
@@ -696,6 +814,9 @@ static void pick_rebuild(void) {
 
 	DIR *dir = opendir(pick_path);
 	if (!dir) {
+		pick_rows_reset();
+		lv_obj_set_height(pick_body, 0);
+		lv_obj_scroll_to_y(pick_list, 0, LV_ANIM_OFF);
 		return;
 	}
 
@@ -724,60 +845,26 @@ static void pick_rebuild(void) {
 	closedir(dir);
 
 	if (!names) {
+		pick_rows_reset();
+		lv_obj_set_height(pick_body, 0);
+		lv_obj_scroll_to_y(pick_list, 0, LV_ANIM_OFF);
 		return;
 	}
 
-	for (int i = 0; i < count - 1; i++) {
-		for (int j = i + 1; j < count; j++) {
-			if (strcasecmp(names[i], names[j]) > 0) {
-				char swap[NAME_MAX + 1];
-				snprintf(swap, sizeof(swap), "%s", names[i]);
-				snprintf(names[i], NAME_MAX + 1, "%s", names[j]);
-				snprintf(names[j], NAME_MAX + 1, "%s", swap);
-			}
-		}
+	// qsort rather than the pairwise pass this used to run: a card root holding
+	// hundreds of folders made opening the picker quadratic.
+	if (count > 1) {
+		qsort(names, (size_t)count, NAME_MAX + 1, pick_name_cmp);
 	}
 
-	for (int i = 0; i < count; i++) {
-		lv_obj_t *row = lv_btn_create(pick_list);
-		lv_obj_set_size(row, lv_pct(100), ROW_HEIGHT);
-		lv_obj_add_style(row, &theme_style_card, 0);
-		lv_obj_add_style(row, &theme_style_card_pressed, LV_STATE_PRESSED);
-		lv_obj_set_style_radius(row, FILE_ROW_RADIUS, 0);
-		lv_obj_set_style_border_width(row, 0, 0);
-		lv_obj_set_style_shadow_width(row, 0, 0);
-		lv_obj_set_style_pad_hor(row, FILE_ROW_PAD_HOR, 0);
-		lv_obj_set_style_pad_column(row, FILE_ROW_GAP, 0);
-		// A button keeps a default vertical padding big enough to swallow a
-		// 44 px row whole; the 480-px players keep theirs.
-		if (bp_is_tempotec_v1()) {
-			lv_obj_set_style_pad_ver(row, 2, 0);
-		}
-		lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-		lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-		// The row owns the copy the callback reads: the array above is freed
-		// before the first tap can happen.
-		char *kept = strdup(names[i]);
-		if (!kept) {
-			break;
-		}
-		lv_obj_add_event_cb(row, pick_row_cb, LV_EVENT_CLICKED, kept);
-
-		lv_obj_t *glyph = lv_image_create(row);
-		lv_image_set_src(glyph, &icon_folder);
-		lv_obj_add_style(glyph, &theme_style_icon, 0);
-		lv_obj_set_style_image_recolor(glyph, theme()->accent, 0);
-		lv_obj_set_style_image_recolor_opa(glyph, LV_OPA_COVER, 0);
-
-		lv_obj_t *label = lv_label_create(row);
-		lv_label_set_text(label, names[i]);
-		lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
-		lv_obj_set_flex_grow(label, 1);
-		lv_obj_set_height(label, lv_font_get_line_height(FILE_NAME_FONT));
-		lv_obj_add_style(label, &theme_style_text, 0);
-		lv_obj_set_style_text_font(label, FILE_NAME_FONT, 0);
-	}
-	free(names);
+	pick_names = names;
+	pick_name_count = count;
+	pick_rows_reset();
+	lv_obj_set_height(pick_body, count > 0 ? count * PICK_ROW_PITCH - PICK_ROW_GAP : 0);
+	// Back to the top before binding, so the pool holds the first screenful of
+	// this folder rather than whatever was under the scroll position of the last.
+	lv_obj_scroll_to_y(pick_list, 0, LV_ANIM_OFF);
+	pick_window_update();
 }
 
 static void pick_hide(void) {
@@ -942,7 +1029,8 @@ static void entry_menu_cb(lv_event_t *e) {
 	if (gesture_not_tap()) {
 		return;
 	}
-	int index = (int)(intptr_t)lv_event_get_user_data(e);
+	file_row_t *row = lv_event_get_user_data(e);
+	int index = row ? row->index : -1;
 	if (index < 0 || index >= entry_count) {
 		return;
 	}
@@ -961,7 +1049,8 @@ static void row_clicked_cb(lv_event_t *e) {
 	if (gesture_not_tap()) {
 		return;
 	}
-	int index = (int)(intptr_t)lv_event_get_user_data(e);
+	file_row_t *row = lv_event_get_user_data(e);
+	int index = row ? row->index : -1;
 	if (index < 0 || index >= entry_count) {
 		return;
 	}
@@ -993,104 +1082,111 @@ static void row_clicked_cb(lv_event_t *e) {
 	lv_obj_scroll_to_y(file_list, 0, LV_ANIM_OFF);
 }
 
-static void build_row(int index) {
-	const entry_t *entry = &entries[index];
-
-	lv_obj_t *row = lv_btn_create(file_list);
-	lv_obj_set_size(row, lv_pct(100), ROW_HEIGHT);
-	lv_obj_add_style(row, &theme_style_card, 0);
-	lv_obj_add_style(row, &theme_style_card_pressed, LV_STATE_PRESSED);
-	lv_obj_set_style_radius(row, FILE_ROW_RADIUS, 0);
-	lv_obj_set_style_border_width(row, 0, 0);
-	lv_obj_set_style_shadow_width(row, 0, 0);
-	lv_obj_set_style_pad_hor(row, FILE_ROW_PAD_HOR, 0);
-	lv_obj_set_style_pad_column(row, FILE_ROW_GAP, 0);
-	// A button keeps a default vertical padding big enough to swallow a
-	// 44 px row whole; the 480-px players keep theirs.
-	if (bp_is_tempotec_v1()) {
-		lv_obj_set_style_pad_ver(row, 2, 0);
+static void file_row_show_size(file_row_t *row) {
+	entry_t *entry = &entries[row->index];
+	if (entry->dir) {
+		lv_obj_set_hidden(row->size_label, true);
+		return;
 	}
-	lv_obj_set_event_bubble(row, true);
-	lv_obj_add_event_cb(row, row_clicked_cb, LV_EVENT_CLICKED, (void *)(intptr_t)index);
-	lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-	lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-	lv_obj_t *glyph = lv_image_create(row);
-	lv_image_set_src(glyph, glyph_for(entry));
-	lv_obj_add_style(glyph, &theme_style_icon, 0);
-	// A folder in the accent, everything else in the quiet text colour: the one
-	// thing worth telling apart at a glance is what can be entered.
-	lv_obj_set_style_image_recolor(glyph, entry->dir ? theme()->accent : theme()->text_secondary, 0);
-	lv_obj_set_style_image_recolor_opa(glyph, LV_OPA_COVER, 0);
-
-	lv_obj_t *label = lv_label_create(row);
-	lv_label_set_text(label, entry->name);
-	lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
-	lv_obj_set_flex_grow(label, 1);
-	// One line, then dots. Without a height the label wraps instead, and a long
-	// name then grows past the fixed row it lives in.
-	lv_obj_set_height(label, lv_font_get_line_height(FILE_NAME_FONT));
-	lv_obj_add_style(label, &theme_style_text, 0);
-	lv_obj_set_style_text_font(label, FILE_NAME_FONT, 0);
-
-	// The size, asked of the card only for the rows that are really built.
-	if (!entry->dir) {
+	// A stat on the card is the one part of binding a row that can block; ask
+	// once per file and keep the answer, so a row scrolled out and back does not
+	// ask again.
+	if (!entry->size_known) {
 		char full[PATH_MAX_LEN + NAME_MAX + 2];
 		struct stat st;
-		if (child_path(entry->name, full, sizeof(full)) && stat(full, &st) == 0) {
-			char text[24];
-			human_size((long long)st.st_size, text, sizeof(text));
-			lv_obj_t *size_label = lv_label_create(row);
-			lv_label_set_text(size_label, text);
-			lv_obj_add_style(size_label, &theme_style_text_dim, 0);
-			lv_obj_set_style_text_font(size_label, FILE_SIZE_FONT, 0);
-		}
+		entry->size = (child_path(entry->name, full, sizeof(full)) && stat(full, &st) == 0) ? (long long)st.st_size : -1;
+		entry->size_known = true;
 	}
 
-	lv_obj_t *dots = lv_btn_create(row);
-	lv_obj_set_size(dots, FILE_ROW_DOTS, FILE_ROW_DOTS);
-	lv_obj_set_style_bg_opa(dots, LV_OPA_TRANSP, 0);
-	lv_obj_set_style_border_width(dots, 0, 0);
-	lv_obj_set_style_shadow_width(dots, 0, 0);
-	lv_obj_set_style_pad_all(dots, 0, 0);
-	lv_obj_add_event_cb(dots, entry_menu_cb, LV_EVENT_CLICKED, (void *)(intptr_t)index);
+	if (entry->size < 0) {
+		lv_obj_set_hidden(row->size_label, true);
+		return;
+	}
 
-	lv_obj_t *dots_glyph = lv_image_create(dots);
-	lv_image_set_src(dots_glyph, &icon_ellipsis_vertical);
-	lv_obj_add_style(dots_glyph, &theme_style_icon, 0);
-	lv_obj_set_style_image_opa(dots_glyph, LV_OPA_60, 0);
-	lv_obj_center(dots_glyph);
+	char text[24];
+	human_size(entry->size, text, sizeof(text));
+	lv_label_set_text(row->size_label, text);
+	lv_obj_set_hidden(row->size_label, false);
 }
 
-static void rows_add(int how_many) {
-	int end = entries_built + how_many;
-	if (end > entry_count) {
-		end = entry_count;
+static void file_row_bind(file_row_t *row, int index) {
+	if (row->index == index) {
+		return;
 	}
-	for (; entries_built < end; entries_built++) {
-		build_row(entries_built);
+
+	row->index = index;
+	if (index < 0 || index >= entry_count) {
+		lv_obj_set_hidden(row->button, true);
+		return;
 	}
+
+	const entry_t *entry = &entries[index];
+	lv_obj_set_hidden(row->button, false);
+	lv_obj_set_y(row->button, index * FILE_ROW_PITCH);
+
+	// A row that comes back with the same name (the list was read again to the
+	// same length) keeps its label and its measured layout rather than being
+	// dirtied for a string LVGL would set identically.
+	const char *shown = lv_label_get_text(row->label);
+	if (!shown || strcmp(shown, entry->name) != 0) {
+		lv_label_set_text(row->label, entry->name);
+	}
+
+	lv_image_set_src(row->glyph, glyph_for(entry));
+	// A folder in the accent, everything else in the quiet text colour: the one
+	// thing worth telling apart at a glance is what can be entered.
+	lv_obj_set_style_image_recolor(row->glyph, entry->dir ? theme()->accent : theme()->text_secondary, 0);
+	lv_obj_set_style_image_recolor_opa(row->glyph, LV_OPA_COVER, 0);
+
+	file_row_show_size(row);
 }
 
-// Keeps going until there is something below the fold, so a short first batch
-// on a tall list still leaves a scroll to ask for the rest with.
-static void rows_fill(void) {
-	for (int guard = 0; guard < 4 && entries_built < entry_count; guard++) {
-		lv_obj_update_layout(file_list);
-		if (lv_obj_get_scroll_bottom(file_list) > 0) {
-			return;
-		}
-		rows_add(ROWS_MORE);
+// The first index the pool should cover for the list's current scroll position,
+// one row above the top edge so a one-pixel scroll cannot expose a blank row.
+static int file_pool_first_for(void) {
+	int scroll = lv_obj_get_scroll_y(file_list);
+	if (scroll < 0) {
+		scroll = 0;
 	}
+
+	int first = (scroll / FILE_ROW_PITCH) - 1;
+	if (first + FILE_ROW_POOL > entry_count) {
+		first = entry_count - FILE_ROW_POOL;
+	}
+	if (first < 0) {
+		first = 0;
+	}
+	return first;
+}
+
+// index -> widget index % FILE_ROW_POOL: a one-step slide of the band rebinds
+// exactly the row that left and the row that entered, and the widgets stay put.
+static void file_window_update(void) {
+	if (entry_count == 0) {
+		for (int i = 0; i < FILE_ROW_POOL; i++) {
+			file_row_bind(&file_rows[i], -1);
+		}
+		file_pool_first = -1;
+		return;
+	}
+
+	int first = file_pool_first_for();
+	if (first == file_pool_first) {
+		return;
+	}
+
+	for (int i = 0; i < FILE_ROW_POOL; i++) {
+		int index = first + i;
+		file_row_bind(&file_rows[index % FILE_ROW_POOL], index < entry_count ? index : -1);
+	}
+	file_pool_first = first;
 }
 
 static void list_scrolled_cb(lv_event_t *e) {
 	(void)e;
-	if (rebuilding || entries_built >= entry_count) {
-		return;
-	}
-	if (lv_obj_get_scroll_bottom(file_list) < lv_obj_get_height(file_list)) {
-		rows_add(ROWS_MORE);
+	if (!rebuilding) {
+		file_window_update();
 	}
 }
 
@@ -1109,26 +1205,83 @@ static void title_refresh(void) {
 
 static void rebuild(void) {
 	rebuilding = true;
-	lv_obj_clean(file_list);
-	empty_label = NULL;
-
 	read_folder();
 	title_refresh();
 	rebuilding = false;
 
-	if (entry_count == 0) {
-		empty_label = lv_label_create(file_list);
-		lv_label_set_text(empty_label, tr("files_this_folder_is_empty"));
-		lv_obj_set_style_text_align(empty_label, LV_TEXT_ALIGN_CENTER, 0);
-		lv_obj_set_width(empty_label, lv_pct(100));
-		lv_obj_add_style(empty_label, &theme_style_text_dim, 0);
-		lv_obj_set_style_text_font(empty_label, &font_ui_22, 0);
-		lv_obj_set_style_pad_top(empty_label, 80, 0);
-		return;
-	}
+	// The body is the whole list, the rows a fixed pool over it. Setting the
+	// height is what gives the scroll bar and the fling the right range before
+	// a single row has been bound.
+	lv_obj_set_height(file_body, entry_count ? entry_count * FILE_ROW_PITCH : FILE_ROW_PITCH);
+	lv_obj_set_hidden(file_body, entry_count == 0);
+	lv_obj_set_hidden(empty_label, entry_count != 0);
 
-	rows_add(ROWS_FIRST);
-	rows_fill();
+	// Every row stands for a different entry now; the next window_update() binds
+	// the band it should hold.
+	for (int i = 0; i < FILE_ROW_POOL; i++) {
+		file_rows[i].index = -2;
+	}
+	file_pool_first = -1;
+
+	lv_obj_update_layout(file_list);
+	lv_obj_scroll_to_y(file_list, 0, LV_ANIM_OFF);
+	file_window_update();
+}
+
+static void file_row_create(file_row_t *row) {
+	row->button = lv_btn_create(file_body);
+	lv_obj_set_size(row->button, lv_pct(100), ROW_HEIGHT);
+	lv_obj_set_x(row->button, 0);
+	lv_obj_add_style(row->button, &theme_style_card, 0);
+	lv_obj_add_style(row->button, &theme_style_card_pressed, LV_STATE_PRESSED);
+	lv_obj_set_style_radius(row->button, FILE_ROW_RADIUS, 0);
+	lv_obj_set_style_border_width(row->button, 0, 0);
+	lv_obj_set_style_shadow_width(row->button, 0, 0);
+	lv_obj_set_style_pad_hor(row->button, FILE_ROW_PAD_HOR, 0);
+	lv_obj_set_style_pad_column(row->button, FILE_ROW_GAP, 0);
+	// A button keeps a default vertical padding big enough to swallow a 44 px
+	// row whole; the 480-px players keep theirs.
+	if (bp_is_tempotec_v1()) {
+		lv_obj_set_style_pad_ver(row->button, 2, 0);
+	}
+	lv_obj_set_event_bubble(row->button, true);
+	lv_obj_add_event_cb(row->button, row_clicked_cb, LV_EVENT_CLICKED, row);
+	lv_obj_set_flex_flow(row->button, LV_FLEX_FLOW_ROW);
+	lv_obj_set_flex_align(row->button, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+	row->glyph = lv_image_create(row->button);
+	lv_obj_add_style(row->glyph, &theme_style_icon, 0);
+
+	row->label = lv_label_create(row->button);
+	lv_label_set_long_mode(row->label, LV_LABEL_LONG_DOT);
+	lv_obj_set_flex_grow(row->label, 1);
+	// One line, then dots. Without a height the label wraps instead, and a long
+	// name then grows past the fixed row it lives in.
+	lv_obj_set_height(row->label, lv_font_get_line_height(FILE_NAME_FONT));
+	lv_obj_add_style(row->label, &theme_style_text, 0);
+	lv_obj_set_style_text_font(row->label, FILE_NAME_FONT, 0);
+
+	row->size_label = lv_label_create(row->button);
+	lv_obj_add_style(row->size_label, &theme_style_text_dim, 0);
+	lv_obj_set_style_text_font(row->size_label, FILE_SIZE_FONT, 0);
+	lv_obj_set_hidden(row->size_label, true);
+
+	row->dots = lv_btn_create(row->button);
+	lv_obj_set_size(row->dots, FILE_ROW_DOTS, FILE_ROW_DOTS);
+	lv_obj_set_style_bg_opa(row->dots, LV_OPA_TRANSP, 0);
+	lv_obj_set_style_border_width(row->dots, 0, 0);
+	lv_obj_set_style_shadow_width(row->dots, 0, 0);
+	lv_obj_set_style_pad_all(row->dots, 0, 0);
+	lv_obj_add_event_cb(row->dots, entry_menu_cb, LV_EVENT_CLICKED, row);
+
+	lv_obj_t *dots_glyph = lv_image_create(row->dots);
+	lv_image_set_src(dots_glyph, &icon_ellipsis_vertical);
+	lv_obj_add_style(dots_glyph, &theme_style_icon, 0);
+	lv_obj_set_style_image_opa(dots_glyph, LV_OPA_60, 0);
+	lv_obj_center(dots_glyph);
+
+	lv_obj_set_hidden(row->button, true);
+	row->index = -1;
 }
 
 // The chevron goes up a folder while there is one to go up to, and off the page
@@ -1220,13 +1373,36 @@ void filespage_init(gui_config_t *cfg) {
 	lv_obj_set_style_radius(file_list, 0, 0);
 	lv_obj_set_style_pad_hor(file_list, cfg->padding, 0);
 	lv_obj_set_style_pad_ver(file_list, 0, 0);
-	lv_obj_set_style_pad_gap(file_list, 8, 0);
+	lv_obj_set_style_pad_gap(file_list, 0, 0);
 	lv_obj_set_scroll_dir(file_list, LV_DIR_VER);
-	lv_obj_set_flex_flow(file_list, LV_FLEX_FLOW_COLUMN);
 	// Set here and not in the row builder: an empty folder creates no rows, and
 	// the page still has to answer the swipe back.
 	lv_obj_set_event_bubble(file_list, true);
 	lv_obj_add_event_cb(file_list, list_scrolled_cb, LV_EVENT_SCROLL, NULL);
+
+	file_body = lv_obj_create(file_list);
+	lv_obj_set_width(file_body, lv_pct(100));
+	lv_obj_set_height(file_body, FILE_ROW_PITCH);
+	lv_obj_set_pos(file_body, 0, 0);
+	lv_obj_set_style_bg_opa(file_body, 0, 0);
+	lv_obj_set_style_border_width(file_body, 0, 0);
+	lv_obj_set_style_radius(file_body, 0, 0);
+	lv_obj_set_style_pad_all(file_body, 0, 0);
+	lv_obj_set_scrollable(file_body, false);
+	lv_obj_set_event_bubble(file_body, true);
+
+	for (int i = 0; i < FILE_ROW_POOL; i++) {
+		file_row_create(&file_rows[i]);
+	}
+
+	empty_label = lv_label_create(file_list);
+	lv_label_set_text(empty_label, tr("files_this_folder_is_empty"));
+	lv_obj_set_width(empty_label, lv_pct(100));
+	lv_obj_set_style_text_align(empty_label, LV_TEXT_ALIGN_CENTER, 0);
+	lv_obj_add_style(empty_label, &theme_style_text_dim, 0);
+	lv_obj_set_style_text_font(empty_label, &font_ui_22, 0);
+	lv_obj_align(empty_label, LV_ALIGN_TOP_MID, 0, 80);
+	lv_obj_set_hidden(empty_label, true);
 
 	// --- the naming dialog, in the shape the playlist page uses
 	name_layer = lv_obj_create(filespage_screen);
@@ -1335,9 +1511,53 @@ void filespage_init(gui_config_t *cfg) {
 	lv_obj_set_style_radius(pick_list, 0, 0);
 	lv_obj_set_style_pad_hor(pick_list, cfg->padding, 0);
 	lv_obj_set_style_pad_ver(pick_list, 0, 0);
-	lv_obj_set_style_pad_gap(pick_list, 8, 0);
 	lv_obj_set_scroll_dir(pick_list, LV_DIR_VER);
-	lv_obj_set_flex_flow(pick_list, LV_FLEX_FLOW_COLUMN);
+	lv_obj_add_event_cb(pick_list, pick_scroll_cb, LV_EVENT_SCROLL, NULL);
+
+	pick_body = lv_obj_create(pick_list);
+	lv_obj_remove_style_all(pick_body);
+	lv_obj_set_width(pick_body, lv_pct(100));
+	lv_obj_set_height(pick_body, 0);
+	lv_obj_set_scrollable(pick_body, false);
+	lv_obj_set_clickable(pick_body, false);
+
+	for (int i = 0; i < PICK_ROW_POOL; i++) {
+		pick_row_t *row = &pick_rows[i];
+		row->index = -2;
+
+		row->button = lv_btn_create(pick_body);
+		lv_obj_set_size(row->button, lv_pct(100), ROW_HEIGHT);
+		lv_obj_set_x(row->button, 0);
+		lv_obj_add_style(row->button, &theme_style_card, 0);
+		lv_obj_add_style(row->button, &theme_style_card_pressed, LV_STATE_PRESSED);
+		lv_obj_set_style_radius(row->button, FILE_ROW_RADIUS, 0);
+		lv_obj_set_style_border_width(row->button, 0, 0);
+		lv_obj_set_style_shadow_width(row->button, 0, 0);
+		lv_obj_set_style_pad_hor(row->button, FILE_ROW_PAD_HOR, 0);
+		lv_obj_set_style_pad_column(row->button, FILE_ROW_GAP, 0);
+		// A button keeps a default vertical padding big enough to swallow a
+		// 44 px row whole; the 480-px players keep theirs.
+		if (bp_is_tempotec_v1()) {
+			lv_obj_set_style_pad_ver(row->button, 2, 0);
+		}
+		lv_obj_set_flex_flow(row->button, LV_FLEX_FLOW_ROW);
+		lv_obj_set_flex_align(row->button, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+		lv_obj_set_hidden(row->button, true);
+		lv_obj_add_event_cb(row->button, pick_row_cb, LV_EVENT_CLICKED, row);
+
+		lv_obj_t *glyph = lv_image_create(row->button);
+		lv_image_set_src(glyph, &icon_folder);
+		lv_obj_add_style(glyph, &theme_style_icon, 0);
+		lv_obj_set_style_image_recolor(glyph, theme()->accent, 0);
+		lv_obj_set_style_image_recolor_opa(glyph, LV_OPA_COVER, 0);
+
+		row->label = lv_label_create(row->button);
+		lv_label_set_long_mode(row->label, LV_LABEL_LONG_DOT);
+		lv_obj_set_flex_grow(row->label, 1);
+		lv_obj_set_height(row->label, lv_font_get_line_height(FILE_NAME_FONT));
+		lv_obj_add_style(row->label, &theme_style_text, 0);
+		lv_obj_set_style_text_font(row->label, FILE_NAME_FONT, 0);
+	}
 
 	lv_obj_add_event_cb(filespage_screen, loaded_cb, LV_EVENT_SCREEN_LOADED, NULL);
 	switcher_attach_back_gesture(file_list);

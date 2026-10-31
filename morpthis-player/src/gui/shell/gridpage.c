@@ -9,6 +9,7 @@
 #include "src/gui/fonts/fonts.h"
 #include "src/gui/nowplaying/player.h"
 #include "src/gui/shell/icons.h"
+#include "src/gui/shell/iconscale.h"
 #include "src/gui/shell/settingsrow.h"
 #include "src/gui/shell/switcher.h"
 #include "src/gui/shell/theme.h"
@@ -170,14 +171,12 @@ void gridpage_set_tile_icon_style(lv_obj_t *grid, int index, const lv_image_dsc_
 	int target_side = icon_size > 0 ? icon_size : max_side;
 	int icon_w = LV_MAX(1, source_w * target_side / max_side);
 	int icon_h = LV_MAX(1, source_h * target_side / max_side);
-	uint32_t icon_scale = (uint32_t)(LV_SCALE_NONE * target_side / max_side);
-	if (icon_scale == 0) {
-		icon_scale = 1;
-	}
 
 	lv_obj_set_size(icon, icon_w, icon_h);
 	lv_image_set_inner_align(icon, LV_IMAGE_ALIGN_CENTER);
-	lv_image_set_scale(icon, icon_scale);
+	// Menu art is 112-128 px and a compact tile is smaller than that: the
+	// resample belongs here, once, not in every frame the tile is drawn in.
+	iconscale_set(icon, source, target_side);
 	if (recolor) {
 		lv_obj_set_style_image_recolor(icon, color, 0);
 		lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, 0);
@@ -207,13 +206,9 @@ void gridpage_set_tile_icon_style(lv_obj_t *grid, int index, const lv_image_dsc_
 	int halo_side = target_side + 6;
 	int halo_w = LV_MAX(1, source_w * halo_side / max_side);
 	int halo_h = LV_MAX(1, source_h * halo_side / max_side);
-	uint32_t halo_scale = (uint32_t)(LV_SCALE_NONE * halo_side / max_side);
-	if (halo_scale == 0) {
-		halo_scale = 1;
-	}
 	lv_obj_set_size(halo, halo_w, halo_h);
 	lv_image_set_inner_align(halo, LV_IMAGE_ALIGN_CENTER);
-	lv_image_set_scale(halo, halo_scale);
+	iconscale_set(halo, source, halo_side);
 	lv_obj_set_hidden(halo, !glow);
 
 	// If a theme change moved the tile, refresh the echo's position after the
@@ -526,7 +521,7 @@ static void add_tile(lv_obj_t *grid, const grid_entry_t *entry, int width, int h
 			int icon_h = LV_MAX(1, source_h * COMPACT_TILE_ICON_MAX / max_side);
 			lv_obj_set_size(icon, icon_w, icon_h);
 			lv_image_set_inner_align(icon, LV_IMAGE_ALIGN_CENTER);
-			lv_image_set_scale(icon, (uint32_t)(LV_SCALE_NONE * COMPACT_TILE_ICON_MAX / max_side));
+			iconscale_set(icon, entry->icon, COMPACT_TILE_ICON_MAX);
 		}
 	}
 
@@ -689,7 +684,7 @@ lv_obj_t *gridpage_empty_panel(lv_obj_t *screen, gui_config_t *cfg, const lv_ima
 			int icon_h = LV_MAX(1, source_h * COMPACT_EMPTY_ICON_MAX / max_side);
 			lv_obj_set_size(picture, icon_w, icon_h);
 			lv_image_set_inner_align(picture, LV_IMAGE_ALIGN_CENTER);
-			lv_image_set_scale(picture, (uint32_t)(LV_SCALE_NONE * COMPACT_EMPTY_ICON_MAX / max_side));
+			iconscale_set(picture, icon, COMPACT_EMPTY_ICON_MAX);
 		}
 	}
 

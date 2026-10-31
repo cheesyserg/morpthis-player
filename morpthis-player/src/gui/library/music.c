@@ -19,6 +19,7 @@
 #include "src/gui/shell/gridpage.h"
 #include "src/gui/shell/gui.h"
 #include "src/gui/shell/icons.h"
+#include "src/gui/shell/iconscale.h"
 #include "src/gui/shell/popover.h"
 #include "src/gui/shell/settingsrow.h"
 #include "src/gui/shell/switcher.h"
@@ -311,12 +312,12 @@ static lv_obj_t *make_browse_button(lv_obj_t *parent, const char *label_key, con
 	lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, NULL);
 
 	lv_obj_t *icon = lv_image_create(button);
-	lv_image_set_src(icon, source);
 	lv_obj_add_style(icon, &theme_style_icon, 0);
 	lv_obj_set_size(icon, 17, 17);
 	lv_image_set_inner_align(icon, LV_IMAGE_ALIGN_CENTER);
-	int source_side = LV_MAX((int)source->header.w, (int)source->header.h);
-	lv_image_set_scale(icon, source_side ? (uint32_t)(LV_SCALE_NONE * 17 / source_side) : LV_SCALE_NONE);
+	// The Music page scrolls, so the icon is scaled once here instead of being
+	// resampled into a scratch buffer on every frame the list is dragged.
+	iconscale_set(icon, source, 17);
 	lv_obj_set_style_image_recolor(icon, theme_semantic_color(tone), 0);
 	lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, 0);
 	if (index >= 0 && index < MORPTHIS_BROWSE_COUNT) {
@@ -417,11 +418,9 @@ static void add_shortcut_row(lv_obj_t *card, const char *label_key, const lv_ima
 	lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, NULL);
 
 	lv_obj_t *icon = lv_image_create(button);
-	lv_image_set_src(icon, source);
 	lv_obj_add_style(icon, &theme_style_icon, 0);
 	lv_obj_set_size(icon, 18, 18);
-	int side = LV_MAX((int)source->header.w, (int)source->header.h);
-	lv_image_set_scale(icon, side ? (uint32_t)(LV_SCALE_NONE * 18 / side) : LV_SCALE_NONE);
+	iconscale_set(icon, source, 18);
 	lv_image_set_inner_align(icon, LV_IMAGE_ALIGN_CENTER);
 	lv_obj_set_style_image_recolor(icon, theme_semantic_color(tone), 0);
 	lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, 0);
@@ -438,10 +437,9 @@ static void add_shortcut_row(lv_obj_t *card, const char *label_key, const lv_ima
 	lv_obj_set_height(label, lv_font_get_line_height(&font_ui_14) * (wrap ? 2 : 1));
 
 	lv_obj_t *chevron = lv_image_create(button);
-	lv_image_set_src(chevron, &icon_chevron_right);
 	lv_obj_add_style(chevron, &theme_style_icon, 0);
 	lv_obj_set_size(chevron, 14, 14);
-	lv_image_set_scale(chevron, (uint32_t)(LV_SCALE_NONE * 14 / 36));
+	iconscale_set(chevron, &icon_chevron_right, 14);
 	lv_image_set_inner_align(chevron, LV_IMAGE_ALIGN_CENTER);
 	lv_obj_set_style_image_opa(chevron, LV_OPA_60, 0);
 }
@@ -590,11 +588,10 @@ static void morpthis_music_build(gui_config_t *cfg) {
 		lv_obj_add_event_cb(row->button, recent_track_clicked_cb, LV_EVENT_CLICKED, row);
 
 		row->icon = lv_image_create(row->button);
-		lv_image_set_src(row->icon, &icon_album);
 		lv_obj_set_size(row->icon, 25, 25);
 		lv_image_set_inner_align(row->icon, LV_IMAGE_ALIGN_CENTER);
-		lv_image_set_scale(row->icon, (uint32_t)(LV_SCALE_NONE * 25 / 32));
 		lv_obj_add_style(row->icon, &theme_style_icon, 0);
+		iconscale_set(row->icon, &icon_album, 25);
 		lv_obj_set_style_image_recolor(row->icon, theme_semantic_color(THEME_SEMANTIC_PURPLE), 0);
 		lv_obj_set_style_image_recolor_opa(row->icon, LV_OPA_COVER, 0);
 
@@ -623,10 +620,9 @@ static void morpthis_music_build(gui_config_t *cfg) {
 		lv_obj_set_style_text_font(row->artist, &font_ui_14, 0);
 
 		row->play_icon = lv_image_create(row->button);
-		lv_image_set_src(row->play_icon, &icon_play);
 		lv_obj_add_style(row->play_icon, &theme_style_icon, 0);
 		lv_obj_set_size(row->play_icon, 16, 16);
-		lv_image_set_scale(row->play_icon, (uint32_t)(LV_SCALE_NONE * 16 / 40));
+		iconscale_set(row->play_icon, &icon_play, 16);
 		lv_image_set_inner_align(row->play_icon, LV_IMAGE_ALIGN_CENTER);
 		lv_obj_set_style_image_recolor(row->play_icon, theme_semantic_color(THEME_SEMANTIC_CYAN), 0);
 		lv_obj_set_style_image_recolor_opa(row->play_icon, LV_OPA_COVER, 0);
@@ -691,10 +687,9 @@ static void morpthis_music_build(gui_config_t *cfg) {
 	lv_obj_set_event_bubble(morpthis_scan_button, true);
 	lv_obj_add_event_cb(morpthis_scan_button, scan_cb, LV_EVENT_CLICKED, NULL);
 	lv_obj_t *scan_icon = lv_image_create(morpthis_scan_button);
-	lv_image_set_src(scan_icon, &icon_folder);
 	lv_obj_add_style(scan_icon, &theme_style_icon, 0);
 	lv_obj_set_size(scan_icon, 18, 18);
-	lv_image_set_scale(scan_icon, (uint32_t)(LV_SCALE_NONE * 18 / 32));
+	iconscale_set(scan_icon, &icon_folder, 18);
 	lv_image_set_inner_align(scan_icon, LV_IMAGE_ALIGN_CENTER);
 	lv_obj_set_style_image_recolor(scan_icon, theme_semantic_color(THEME_SEMANTIC_CYAN), 0);
 	lv_obj_set_style_image_recolor_opa(scan_icon, LV_OPA_COVER, 0);

@@ -476,6 +476,10 @@ static void thumbs_update(void) {
 	}
 
 	bool busy = false;
+	// Art is decoded on a worker below the interface, but on one core it still
+	// costs cycles, and a fling asks for a new band every few rows. Requests wait
+	// until the list stops; results already on their way are still collected.
+	bool scrolling = lv_obj_is_scrolling(file_list);
 
 	for (int i = 0; i < ROW_POOL; i++) {
 		row_t *row = &rows[i];
@@ -493,6 +497,10 @@ static void thumbs_update(void) {
 		}
 
 		if (!row->thumb_requested) {
+			if (scrolling) {
+				busy = true; // ask again once the list has stopped
+				continue;
+			}
 			char entry_path[sizeof(current_path) + 256 + 1];
 			snprintf(entry_path, sizeof(entry_path), "%s/%s", current_path, entry_file((size_t)row->index));
 

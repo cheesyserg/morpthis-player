@@ -8,6 +8,7 @@
 #include "src/gui/fonts/fonts.h"
 #include "src/gui/shell/confirm.h"
 #include "src/gui/shell/icons.h"
+#include "src/gui/shell/iconscale.h"
 #include "src/gui/shell/keyboard.h"
 #include "src/gui/shell/popover.h"
 #include "src/gui/shell/scrolltext.h"
@@ -19,6 +20,22 @@
 #include "src/gui/shell/topbar.h"
 
 static const lv_image_dsc_t *icon_for(morpthis_icon_t icon);
+
+// Icon sources are 32-56 px and an icon button on the compact screen is 44 px,
+// so every one of them used to be drawn at 192/256 through the transform path,
+// on every frame it appeared in. Scaled once when it is set instead.
+static void sdk_icon_set(lv_obj_t *icon, const lv_image_dsc_t *src, bool shrink) {
+	if (!icon || !src) {
+		return;
+	}
+	int side = (int)src->header.w > (int)src->header.h ? (int)src->header.w : (int)src->header.h;
+	if (shrink && side > 0) {
+		iconscale_set(icon, src, (side * 192 + 128) / 256);
+		return;
+	}
+	lv_image_set_src(icon, src);
+	lv_image_set_scale(icon, LV_SCALE_NONE);
+}
 static void button_click_cb(lv_event_t *e);
 static morpthis_widget_t *widget_new(morpthis_screen_t *screen, sdk_widget_kind_t kind);
 
@@ -578,11 +595,8 @@ morpthis_widget_t *morpthis_icon_button_create(morpthis_screen_t *screen, morpth
 	flat_button_style(widget->obj);
 
 	widget->icon = lv_image_create(widget->obj);
-	lv_image_set_src(widget->icon, icon_for(icon));
 	lv_obj_add_style(widget->icon, &theme_style_icon, 0);
-	if (sdk_ui_compact() && side < 56) {
-		lv_image_set_scale(widget->icon, 192);
-	}
+	sdk_icon_set(widget->icon, icon_for(icon), sdk_ui_compact() && side < 56);
 	lv_obj_center(widget->icon);
 
 	widget->icon_kind = icon;
@@ -598,7 +612,7 @@ void morpthis_widget_set_icon(morpthis_widget_t *widget, morpthis_icon_t icon) {
 		return;
 	}
 	widget->icon_kind = icon;
-	lv_image_set_src(widget->icon, icon_for(icon));
+	sdk_icon_set(widget->icon, icon_for(icon), sdk_ui_compact() && lv_obj_get_width(widget->obj) < 56);
 }
 
 static lv_obj_t *text_target(morpthis_widget_t *widget) {

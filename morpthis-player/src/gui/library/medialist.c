@@ -1,6 +1,7 @@
 #include "medialist.h"
 
 #include <limits.h>
+#include <stdint.h>
 
 #include "src/system/library/playlists.h"
 
@@ -324,6 +325,45 @@ static bool album_view = true;
 // way down.
 static bool quality_badges;
 
+// The badge is read from the database per path, and a band cross binds one new
+// row: without a cache that is one SQLite lookup on the interface thread for
+// every row that scrolls in. Badges are a presentation detail and the path is
+// the key, so a small direct-mapped cache is enough. It is cleared when the
+// index is rebuilt, which is the only time the answer can change.
+#define QUALITY_CACHE_SLOTS 64
+
+typedef struct {
+	bool valid;
+	uint8_t quality;
+	char path[512];
+} quality_cache_t;
+
+static quality_cache_t quality_cache[QUALITY_CACHE_SLOTS];
+
+static void quality_cache_clear(void) { memset(quality_cache, 0, sizeof quality_cache); }
+
+static uint32_t quality_hash(const char *path) {
+	uint32_t h = 2166136261u;
+	for (const unsigned char *p = (const unsigned char *)path; *p; p++) {
+		h ^= *p;
+		h *= 16777619u;
+	}
+	return h;
+}
+
+static library_quality_t quality_for(const char *path) {
+	quality_cache_t *entry = &quality_cache[quality_hash(path) % QUALITY_CACHE_SLOTS];
+	if (entry->valid && strcmp(entry->path, path) == 0) {
+		return (library_quality_t)entry->quality;
+	}
+
+	library_quality_t quality = library_track_quality(path, NULL, NULL);
+	entry->valid = true;
+	entry->quality = (uint8_t)quality;
+	snprintf(entry->path, sizeof entry->path, "%s", path);
+	return quality;
+}
+
 // "Go to the current track": the five lists the Music page opens start at the
 // row of whatever is playing. Off by default.
 static bool go_to_current;
@@ -500,10 +540,12 @@ static bool window_fill_cb(const char *name, const char *path, const char *artis
 		return false;
 	}
 	winrow_t *row = &fill->panel->window[fill->filled++];
-	snprintf(row->name, sizeof(row->name), "%s", name && name[0] ? name : tr("medialist_no_name"));
+	// A bounded copy, not snprintf: these run once per row of a window refill,
+	// and "%s" costs a format parse for a string that is already a string.
+	lv_strlcpy(row->name, name && name[0] ? name : tr("medialist_no_name"), sizeof(row->name));
 	row->has_path = path != NULL;
-	snprintf(row->path, sizeof(row->path), "%s", path ? path : "");
-	snprintf(row->artist, sizeof(row->artist), "%s", artist ? artist : "");
+	lv_strlcpy(row->path, path ? path : "", sizeof(row->path));
+	lv_strlcpy(row->artist, artist ? artist : "", sizeof(row->artist));
 	return true;
 }
 
@@ -523,6 +565,7 @@ static void panel_refresh_stale(panel_t *p) {
 	library_index_close(p->ix);
 	p->ix = fresh;
 	p->play_counts_rev = library_play_counts_revision();
+	quality_cache_clear(); // the table behind every badge may have changed
 	int old_count = p->count;
 	p->count = library_index_count(fresh);
 	DEBUG_ERR("medialist: index reload %d -> %d rows\n", old_count, p->count);
@@ -576,7 +619,15 @@ static bool window_cover(panel_t *p, int index) {
 	}
 
 	window_fill_t fill = {.panel = p, .filled = 0};
+	bool timed = debug_enabled();
+	uint32_t started = timed ? lv_tick_get() : 0;
 	library_index_window(p->ix, first, WINDOW_ROWS, window_fill_cb, &fill);
+	if (timed) {
+		uint32_t took = lv_tick_elaps(started);
+		if (took >= 8) {
+			DEBUG_ERR("medialist: window %d..%d took %u ms\n", first, first + fill.filled, took);
+		}
+	}
 	p->window_first = first;
 	p->window_count = fill.filled;
 	return index >= first && index < first + fill.filled;
@@ -878,7 +929,7 @@ static void row_update_quality(panel_t *p, row_t *row, const char *path) {
 	}
 
 	const lv_image_dsc_t *icon = NULL;
-	switch (library_track_quality(path, NULL, NULL)) {
+	switch (quality_for(path)) {
 	case LIBRARY_QUALITY_LOSSY:
 		icon = &icon_quality_lossy;
 		break;
@@ -1547,6 +1598,12 @@ static void thumbs_update(panel_t *p) {
 	}
 
 	bool anything_pending = false;
+	// A decode is seconds' worth of JPEG work on a single core, and the worker
+	// runs below the interface -- but it still takes its share of the cycles, and
+	// a fling asks for a new band every few rows. Nothing is requested while the
+	// list is moving; the rows are asked for when it stops, which is also when
+	// their covers can be seen. Results already on their way are still collected.
+	bool scrolling = lv_obj_is_scrolling(p->list);
 
 	for (int i = 0; i < ROW_POOL; i++) {
 		row_t *row = &p->rows[i];
@@ -1571,6 +1628,10 @@ static void thumbs_update(panel_t *p) {
 		}
 
 		if (!row->thumb_requested) {
+			if (scrolling) {
+				anything_pending = true; // ask again once the list has stopped
+				continue;
+			}
 			coverloader_request(row_slot(p, row), source, THUMB_SIZE);
 			row->thumb_requested = true;
 			snprintf(row->thumb_path, sizeof(row->thumb_path), "%s", source);

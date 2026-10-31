@@ -153,15 +153,25 @@ static void graph_refresh(void) {
 	if (!graph) {
 		return;
 	}
+
+	// The points are the same every time: three decades of frequencies computed
+	// once rather than sixty-one pow() calls per redraw.
+	static int freqs[GRAPH_POINTS];
+	static bool freqs_ready;
+	if (!freqs_ready) {
+		for (int i = 0; i < GRAPH_POINTS; i++) {
+			freqs[i] = graph_freq(i);
+		}
+		freqs_ready = true;
+	}
+
+	peq_response_curve(GRAPH_RATE, freqs, graph_values, GRAPH_POINTS);
 	for (int i = 0; i < GRAPH_POINTS; i++) {
-		int db = peq_response_tenths(graph_freq(i), GRAPH_RATE);
-		if (db > GRAPH_RANGE_TENTHS) {
-			db = GRAPH_RANGE_TENTHS;
+		if (graph_values[i] > GRAPH_RANGE_TENTHS) {
+			graph_values[i] = GRAPH_RANGE_TENTHS;
+		} else if (graph_values[i] < -GRAPH_RANGE_TENTHS) {
+			graph_values[i] = -GRAPH_RANGE_TENTHS;
 		}
-		if (db < -GRAPH_RANGE_TENTHS) {
-			db = -GRAPH_RANGE_TENTHS;
-		}
-		graph_values[i] = db;
 	}
 	lv_chart_refresh(graph);
 }

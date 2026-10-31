@@ -22,6 +22,7 @@
 #include "src/system/image/jpeg_planes.h"
 #include "src/system/image/jpeg_scaled.h"
 #include "src/system/image/png_scaled.h"
+#include "src/system/image/resample_fpu.h"
 #include "src/system/image/stb_image_decl.h"
 #include "src/system/core/utils.h"
 
@@ -508,69 +509,50 @@ static uint8_t *resample_rgb(const raw_image_t *src, const crop_t *crop, int dst
 	if (!dst)
 		return NULL;
 
+	// Growing is the FPU's job: the separable kernel carries the x weights
+	// across the whole call and each source row across every output row it
+	// covers. The old loop recomputed both from scratch at every pixel.
+	if (magnify) {
+		if (!resample_fpu_magnify(src->pixels, src->w, src->h, crop->x, crop->y, crop->w, crop->h, dst, dst_w, dst_h,
+								  flip_v)) {
+			free(dst);
+			return NULL;
+		}
+		return dst;
+	}
+
+	// A shrink that could not get its area tables still gets a box average
+	// here, over every source pixel the output pixel covers.
 	for (int y = 0; y < dst_h; y++) {
 		int out_row = flip_v ? (dst_h - 1 - y) : y;
 		uint8_t *dst_row = dst + (size_t)out_row * dst_w * 3;
 
 		for (int x = 0; x < dst_w; x++) {
-			uint32_t r, g, b;
+			int sy0 = crop->y + (int)((int64_t)y * crop->h / dst_h);
+			int sy1 = crop->y + (int)((int64_t)(y + 1) * crop->h / dst_h);
+			int sx0 = crop->x + (int)((int64_t)x * crop->w / dst_w);
+			int sx1 = crop->x + (int)((int64_t)(x + 1) * crop->w / dst_w);
+			if (sy1 <= sy0)
+				sy1 = sy0 + 1;
+			if (sx1 <= sx0)
+				sx1 = sx0 + 1;
 
-			if (magnify) {
-				// Bilinear: sample the source at the centre of this output pixel.
-				float fx = ((float)x + 0.5f) * crop->w / dst_w - 0.5f;
-				float fy = ((float)y + 0.5f) * crop->h / dst_h - 0.5f;
-				if (fx < 0)
-					fx = 0;
-				if (fy < 0)
-					fy = 0;
-
-				int x0 = (int)fx, y0 = (int)fy;
-				int x1 = x0 + 1 < crop->w ? x0 + 1 : x0;
-				int y1 = y0 + 1 < crop->h ? y0 + 1 : y0;
-				float tx = fx - x0, ty = fy - y0;
-
-				const uint8_t *p00 = src->pixels + (((size_t)(crop->y + y0) * src->w) + crop->x + x0) * 3;
-				const uint8_t *p10 = src->pixels + (((size_t)(crop->y + y0) * src->w) + crop->x + x1) * 3;
-				const uint8_t *p01 = src->pixels + (((size_t)(crop->y + y1) * src->w) + crop->x + x0) * 3;
-				const uint8_t *p11 = src->pixels + (((size_t)(crop->y + y1) * src->w) + crop->x + x1) * 3;
-
-				float w00 = (1 - tx) * (1 - ty), w10 = tx * (1 - ty);
-				float w01 = (1 - tx) * ty, w11 = tx * ty;
-
-				r = (uint32_t)(p00[0] * w00 + p10[0] * w10 + p01[0] * w01 + p11[0] * w11);
-				g = (uint32_t)(p00[1] * w00 + p10[1] * w10 + p01[1] * w01 + p11[1] * w11);
-				b = (uint32_t)(p00[2] * w00 + p10[2] * w10 + p01[2] * w01 + p11[2] * w11);
-			} else {
-				// Box average over every source pixel this output pixel covers.
-				int sy0 = crop->y + (int)((int64_t)y * crop->h / dst_h);
-				int sy1 = crop->y + (int)((int64_t)(y + 1) * crop->h / dst_h);
-				int sx0 = crop->x + (int)((int64_t)x * crop->w / dst_w);
-				int sx1 = crop->x + (int)((int64_t)(x + 1) * crop->w / dst_w);
-				if (sy1 <= sy0)
-					sy1 = sy0 + 1;
-				if (sx1 <= sx0)
-					sx1 = sx0 + 1;
-
-				uint32_t sr = 0, sg = 0, sb = 0, n = 0;
-				for (int sy = sy0; sy < sy1; sy++) {
-					const uint8_t *row = src->pixels + (size_t)sy * src->w * 3;
-					for (int sx = sx0; sx < sx1; sx++) {
-						const uint8_t *px = row + (size_t)sx * 3;
-						sr += px[0];
-						sg += px[1];
-						sb += px[2];
-						n++;
-					}
+			uint32_t sr = 0, sg = 0, sb = 0, n = 0;
+			for (int sy = sy0; sy < sy1; sy++) {
+				const uint8_t *row = src->pixels + (size_t)sy * src->w * 3;
+				for (int sx = sx0; sx < sx1; sx++) {
+					const uint8_t *px = row + (size_t)sx * 3;
+					sr += px[0];
+					sg += px[1];
+					sb += px[2];
+					n++;
 				}
-				r = sr / n;
-				g = sg / n;
-				b = sb / n;
 			}
 
 			uint8_t *out_px = dst_row + (size_t)x * 3;
-			out_px[0] = (uint8_t)r;
-			out_px[1] = (uint8_t)g;
-			out_px[2] = (uint8_t)b;
+			out_px[0] = (uint8_t)(sr / n);
+			out_px[1] = (uint8_t)(sg / n);
+			out_px[2] = (uint8_t)(sb / n);
 		}
 	}
 

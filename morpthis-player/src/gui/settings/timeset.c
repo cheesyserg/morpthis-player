@@ -290,7 +290,28 @@ static const timezone_t TIMEZONES[] = {
 // The green every list in this interface uses to mark the chosen entry.
 #define TZ_CHECK_GREEN lv_color_make(46, 194, 126)
 
-static lv_obj_t *tz_checks[TIMEZONE_COUNT];
+// Thirty-eight zones in a list that shows a handful of them. Only the rows on
+// screen exist: the list is a body widget the scroller moves, plus a pool of
+// row widgets it fills from the scroll position. Opening on the chosen zone is
+// then a scroll to a position, not a walk to a widget that may never have been
+// built.
+#define TZ_ROW_POOL 14
+#define TZ_ROW_HEIGHT (compact() ? 46 : 74)
+#define TZ_ROW_GAP 8
+#define TZ_ROW_PITCH (TZ_ROW_HEIGHT + TZ_ROW_GAP)
+
+typedef struct {
+	lv_obj_t *button;
+	lv_obj_t *offset_label;
+	lv_obj_t *places;
+	lv_obj_t *check;
+	int index;
+} tz_row_t;
+
+static tz_row_t tz_rows[TZ_ROW_POOL];
+static lv_obj_t *tz_body;
+static int tz_pool_first = -1;
+static int tz_selected = -1;
 
 // "UTC+01:00". Always with a sign and always two digits: lined up in a column,
 // the entries can be scanned by eye instead of read one by one.
@@ -317,28 +338,81 @@ static int tz_selected_index(void) {
 
 static void seed_rollers_from_clock(void);
 
-static void tz_paint(void) {
-	int selected = tz_selected_index();
+static void tz_row_paint(tz_row_t *row) {
+	if (!row->check) {
+		return;
+	}
+	lv_obj_set_hidden(row->check, row->index != tz_selected || row->index < 0);
+}
 
-	for (int i = 0; i < TIMEZONE_COUNT; i++) {
-		if (!tz_checks[i]) {
-			continue;
-		}
-		if (i == selected) {
-			lv_obj_set_hidden(tz_checks[i], false);
-		} else {
-			lv_obj_set_hidden(tz_checks[i], true);
-		}
+static void tz_paint(void) {
+	tz_selected = tz_selected_index();
+
+	for (int i = 0; i < TZ_ROW_POOL; i++) {
+		tz_row_paint(&tz_rows[i]);
 	}
 
 	if (tz_value) {
-		if (selected < 0) {
+		if (tz_selected < 0) {
 			lv_label_set_text(tz_value, tr("timeset_not_set"));
 		} else {
 			char text[16];
-			tz_format_offset(TIMEZONES[selected].minutes, text, sizeof(text));
+			tz_format_offset(TIMEZONES[tz_selected].minutes, text, sizeof(text));
 			lv_label_set_text(tz_value, text);
 		}
+	}
+}
+
+static int tz_pool_first_for(void) {
+	int scroll = lv_obj_get_scroll_y(tz_list);
+	if (scroll < 0) {
+		scroll = 0;
+	}
+	int first = scroll / TZ_ROW_PITCH - 1;
+	if (first + TZ_ROW_POOL > TIMEZONE_COUNT) {
+		first = TIMEZONE_COUNT - TZ_ROW_POOL;
+	}
+	if (first < 0) {
+		first = 0;
+	}
+	return first;
+}
+
+static void tz_row_bind(tz_row_t *row, int index) {
+	if (row->index == index) {
+		return;
+	}
+	if (index < 0 || index >= TIMEZONE_COUNT) {
+		row->index = -1;
+		lv_obj_set_hidden(row->button, true);
+		return;
+	}
+
+	char offset[16];
+	tz_format_offset(TIMEZONES[index].minutes, offset, sizeof(offset));
+	row->index = index;
+	lv_obj_set_hidden(row->button, false);
+	lv_obj_set_y(row->button, index * TZ_ROW_PITCH);
+	lv_label_set_text(row->offset_label, offset);
+	// tr() and not a cached pointer: changing the language frees the table the
+	// names live in, and this is a hash lookup and a strcmp either way.
+	lv_label_set_text(row->places, tr(TIMEZONES[index].places));
+	tz_row_paint(row);
+}
+
+static void tz_window_update(void) {
+	int first = tz_pool_first_for();
+	for (int i = 0; i < TZ_ROW_POOL; i++) {
+		int index = first + i;
+		tz_row_bind(&tz_rows[index % TZ_ROW_POOL], index < TIMEZONE_COUNT ? index : -1);
+	}
+	tz_pool_first = first;
+}
+
+static void tz_scroll_cb(lv_event_t *e) {
+	(void)e;
+	if (tz_pool_first_for() != tz_pool_first) {
+		tz_window_update();
 	}
 }
 
@@ -364,7 +438,8 @@ static void tz_back_cb(lv_event_t *e) {
 }
 
 static void tz_pick_cb(lv_event_t *e) {
-	int index = (int)(intptr_t)lv_event_get_user_data(e);
+	tz_row_t *row = lv_event_get_user_data(e);
+	int index = row ? row->index : -1;
 	if (index < 0 || index >= TIMEZONE_COUNT) {
 		return;
 	}
@@ -410,12 +485,21 @@ static void tz_open_cb(lv_event_t *e) {
 	// patience.
 	int selected = tz_selected_index();
 	if (selected >= 0 && tz_list) {
-		lv_obj_t *row = lv_obj_get_child(tz_list, selected);
-		if (row) {
-			lv_obj_scroll_to_view(row, LV_ANIM_OFF);
+		int32_t y = selected * TZ_ROW_PITCH;
+		int32_t view_h = lv_obj_get_height(tz_list);
+		int32_t target = y + TZ_ROW_HEIGHT - view_h;
+		if (target < 0 || target > y) {
+			target = y; // the entry is at the top of the list or taller than it
+		}
+		lv_obj_scroll_to_y(tz_list, target, LV_ANIM_OFF);
+		if (tz_body) {
+			tz_window_update();
 		}
 	} else if (tz_list) {
 		lv_obj_scroll_to_y(tz_list, 0, LV_ANIM_OFF);
+		if (tz_body) {
+			tz_window_update();
+		}
 	}
 }
 
@@ -652,53 +736,61 @@ static void build_timezone_panel(gui_config_t *cfg) {
 	lv_obj_set_style_pad_hor(tz_list, cfg->padding, 0);
 	lv_obj_set_style_pad_ver(tz_list, 10, 0);
 	lv_obj_set_style_pad_top(tz_list, cfg->padding, 0); // as above: the breathing room of the other pages
-	lv_obj_set_style_pad_gap(tz_list, 8, 0);
-	lv_obj_set_flex_flow(tz_list, LV_FLEX_FLOW_COLUMN);
-	lv_obj_set_flex_align(tz_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 	lv_obj_set_scroll_dir(tz_list, LV_DIR_VER);
 
-	for (int i = 0; i < TIMEZONE_COUNT; i++) {
-		lv_obj_t *row = lv_btn_create(tz_list);
-		lv_obj_set_size(row, lv_pct(100), compact() ? 46 : 74);
-		lv_obj_add_style(row, &theme_style_card, 0);
-		lv_obj_add_style(row, &theme_style_card_pressed, LV_STATE_PRESSED);
-		lv_obj_set_style_radius(row, compact() ? bp_tile_radius() : 12, 0);
-		lv_obj_set_style_border_width(row, 0, 0);
-		lv_obj_set_style_shadow_width(row, 0, 0);
-		lv_obj_set_style_pad_hor(row, compact() ? 8 : 20, 0);
-		lv_obj_set_style_pad_ver(row, 0, 0);
-		lv_obj_set_style_pad_column(row, compact() ? 6 : 12, 0);
-		lv_obj_set_scrollable(row, false);
-		lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-		lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-		lv_obj_add_event_cb(row, tz_pick_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+	// The zones as one canvas under a fixed pool of rows: the scroller moves the
+	// canvas and the rows stay put inside it.
+	tz_body = lv_obj_create(tz_list);
+	lv_obj_remove_style_all(tz_body);
+	lv_obj_set_width(tz_body, lv_pct(100));
+	lv_obj_set_height(tz_body, TIMEZONE_COUNT * TZ_ROW_PITCH - TZ_ROW_GAP);
+	lv_obj_set_scrollable(tz_body, false);
+	lv_obj_set_clickable(tz_body, false);
 
-		// The offset on the left, in a column, and the places beside it: the
-		// offset is what is looked for, the places are what make it
-		// recognisable.
-		char offset[16];
-		tz_format_offset(TIMEZONES[i].minutes, offset, sizeof(offset));
+	for (int i = 0; i < TZ_ROW_POOL; i++) {
+		tz_row_t *row = &tz_rows[i];
+		row->index = -2;
 
-		lv_obj_t *offset_label = lv_label_create(row);
-		lv_label_set_text(offset_label, offset);
-		lv_obj_set_width(offset_label, compact() ? 64 : 118);
-		lv_obj_add_style(offset_label, &theme_style_text, 0);
-		lv_obj_set_style_text_font(offset_label, &font_ui_22, 0);
+		row->button = lv_btn_create(tz_body);
+		lv_obj_set_size(row->button, lv_pct(100), TZ_ROW_HEIGHT);
+		lv_obj_set_x(row->button, 0);
+		lv_obj_add_style(row->button, &theme_style_card, 0);
+		lv_obj_add_style(row->button, &theme_style_card_pressed, LV_STATE_PRESSED);
+		lv_obj_set_style_radius(row->button, compact() ? bp_tile_radius() : 12, 0);
+		lv_obj_set_style_border_width(row->button, 0, 0);
+		lv_obj_set_style_shadow_width(row->button, 0, 0);
+		lv_obj_set_style_pad_hor(row->button, compact() ? 8 : 20, 0);
+		lv_obj_set_style_pad_ver(row->button, 0, 0);
+		lv_obj_set_style_pad_column(row->button, compact() ? 6 : 12, 0);
+		lv_obj_set_scrollable(row->button, false);
+		lv_obj_set_hidden(row->button, true);
+		lv_obj_set_flex_flow(row->button, LV_FLEX_FLOW_ROW);
+		lv_obj_set_flex_align(row->button, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+		lv_obj_add_event_cb(row->button, tz_pick_cb, LV_EVENT_CLICKED, row);
 
-		lv_obj_t *places = lv_label_create(row);
-		lv_label_set_text(places, tr(TIMEZONES[i].places));
-		lv_label_set_long_mode(places, LV_LABEL_LONG_DOT);
-		lv_obj_set_flex_grow(places, 1);
-		lv_obj_set_height(places, lv_font_get_line_height(&font_ui_20));
-		lv_obj_add_style(places, &theme_style_text_dim, 0);
-		lv_obj_set_style_text_font(places, &font_ui_20, 0);
+		// The offset on the left, and the places beside it: the offset is what
+		// is looked for, the places are what make it recognisable.
+		row->offset_label = lv_label_create(row->button);
+		lv_obj_set_width(row->offset_label, compact() ? 64 : 118);
+		lv_obj_add_style(row->offset_label, &theme_style_text, 0);
+		lv_obj_set_style_text_font(row->offset_label, &font_ui_22, 0);
 
-		tz_checks[i] = lv_image_create(row);
-		lv_image_set_src(tz_checks[i], &icon_check);
-		lv_obj_set_style_image_recolor(tz_checks[i], TZ_CHECK_GREEN, 0);
-		lv_obj_set_style_image_recolor_opa(tz_checks[i], LV_OPA_COVER, 0);
-		lv_obj_set_hidden(tz_checks[i], true);
+		row->places = lv_label_create(row->button);
+		lv_label_set_long_mode(row->places, LV_LABEL_LONG_DOT);
+		lv_obj_set_flex_grow(row->places, 1);
+		lv_obj_set_height(row->places, lv_font_get_line_height(&font_ui_20));
+		lv_obj_add_style(row->places, &theme_style_text_dim, 0);
+		lv_obj_set_style_text_font(row->places, &font_ui_20, 0);
+
+		row->check = lv_image_create(row->button);
+		lv_image_set_src(row->check, &icon_check);
+		lv_obj_set_style_image_recolor(row->check, TZ_CHECK_GREEN, 0);
+		lv_obj_set_style_image_recolor_opa(row->check, LV_OPA_COVER, 0);
+		lv_obj_set_hidden(row->check, true);
 	}
+
+	lv_obj_add_event_cb(tz_list, tz_scroll_cb, LV_EVENT_SCROLL, NULL);
+	tz_window_update();
 }
 
 void timeset_init(gui_config_t *cfg) {
