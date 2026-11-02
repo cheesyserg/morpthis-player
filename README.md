@@ -69,6 +69,7 @@ The image ships the TempoTec V1 kernel refresh from [Compás firmware](https://g
 - `morpthis-packer/fetch_v1_kernel.sh` downloads it and checks it against `morpthis-packer/kernel/tempotec_v1.json`.
 - `morpthis_firmware_packer.sh` refuses it unless the hash and size are the pinned ones, it is a valid Linux/MIPS uImage no larger than the stock kernel, and its device tree is the one in the stock kernel of the image being repacked. It then writes the new kernel chain and installs the swap hook (`S31morpthis_zram`). `MORPTHIS_STOCK_KERNEL=1` keeps the stock kernel instead.
 - `morpthis_led.ko` (built by morpthis-kernel) runs the status light from the kernel; the player loads it itself and falls back to its own I2C path if it is missing or will not load.
+- `axp2101.ko` (built by morpthis-kernel) replaces HiBy's closed PMIC driver with an open one checked against it. The vendor driver polls for the cable and leaves every PMIC interrupt masked, so a plug could never wake a sleeping V1; the open driver arms VBUS insert as a wake source. The vendor module stays in the image as `axp2101_vendor.ko` and loads if the open one does not. `MORPTHIS_VENDOR_AXP2101=1` keeps the vendor driver.
 
 As its pin says, this kernel was statically checked rather than validated on hardware before it was published.
 

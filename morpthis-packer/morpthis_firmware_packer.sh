@@ -17,6 +17,11 @@
 #   morpthis_led.ko            the status light's kernel engine, built by
 #                              morpthis-kernel (optional: without it the player
 #                              drives the light over /dev/i2c-0 as before)
+#   axp2101.ko                 the open PMIC driver, built by morpthis-kernel,
+#                              with the charger cable as a wake source
+#                              (optional: without it the vendor's stays, and a
+#                              plug cannot wake a sleeping player;
+#                              MORPTHIS_VENDOR_AXP2101=1 keeps the vendor's too)
 #   assets/
 #       V1/                    the whole overlay, kernel-facing files included
 #       |
@@ -61,6 +66,8 @@ KERNEL_PIN="$SCRIPT_DIR/kernel/tempotec_v1.json"
 KERNEL_CHECK="$SCRIPT_DIR/kernel/check_v1_kernel.py"
 STOCK_KERNEL="${MORPTHIS_STOCK_KERNEL:-0}"
 LED_KO="$SCRIPT_DIR/morpthis_led.ko"
+AXP_KO="$SCRIPT_DIR/axp2101.ko"
+VENDOR_AXP="${MORPTHIS_VENDOR_AXP2101:-0}"
 # What every module for this kernel carries; the stock kernel's is the same
 # string, which is what lets the vendor's modules load on it unchanged.
 KERNEL_VERMAGIC="4.4.94+ preempt mod_unload MIPS32_R2 32BIT"
@@ -810,6 +817,47 @@ fi
 			say "    module_driver/morpthis_led.ko installed ($(get_size "$LED_KO") bytes)"
 		else
 			warn "morpthis_led.ko is not next to this script: the player drives the light over /dev/i2c-0"
+		fi
+
+		# The open AXP2101 driver. The vendor module never requests a PMIC
+		# interrupt, so a charger plugged into a sleeping player raises
+		# nothing the SoC could wake on; this one requests VBUS insert and
+		# arms it for the sleep. The vendor module stays in the image as
+		# axp2101_vendor.ko, and axp2101.sh loads it, with the same
+		# parameters, whenever the open one did not load.
+		AXP_DIR="$SQUASH_DIR/module_driver"
+		if [ "$VENDOR_AXP" = "1" ]; then
+			say "    MORPTHIS_VENDOR_AXP2101=1: the vendor axp2101.ko stays"
+		elif [ -f "$AXP_KO" ]; then
+			KO_HEAD="$(od -An -tx1 -N20 "$AXP_KO" | tr -d ' \n')"
+			[ "${KO_HEAD:0:12}" = "7f454c460101" ] && [ "${KO_HEAD:32:8}" = "01000800" ] ||
+				die "axp2101.ko is not a 32-bit little-endian MIPS kernel module."
+			grep -aq "vermagic=$KERNEL_VERMAGIC" "$AXP_KO" ||
+				die "axp2101.ko was not built for this kernel (vermagic is not \"$KERNEL_VERMAGIC\")."
+			grep -aq "parm=plug_wake:" "$AXP_KO" ||
+				die "axp2101.ko is not the Morpthis build of the open driver (no plug_wake parameter)."
+			[ -f "$AXP_DIR/axp2101.ko" ] && [ -f "$AXP_DIR/axp2101.sh" ] ||
+				die "the stock rootfs has no module_driver/axp2101.ko and axp2101.sh to replace."
+			if [ "$(grep -cE '^[[:space:]]*insmod[[:space:]]+axp2101\.ko' "$AXP_DIR/axp2101.sh")" != "1" ]; then
+				die "module_driver/axp2101.sh does not load axp2101.ko on exactly one line; not changing it."
+			fi
+			mv "$AXP_DIR/axp2101.ko" "$AXP_DIR/axp2101_vendor.ko"
+			cp -f "$AXP_KO" "$AXP_DIR/axp2101.ko"
+			chmod 644 "$AXP_DIR/axp2101.ko" "$AXP_DIR/axp2101_vendor.ko"
+			# The fallback line: the insmod line again, for the vendor module,
+			# run only if no axp2101 module is loaded after the first.
+			awk '{ print }
+				/^[[:space:]]*insmod[[:space:]]+axp2101\.ko/ {
+					line = $0; sub(/axp2101\.ko/, "axp2101_vendor.ko", line)
+					print "grep -q \"^axp2101 \" /proc/modules || " line
+				}' "$AXP_DIR/axp2101.sh" > "$AXP_DIR/axp2101.sh.packer.tmp"
+			cat "$AXP_DIR/axp2101.sh.packer.tmp" > "$AXP_DIR/axp2101.sh"
+			rm -f "$AXP_DIR/axp2101.sh.packer.tmp"
+			chmod 755 "$AXP_DIR/axp2101.sh"
+			grep -q "axp2101_vendor.ko" "$AXP_DIR/axp2101.sh" || die "the vendor fallback was not added to axp2101.sh."
+			say "    module_driver/axp2101.ko: the open driver (VBUS insert wakes the system); vendor kept as axp2101_vendor.ko"
+		else
+			warn "axp2101.ko is not next to this script: the vendor PMIC driver stays, and a plug cannot wake a sleeping player"
 		fi
 	else
 		for rel in $ZRAM_FILES; do

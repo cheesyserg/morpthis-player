@@ -475,6 +475,8 @@ jobs:
           set -euo pipefail
           morpthis-kernel/scripts/build_modules.sh "$RUNNER_TEMP/kernel-modules"
           install -m 0644 "$RUNNER_TEMP/kernel-modules/morpthis_led.ko" morpthis-packer/morpthis_led.ko
+          # The open PMIC driver: the charger cable wakes a sleeping player.
+          install -m 0644 "$RUNNER_TEMP/kernel-modules/axp2101.ko" morpthis-packer/axp2101.ko
 
       # Saved only after prepare_v1_stock.sh and verify_upt.sh accepted the
       # download, so a wrong or corrupt file is not what the next run restores.

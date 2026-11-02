@@ -58,6 +58,7 @@ morpthis-packer/boot-script-report.txt
 morpthis-packer/v1-zram-xImage
 morpthis-packer/v1-zram-xImage.part
 morpthis-packer/morpthis_led.ko
+morpthis-packer/axp2101.ko
 morpthis-packer/kernel/__pycache__/
 
 # Optional, device-local Subsonic account (contains a password).
