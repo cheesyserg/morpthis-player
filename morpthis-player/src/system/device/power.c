@@ -1046,12 +1046,65 @@ static void rtc_alarm_disarm(void) {
 }
 
 // The charger check (see power.h): how often a sleeping player looks for a
-// cable when a plug has been seen not to wake it. 0 = never.
+// cable. 0 = never.
 static uint32_t g_plug_poll_ms;
-// Whether that period may still be learned (plug_poll_seconds not set by hand).
+// Automatic (plug_poll_seconds not set by hand): the check runs until a cable
+// has been seen to wake the device on its own, and comes back if a later plug
+// does not. [power] plug_wake_proven remembers which was seen last.
 static bool g_plug_poll_auto = true;
-#define PLUG_POLL_LEARNED_S 120
+static bool g_plug_wake_proven;
+#define PLUG_POLL_AUTO_S 120
 #define PLUG_POLL_MIN_S 30
+
+static void plug_poll_apply_auto(void) {
+	if (g_plug_poll_auto) {
+		g_plug_poll_ms = g_plug_wake_proven ? 0 : PLUG_POLL_AUTO_S * 1000u;
+	}
+}
+
+// How many times the open PMIC driver's VBUS insert interrupt has fired, from
+// /proc/interrupts; -1 when it is not there (the vendor driver, or an open
+// driver without the wake). Read before and after a sleep, it says whether
+// the PMIC raised the interrupt at all, which is the one thing the log cannot
+// otherwise tell apart from a pin that did not wake the SoC.
+static long vbus_irq_count(void) {
+	FILE *f = fopen("/proc/interrupts", "r");
+	if (!f) {
+		return -1;
+	}
+	char line[256];
+	long count = -1;
+	while (fgets(line, sizeof(line), f)) {
+		if (!strstr(line, "axp2101-vbus-in")) {
+			continue;
+		}
+		char *p = strchr(line, ':');
+		if (p) {
+			count = strtol(p + 1, NULL, 10);
+		}
+		break;
+	}
+	fclose(f);
+	return count;
+}
+
+// Says, once, what this firmware can do about a cable during a sleep.
+static void log_plug_wake_capability(void) {
+	char wake[16] = "absent";
+	FILE *f = fopen("/sys/class/power_supply/usb/device/power/wakeup", "r");
+	if (f) {
+		if (fgets(wake, sizeof(wake), f)) {
+			wake[strcspn(wake, "\r\n")] = '\0';
+		}
+		fclose(f);
+	}
+	bool open_driver = access("/sys/module/axp2101/parameters/plug_wake", F_OK) == 0;
+	long irq = vbus_irq_count();
+	printf("power: plug wake: PMIC driver %s, usb power/wakeup %s, VBUS insert irq %s (count %ld), charger check %us%s\n",
+		   open_driver ? "open (plug_wake)" : "vendor (no cable wake possible)", wake,
+		   irq >= 0 ? "requested" : "not requested", irq, g_plug_poll_ms / 1000u,
+		   g_plug_poll_auto ? (g_plug_wake_proven ? " (auto: cable wake proven)" : " (auto)") : "");
+}
 
 static void rtc_alarm_arm_for_sleep(void) {
 	g_rtc_alarm_armed = false;
@@ -1232,7 +1285,11 @@ static void plug_wake_restore(void) {
 // out what woke the device -- a key, the charger check, or the cable -- and
 // learns from a plug that did not wake it.
 static bool g_plug_wake_screen = true;
-#define WAKE_CLASSIFY_MS 1500
+// Long enough for a key pressed for the wake to arrive, and for the PMIC
+// driver -- which follows the cable by polling once a second -- to have
+// noticed a cable that came during the sleep: until it has, usb/online still
+// says what it said before the sleep.
+#define WAKE_CLASSIFY_MS 2500
 // A press that lands just after the cable has lit the screen is the user
 // waking it as well, not a request to put it out again.
 #define PLUG_BUTTON_GRACE_MS 1500
@@ -1240,7 +1297,7 @@ static bool g_wake_classify;
 static uint32_t g_wake_classify_until;
 static bool g_wake_by_user;
 static bool g_wake_by_poll;
-static bool g_wake_vbus_new;
+static long g_wake_vbus_irq_before; // vbus_irq_count() as the sleep began
 
 void power_set_plug_wake_screen(bool enabled) { g_plug_wake_screen = enabled; }
 bool power_get_plug_wake_screen(void) { return g_plug_wake_screen; }
@@ -1385,6 +1442,7 @@ static void suspend_to_ram(void) {
 
 	// 4-ter-bis. Whatever sees the cable may wake the SoC (see power.h).
 	plug_wake_arm();
+	g_wake_vbus_irq_before = vbus_irq_count();
 
 	// 4-quater. The panel, left powered while the screen was dark so that an
 	//           ordinary wake could be immediate. It is powered down here for
@@ -1541,15 +1599,22 @@ static void suspend_to_ram(void) {
 	g_rtc_poll_armed = false;
 
 	// The cable cannot have been in before the sleep (suspend_if_idle() does
-	// not sleep on a charger), so a cable now is one that came during it. What
-	// that says about the wake is decided by the tick once the window below
-	// has closed and any key pressed for the wake has had time to arrive.
-	bool vbus_now = rc == 0 && usb_vbus_present();
+	// not sleep on a charger), so a cable once the window below has closed is
+	// one that came during it. Not read here: the PMIC driver updates
+	// usb/online by polling, and right after the wake it still reports the
+	// state from before the sleep. classify_wake() decides once the window
+	// has closed.
 	g_wake_classify = rc == 0;
 	g_wake_classify_until = lv_tick_get() + WAKE_CLASSIFY_MS;
 	g_wake_by_user = user_woke_it;
 	g_wake_by_poll = poll_wake;
-	g_wake_vbus_new = vbus_now;
+	if (rc == 0) {
+		long irq_after = vbus_irq_count();
+		if (g_wake_vbus_irq_before >= 0 && irq_after >= 0) {
+			printf("power: mem: VBUS insert irq %s during the sleep (%ld -> %ld)\n",
+				   irq_after > g_wake_vbus_irq_before ? "FIRED" : "did not fire", g_wake_vbus_irq_before, irq_after);
+		}
+	}
 
 	// No recovery of the old stream: there is nothing left to recover -- the
 	// freeze closed everything before the suspend, and the next play is a fresh
@@ -1566,17 +1631,16 @@ static void suspend_to_ram(void) {
 	g_mem_last_attempt_ms = lv_tick_get();
 	g_mem_skip_logged[0] = '\0';
 
-	if (poll_wake && !vbus_now) {
-		// Nothing plugged in: back to sleep at once, screen still dark. The
-		// countdown and the anti-hammer wait are both set as if they had just
-		// run out, less a second, so a key pressed for this very wake still
-		// lands -- and turns the screen on -- before the next attempt.
-		printf("power: mem: charger check, no cable -- back to sleep\n");
-		g_mem_active_ms = lv_tick_get() - g_mem_after_ms + 1000;
-		g_mem_last_attempt_ms = lv_tick_get() - 30 * 1000 + 1000;
+	if (poll_wake) {
+		// The charger check's wake: back to sleep with the screen dark unless a
+		// cable turns up. The countdown and the anti-hammer wait are set to run
+		// out just after the classification window, by which time the PMIC
+		// driver has noticed any cable; suspend_if_idle() then refuses to sleep
+		// on it, and a key pressed for this wake has turned the screen on.
+		uint32_t settle = WAKE_CLASSIFY_MS + 500;
+		g_mem_active_ms = lv_tick_get() - g_mem_after_ms + settle;
+		g_mem_last_attempt_ms = lv_tick_get() - 30 * 1000 + settle;
 		g_screen_off_at = lv_tick_get() - g_mem_after_ms;
-	} else if (poll_wake) {
-		printf("power: mem: charger check found a cable -- staying awake to charge\n");
 	}
 }
 
@@ -1603,7 +1667,11 @@ static void classify_wake(uint32_t now) {
 		return;
 	}
 	g_wake_classify = false;
-	if (!g_wake_vbus_new && !g_wake_by_user && !g_wake_by_poll) {
+	bool vbus = usb_vbus_present();
+	if (g_wake_by_poll) {
+		printf("power: mem: charger check: %s\n", vbus ? "a cable -- staying awake to charge" : "no cable -- back to sleep");
+	}
+	if (!vbus && !g_wake_by_user && !g_wake_by_poll) {
 		g_plug_wake_strays++;
 		printf("power: mem: woke with no key, cable or alarm (%d in a row)\n", g_plug_wake_strays);
 		if (g_plug_wake_strays >= PLUG_WAKE_STRAY_MAX && !g_plug_wake_off_for_session && g_plug_wake_count > 0) {
@@ -1613,23 +1681,31 @@ static void classify_wake(uint32_t now) {
 		return;
 	}
 	g_plug_wake_strays = 0;
-	if (!g_wake_vbus_new || g_wake_by_poll) {
+	if (!vbus || g_wake_by_poll) {
 		return;
 	}
 	if (!g_wake_by_user) {
+		// The cable woke the SoC on its own: the charger check is not needed.
 		printf("power: mem: the cable woke the device\n");
+		if (g_plug_poll_auto && !g_plug_wake_proven) {
+			g_plug_wake_proven = true;
+			plug_poll_apply_auto();
+			config_set_bool("power", "plug_wake_proven", true);
+			config_save();
+			printf("power: mem: cable wake works here; the charger check is off\n");
+		}
 		return;
 	}
 	// The user woke a player that already had a cable in: the plug happened
-	// during the sleep and woke nothing. From here the sleeping player looks
-	// for a cable itself, and remembers that it has to.
+	// during the sleep and woke nothing. The sleeping player looks for a cable
+	// itself again, and remembers that it has to.
 	printf("power: mem: a cable arrived during the sleep without waking the device\n");
-	if (g_plug_poll_auto && g_plug_poll_ms == 0) {
-		g_plug_poll_ms = PLUG_POLL_LEARNED_S * 1000u;
-		g_plug_poll_auto = false;
-		config_set_int("power", "plug_poll_seconds", PLUG_POLL_LEARNED_S);
+	if (g_plug_poll_auto && g_plug_wake_proven) {
+		g_plug_wake_proven = false;
+		plug_poll_apply_auto();
+		config_set_bool("power", "plug_wake_proven", false);
 		config_save();
-		printf("power: mem: charger check every %d s while asleep from now on\n", PLUG_POLL_LEARNED_S);
+		printf("power: mem: charger check every %d s while asleep again\n", PLUG_POLL_AUTO_S);
 	}
 }
 
@@ -2509,20 +2585,24 @@ void power_init(const power_config_t *cfg, lv_display_t *disp) {
 	}
 	g_radio_park_after_ms = (uint32_t)park_secs * 1000u;
 
-	// The charger check: -1 (the default) lets it be learned, 0 never, a
-	// number of seconds sets it outright. See power.h.
+	// The charger check: -1 (the default) is automatic -- on until a cable has
+	// been seen to wake the device by itself -- 0 never, a number of seconds
+	// sets it outright. See power.h.
 	long poll_secs = config_get_int("power", "plug_poll_seconds", -1);
 	g_plug_poll_auto = poll_secs < 0;
 	if (poll_secs > 0 && poll_secs < PLUG_POLL_MIN_S) {
 		poll_secs = PLUG_POLL_MIN_S;
 	}
 	g_plug_poll_ms = poll_secs > 0 ? (uint32_t)poll_secs * 1000u : 0;
+	g_plug_wake_proven = config_get_bool("power", "plug_wake_proven", false);
+	plug_poll_apply_auto();
 	g_plug_wake_screen = config_get_bool("power", "plug_wake_screen", true);
 
 	long hold_max_min = config_get_int("power", "screen_hold_max_minutes", SCREEN_HOLD_MAX_DEFAULT_MIN);
 	g_screen_hold_max_ms = hold_max_min > 0 ? (uint32_t)hold_max_min * 60u * 1000u : 0;
 
 	g_power_timer = lv_timer_create(power_timer_cb, POWER_TICK_MS, NULL);
+	log_plug_wake_capability();
 
 	printf("power: initialized (max_brightness=%ld, on=%ld, wake_hold=%ld, screen_off=%s/%ums, mem=%s/%lus, "
 		   "plug: screen %s, check %us%s)\n",

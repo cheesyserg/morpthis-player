@@ -133,9 +133,9 @@
   timeout whatever is playing; standby waits for the music to stop.
 - **Power → Wake screen on charger** - plugging a cable in always brings the
   player out of standby and keeps it awake while it charges. On (the default),
-  the screen lights up too; off, it stays dark. If a plug ever fails to wake a
-  sleeping player, it starts looking for a charger itself every two minutes
-  while asleep.
+  the screen lights up too; off, it stays dark. Until a plug has been seen to
+  wake the player by itself, a sleeping player also looks for a charger every
+  two minutes, so it never sits on a cable asleep for longer than that.
 - **Power → Hold power for the menu** - what a held power button does. On, the
   default, the hold brings up the power menu and switching off or rebooting
   takes a slide to confirm. Off, the same hold switches the player off where it

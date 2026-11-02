@@ -277,12 +277,17 @@ void power_set_standby_enabled(bool enabled);
 //   1. before every `mem` the wakeup switch of each device that sees the cable
 //      (the charger and PMIC power supplies, the USB controller, the Type-C
 //      port, plus [power] plug_wake_nodes) is turned on, and put back after;
-//   2. if a plug ever turns out not to have woken the device -- the user
-//      pressed the power key and found a cable that arrived during the sleep
-//      -- the player falls back to a short RTC check: while asleep it wakes
-//      every [power] plug_poll_seconds (120 by default once learned, 0 never),
-//      looks for the cable with the screen still dark, and goes straight back
-//      to sleep when there is none. The finding is kept in device_config.ini.
+//   2. a charger check on the RTC: while asleep the player wakes every
+//      [power] plug_poll_seconds, looks for the cable with the screen still
+//      dark, and goes back to sleep when there is none. Automatic by default:
+//      every 120 s until a cable has been seen to wake the device by itself
+//      (then off, remembered as [power] plug_wake_proven), and back on if a
+//      later plug does not. 0 turns it off, a number of seconds fixes it.
+//
+// On the V1 the cable reaches the SoC only through the open AXP2101 driver
+// (morpthis-kernel), which requests the PMIC's VBUS insert interrupt; the
+// vendor driver polls and leaves it masked. The log says at start which of
+// the two is loaded, and after every sleep whether the interrupt fired.
 //
 // This switch only decides what the SCREEN does when a cable arrives with it
 // dark, asleep or awake: on, it lights up as if the power key had been
