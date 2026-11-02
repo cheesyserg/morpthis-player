@@ -1099,6 +1099,16 @@ static void log_plug_wake_capability(void) {
 		fclose(f);
 	}
 	bool open_driver = access("/sys/module/axp2101/parameters/plug_wake", F_OK) == 0;
+	// The open driver's own account of the wake, when it has one.
+	char status[112] = "";
+	f = fopen("/sys/module/axp2101/parameters/plug_wake_status", "r");
+	if (f) {
+		if (fgets(status, sizeof(status), f)) {
+			status[strcspn(status, "\r\n")] = '\0';
+		}
+		fclose(f);
+		printf("power: plug wake: driver says \"%s\"\n", status);
+	}
 	long irq = vbus_irq_count();
 	printf("power: plug wake: PMIC driver %s, usb power/wakeup %s, VBUS insert irq %s (count %ld), charger check %us%s\n",
 		   open_driver ? "open (plug_wake)" : "vendor (no cable wake possible)", wake,
