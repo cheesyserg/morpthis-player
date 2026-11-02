@@ -53,6 +53,12 @@ morpthis-packer/v1_original.upt
 morpthis-packer/v1_md5_original.txt
 morpthis-packer/morpthis_launch
 morpthis-packer/boot-script-report.txt
+# The pinned V1 kernel (fetch_v1_kernel.sh) and the kernel modules built by
+# morpthis-kernel: inputs to the packer, never committed here.
+morpthis-packer/v1-zram-xImage
+morpthis-packer/v1-zram-xImage.part
+morpthis-packer/morpthis_led.ko
+morpthis-packer/kernel/__pycache__/
 
 # Optional, device-local Subsonic account (contains a password).
 subsonic-credentials.json

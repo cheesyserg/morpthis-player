@@ -160,3 +160,55 @@ void iconscale_set(lv_obj_t *icon, const lv_image_dsc_t *src, int max_side) {
 		lv_image_set_scale(icon, LV_SCALE_NONE);
 	}
 }
+
+// The source a pre-scaled copy was made from, or NULL when `dsc` is not one of
+// ours.
+static const lv_image_dsc_t *original_of(const void *dsc) {
+	for (int i = 0; i < entry_count; i++) {
+		if (&entries[i].dsc == dsc) {
+			return entries[i].src;
+		}
+	}
+	return NULL;
+}
+
+void iconscale_set_scaled(lv_obj_t *icon, const lv_image_dsc_t *src, uint32_t scale) {
+	if (!icon || !src) {
+		return;
+	}
+
+	// LVGL lays a scaled image out at its SOURCE size and draws the picture
+	// shrunk about its centre. A widget that was sized by its content keeps
+	// that box: it is given the source's size explicitly, and moved on to the
+	// next source's size when the picture changes, exactly as content sizing
+	// would have done. A box the caller set is left as it is.
+	int32_t w_style = lv_obj_get_style_width(icon, LV_PART_MAIN);
+	int32_t h_style = lv_obj_get_style_height(icon, LV_PART_MAIN);
+	const void *current = lv_image_get_src(icon);
+	const lv_image_dsc_t *before = original_of(current);
+	if (!before && current && lv_image_src_get_type(current) == LV_IMAGE_SRC_VARIABLE) {
+		before = current;
+	}
+	bool content_box = (w_style == LV_SIZE_CONTENT && h_style == LV_SIZE_CONTENT) ||
+					   (before && w_style == (int32_t)before->header.w && h_style == (int32_t)before->header.h);
+
+	const lv_image_dsc_t *scaled = NULL;
+	if (scale != LV_SCALE_NONE) {
+		int side = (int)src->header.w > (int)src->header.h ? (int)src->header.w : (int)src->header.h;
+		if (side > 0) {
+			scaled = iconscale_fit(src, (int)(((int64_t)side * scale + 128) / 256));
+		}
+	}
+
+	if (scaled && scaled != src) {
+		lv_image_set_src(icon, scaled);
+		lv_image_set_scale(icon, LV_SCALE_NONE);
+		lv_image_set_inner_align(icon, LV_IMAGE_ALIGN_CENTER);
+	} else {
+		lv_image_set_src(icon, src);
+		lv_image_set_scale(icon, scale);
+	}
+	if (content_box && ((scaled && scaled != src) || before)) {
+		lv_obj_set_size(icon, (int32_t)src->header.w, (int32_t)src->header.h);
+	}
+}

@@ -10,6 +10,13 @@
 #   morpthis_player               the binary to install
 #   morpthis_launch               waits for the player and reboots when it exits
 #                              (optional: without it the launcher's shell does)
+#   v1-zram-xImage             the kernel that replaces the stock one, pinned by
+#                              kernel/tempotec_v1.json (./fetch_v1_kernel.sh
+#                              downloads it; MORPTHIS_STOCK_KERNEL=1 keeps the
+#                              stock kernel instead)
+#   morpthis_led.ko            the status light's kernel engine, built by
+#                              morpthis-kernel (optional: without it the player
+#                              drives the light over /dev/i2c-0 as before)
 #   assets/
 #       V1/                    the whole overlay, kernel-facing files included
 #       |
@@ -43,6 +50,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
 PLAYER_BIN="$SCRIPT_DIR/morpthis_player"
 LAUNCH_BIN="$SCRIPT_DIR/morpthis_launch"
+
+# The kernel. The V1 image carries Compás's zram refresh of the stock kernel
+# (Linux 4.4.94+, the stock device tree byte for byte, compressed RAM swap),
+# pinned by kernel/tempotec_v1.json and checked by kernel/check_v1_kernel.py
+# before it replaces anything. V1_KERNEL points elsewhere for the image;
+# MORPTHIS_STOCK_KERNEL=1 leaves the stock kernel in place.
+V1_KERNEL="${V1_KERNEL:-$SCRIPT_DIR/v1-zram-xImage}"
+KERNEL_PIN="$SCRIPT_DIR/kernel/tempotec_v1.json"
+KERNEL_CHECK="$SCRIPT_DIR/kernel/check_v1_kernel.py"
+STOCK_KERNEL="${MORPTHIS_STOCK_KERNEL:-0}"
+LED_KO="$SCRIPT_DIR/morpthis_led.ko"
+# What every module for this kernel carries; the stock kernel's is the same
+# string, which is what lets the vendor's modules load on it unchanged.
+KERNEL_VERMAGIC="4.4.94+ preempt mod_unload MIPS32_R2 32BIT"
 
 # The model this tree builds: the assets folder, the stock firmware to start
 # from, the image to write, and the device-name the player reads from
@@ -167,6 +188,17 @@ fi
 
 [ -f "$PLAYER_BIN" ] || die "morpthis_player is not next to this script."
 
+if [ "$STOCK_KERNEL" = "1" ]; then
+	warn "MORPTHIS_STOCK_KERNEL=1: the stock kernel stays, without zram and without morpthis_led.ko."
+else
+	[ -f "$V1_KERNEL" ] || die "$(basename "$V1_KERNEL") is not next to this script.
+  Run ./fetch_v1_kernel.sh to download the pinned V1 kernel, or set
+  MORPTHIS_STOCK_KERNEL=1 to keep the stock kernel."
+	command -v python3 >/dev/null 2>&1 || die "python3 is needed to check the replacement kernel."
+	[ -f "$KERNEL_PIN" ] && [ -f "$KERNEL_CHECK" ] || die "kernel/tempotec_v1.json or kernel/check_v1_kernel.py is missing."
+	say "    kernel:  $(basename "$V1_KERNEL"), $(get_size "$V1_KERNEL") bytes"
+fi
+
 ASSETS_DIR="$SCRIPT_DIR/assets"
 [ -d "$ASSETS_DIR" ] || die "there is no assets folder next to this script."
 
@@ -213,6 +245,36 @@ fi
 say ""
 
 # ==========================================================================
+# An OTA payload, as the updater reads it
+# ==========================================================================
+# write_chunks NAME FILE: splits FILE into 512 KiB pieces named
+# NAME.NNNN.<md5 of the previous piece, the whole file's for the first>, and
+# writes ota_md5_NAME.<md5 of the whole file> listing each piece's md5 in
+# order. Sets CHUNK_MD5, CHUNK_SIZE and CHUNK_COUNT. Any earlier chain of the
+# same name must already be gone.
+write_chunks() {
+	local name="$1" file="$2"
+	CHUNK_MD5="$(get_md5 "$file")"
+	CHUNK_SIZE="$(get_size "$file")"
+	split -b 524288 -a 4 "$file" "$OTA_DIR/temp_chunk_"
+
+	local md5_file="$OTA_DIR/ota_md5_$name.$CHUNK_MD5"
+	: > "$md5_file"
+
+	local count=0 current="$CHUNK_MD5" f suffix piece
+	for f in "$OTA_DIR/temp_chunk_"*; do
+		[ -e "$f" ] || continue
+		suffix="$(printf "%04d" $count)"
+		piece="$OTA_DIR/$name.$suffix.$current"
+		mv "$f" "$piece"
+		current="$(get_md5 "$piece")"
+		echo "$current" >> "$md5_file"
+		count=$((count + 1))
+	done
+	CHUNK_COUNT=$count
+}
+
+# ==========================================================================
 # One image, start to finish
 # ==========================================================================
 # Called once per model. Everything it touches -- the work folder, the unpacked
@@ -255,6 +317,46 @@ build_one() {
 
 	[ -f "$SQUASH_DIR/$STOCK_LAUNCHER" ] || die "the rootfs has no $STOCK_LAUNCHER: unexpected firmware."
 	[ -f "$SQUASH_DIR/$INIT_SCRIPT" ]    || die "the rootfs has no $INIT_SCRIPT: unexpected firmware."
+	say ""
+
+	# ==========================================================================
+	# 1b. The kernel
+	# ==========================================================================
+	#
+	# The stock kernel is joined from its chunks only to be compared with: the
+	# replacement must be the pinned image, a well-formed uImage, no larger than
+	# the stock one, and carry the stock kernel's own device tree byte for byte
+	# -- the device tree is the board, and a kernel with another one is a kernel
+	# for some other board. Only then is the stock chain removed and the new one
+	# written in the same chunked, md5-chained form.
+	KERNEL_REPLACED=0
+	X_SIZE="$(grep -A 3 'img_name=xImage' "$OTA_DIR/ota_update.in" | grep 'img_size' | cut -d= -f2 | tr -d '\r ')"
+	X_MD5="$(grep -A 3 'img_name=xImage' "$OTA_DIR/ota_update.in" | grep 'img_md5' | cut -d= -f2 | tr -d '\r ')"
+	[ -n "$X_SIZE" ] && [ -n "$X_MD5" ] || die "cannot read the kernel entry from ota_update.in."
+
+	if [ "$STOCK_KERNEL" = "1" ]; then
+		step "[$MODEL_NAME] keeping the stock kernel"
+	else
+		step "[$MODEL_NAME] installing the V1 zram kernel"
+		STOCK_XIMAGE="$WORK_DIR/stock-xImage"
+		( cd "$OTA_DIR" && ls xImage.[0-9][0-9][0-9][0-9].* >/dev/null 2>&1 ) ||
+			die "the image has no xImage chunks to replace."
+		( cd "$OTA_DIR" && cat xImage.[0-9][0-9][0-9][0-9].* ) > "$STOCK_XIMAGE"
+		[ "$(get_size "$STOCK_XIMAGE")" = "$X_SIZE" ] && [ "$(get_md5 "$STOCK_XIMAGE")" = "$X_MD5" ] ||
+			die "the stock kernel chunks do not add up to the image ota_update.in describes."
+
+		if ! KERNEL_FACTS="$(python3 "$KERNEL_CHECK" "$KERNEL_PIN" "$V1_KERNEL" "$STOCK_XIMAGE")"; then
+			die "the replacement kernel was refused; the stock firmware is left as it was."
+		fi
+		say "    $KERNEL_FACTS"
+
+		rm -f "$OTA_DIR/xImage."* "$OTA_DIR/ota_md5_xImage."* "$STOCK_XIMAGE"
+		write_chunks xImage "$V1_KERNEL"
+		X_SIZE="$CHUNK_SIZE"
+		X_MD5="$CHUNK_MD5"
+		KERNEL_REPLACED=1
+		say "    xImage: $X_SIZE bytes, md5 $X_MD5, $CHUNK_COUNT chunks"
+	fi
 	say ""
 
 	# ==========================================================================
@@ -680,6 +782,44 @@ fi
 	say ""
 
 	# ==========================================================================
+	# 6c. What goes with the zram kernel
+	# ==========================================================================
+	#
+	# The swap hook comes in with the overlay; on the stock kernel there is no
+	# zram for it to set up, so it is taken out again rather than left to log
+	# that at every boot. morpthis_led.ko is built for this kernel only, and is
+	# checked for the vermagic the kernel will compare it with.
+	step "[$MODEL_NAME] kernel extras"
+	ZRAM_FILES="usr/bin/morpthis-zram etc/init.d/S31morpthis_zram"
+	if [ "$KERNEL_REPLACED" = "1" ]; then
+		for rel in $ZRAM_FILES; do
+			[ -f "$SQUASH_DIR/$rel" ] || die "$rel is missing from the overlay (assets/$MODEL_DIR/$rel)."
+			chmod 755 "$SQUASH_DIR/$rel"
+		done
+		say "    zram swap hook: S31morpthis_zram (24 MiB, LZ4)"
+
+		if [ -f "$LED_KO" ]; then
+			KO_HEAD="$(od -An -tx1 -N20 "$LED_KO" | tr -d ' \n')"
+			[ "${KO_HEAD:0:12}" = "7f454c460101" ] && [ "${KO_HEAD:32:8}" = "01000800" ] ||
+				die "morpthis_led.ko is not a 32-bit little-endian MIPS kernel module."
+			grep -aq "vermagic=$KERNEL_VERMAGIC" "$LED_KO" ||
+				die "morpthis_led.ko was not built for this kernel (vermagic is not \"$KERNEL_VERMAGIC\")."
+			mkdir -p "$SQUASH_DIR/module_driver"
+			cp -f "$LED_KO" "$SQUASH_DIR/module_driver/morpthis_led.ko"
+			chmod 644 "$SQUASH_DIR/module_driver/morpthis_led.ko"
+			say "    module_driver/morpthis_led.ko installed ($(get_size "$LED_KO") bytes)"
+		else
+			warn "morpthis_led.ko is not next to this script: the player drives the light over /dev/i2c-0"
+		fi
+	else
+		for rel in $ZRAM_FILES; do
+			rm -f "$SQUASH_DIR/$rel"
+		done
+		say "    stock kernel: no zram hook, no morpthis_led.ko"
+	fi
+	say ""
+
+	# ==========================================================================
 	# 7. The build stamp
 	# ==========================================================================
 	step "[$MODEL_NAME] system-info.json"
@@ -739,13 +879,10 @@ fi
 	say "    rootfs.squashfs: $SIZE bytes, md5 $ORIGINAL_SUM"
 
 	step "[$MODEL_NAME] updating ota_update.in"
-	# The kernel is not touched, so its two lines are carried over exactly as they
-	# were: recomputing them from a file this script never writes would be a way of
+	# The kernel lines are the replacement's, from the chain step 1b wrote; with
+	# the stock kernel kept they are carried over exactly as they were, since
+	# recomputing them from a file this script never writes would be a way of
 	# getting them wrong.
-	X_SIZE="$(grep -A 3 'img_name=xImage' "$OTA_DIR/ota_update.in" | grep 'img_size' | cut -d= -f2 | tr -d '\r ')"
-	X_MD5="$(grep -A 3 'img_name=xImage' "$OTA_DIR/ota_update.in" | grep 'img_md5' | cut -d= -f2 | tr -d '\r ')"
-
-	[ -n "$X_SIZE" ] && [ -n "$X_MD5" ] || die "cannot read the kernel entry from ota_update.in."
 
 	cat > "$OTA_DIR/ota_update.in" <<-EOF
 	ota_version=0
@@ -762,24 +899,10 @@ fi
 	EOF
 
 	step "[$MODEL_NAME] splitting into chunks and building the md5 chain"
-	split -b 524288 -a 4 "$ROOTFS_NEW" "$OTA_DIR/temp_chunk_"
+	write_chunks rootfs.squashfs "$ROOTFS_NEW"
 	rm -f "$ROOTFS_NEW"
-
-	MD5_FILE="$OTA_DIR/ota_md5_rootfs.squashfs.$ORIGINAL_SUM"
-	: > "$MD5_FILE"
-
-	count=0
-	CURRENT_SUM="$ORIGINAL_SUM"
-	for f in "$OTA_DIR/temp_chunk_"*; do
-		[ -e "$f" ] || continue
-		suffix="$(printf "%04d" $count)"
-		NEW_FILENAME="$OTA_DIR/rootfs.squashfs.$suffix.$CURRENT_SUM"
-		mv "$f" "$NEW_FILENAME"
-		CURRENT_SUM="$(get_md5 "$NEW_FILENAME")"
-		echo "$CURRENT_SUM" >> "$MD5_FILE"
-		count=$((count + 1))
-	done
-	say "    $count chunks"
+	[ "$CHUNK_MD5" = "$ORIGINAL_SUM" ] || die "the rootfs changed while it was being split."
+	say "    $CHUNK_COUNT chunks"
 	say ""
 
 	# ==========================================================================

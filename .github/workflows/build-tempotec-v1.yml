@@ -29,6 +29,10 @@ on:
         description: Ref of morpthis-sdk to build against (branch, tag or commit). Empty uses main.
         required: false
         type: string
+      kernel_ref:
+        description: Ref of morpthis-kernel to build the kernel modules from (branch, tag or commit). Empty uses main.
+        required: false
+        type: string
       publish_release_tag:
         description: Release tag to upload the built image to, replacing its assets (v1.upt, v1_md5.txt). Empty publishes nothing.
         required: false
@@ -103,6 +107,7 @@ env:
     patch xz-utils bzip2 gzip
     p7zip-full squashfs-tools genisoimage
     python3 python3-venv ccache
+    gcc-10-mipsel-linux-gnu binutils-mipsel-linux-gnu bc
   TOOLCHAIN_PACKAGES: >-
     texinfo bison flex gawk gperf autoconf automake libtool libtool-bin
     libgmp-dev libmpfr-dev libmpc-dev
@@ -157,6 +162,16 @@ jobs:
           repository: ${{ github.repository_owner }}/morpthis-sdk
           ref: ${{ inputs.sdk_ref || 'main' }}
           path: morpthis-sdk
+
+      # The V1 kernel's pin, configuration and the Morpthis kernel modules
+      # (morpthis_led.ko). The kernel image itself is a pinned download; see
+      # morpthis-packer/fetch_v1_kernel.sh.
+      - name: Check out the kernel repository
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ github.repository_owner }}/morpthis-kernel
+          ref: ${{ inputs.kernel_ref || 'main' }}
+          path: morpthis-kernel
 
       # The one line every later step and every report reads. GITHUB_SHA is
       # the ref the run was STARTED on, which is not the ref that was built
@@ -433,6 +448,34 @@ jobs:
           test -n "$kernel_sha256"
           echo "kernel_sha256=$kernel_sha256" >> "$GITHUB_OUTPUT"
 
+      # The zram kernel that replaces the stock one, from the pin the packer
+      # checks it against. The packer refuses it unless its device tree is the
+      # stock kernel's, byte for byte.
+      - name: Fetch the V1 kernel
+        id: kernel
+        run: |
+          set -euo pipefail
+          morpthis-packer/fetch_v1_kernel.sh morpthis-packer
+          kernel_sha256="$(sed -n 's/.*"sha256": *"\([0-9a-f]\{64\}\)".*/\1/p' morpthis-packer/kernel/tempotec_v1.json | head -1)"
+          test -n "$kernel_sha256"
+          if ! cmp -s morpthis-packer/kernel/tempotec_v1.json morpthis-kernel/v1/kernel.json; then
+            echo "::error::morpthis-packer/kernel/tempotec_v1.json and morpthis-kernel/v1/kernel.json pin different kernels."
+            exit 1
+          fi
+          echo "kernel_sha256=$kernel_sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the prepared kernel tree
+        uses: actions/cache@v4
+        with:
+          path: morpthis-kernel/.build
+          key: kernel-4.4.94-${{ hashFiles('morpthis-kernel/v1/configs/tempotec_v1-final.config', 'morpthis-kernel/scripts/build_modules.sh') }}
+
+      - name: Build the kernel modules
+        run: |
+          set -euo pipefail
+          morpthis-kernel/scripts/build_modules.sh "$RUNNER_TEMP/kernel-modules"
+          install -m 0644 "$RUNNER_TEMP/kernel-modules/morpthis_led.ko" morpthis-packer/morpthis_led.ko
+
       # Saved only after prepare_v1_stock.sh and verify_upt.sh accepted the
       # download, so a wrong or corrupt file is not what the next run restores.
       # Another run may have written the same key first; that is not a failure.
@@ -616,10 +659,10 @@ jobs:
           install -m 0755 morpthis-player/morpthis_launch morpthis-packer/morpthis_launch
           morpthis-packer/morpthis_firmware_packer.sh
 
-      - name: Validate generated firmware and unchanged kernel
+      - name: Validate generated firmware and its pinned kernel
         run: |
           morpthis-packer/verify_upt.sh morpthis-packer/v1.upt \
-            --morpthis-v1 --kernel-sha256 '${{ steps.stock.outputs.kernel_sha256 }}' \
+            --morpthis-v1 --kernel-sha256 '${{ steps.kernel.outputs.kernel_sha256 }}' \
             | tee "$RUNNER_TEMP/v1-output-validation.txt"
 
       - name: Assemble downloadable artifact

@@ -37,7 +37,7 @@ The **TempoTec Variations V1**:
 | **USB** | USB Type-C (bidirectional USB DAC & USB audio out) |
 | **Firmware Package** | `v1.upt` with accompanying `v1_md5.txt` |
 
-The player UI is built with LVGL 9.6 and adapted for the V1's small display. The package is based on vendor firmware; it is **not** a Linux distribution or a kernel replacement.
+The player UI is built with LVGL 9.6 and adapted for the V1's small display. The package is based on vendor firmware; it is **not** a Linux distribution. It does replace the kernel: the stock V1 kernel is swapped for a zram refresh of it (Linux 4.4.94+, the stock device tree byte for byte, so every vendor module still loads) — see [Kernel](#kernel).
 
 ## Features
 
@@ -60,7 +60,17 @@ Only attempt this on a TempoTec Variations V1. Read the warning above before pro
 3. Charge the player adequately, insert the card and start the device's built-in firmware update process. Menu names vary by stock firmware version; follow the device's on-screen instructions and do not interrupt the update.
 4. If you want to restore stock firmware, put the original vendor `v1.upt` and its matching checksum file at the card root and use the same update process.
 
-The package builder is designed to preserve the stock `xImage` kernel and leave the existing update/recovery path in place. This is checked during the build, but it is **not** a guarantee that recovery will work on every device or in every failure case.
+The package builder replaces the stock `xImage` with the pinned zram kernel only after checking it against the stock one (see [Kernel](#kernel)), and leaves the existing update/recovery path in place. This is checked during the build, but it is **not** a guarantee that recovery will work on every device or in every failure case.
+
+## Kernel
+
+The image ships the TempoTec V1 kernel refresh from [Compás firmware](https://github.com/Starnished66/compas-firmware): the stock kernel's version (`4.4.94+`) rebuilt from Ingenic's X1600 SDK with the [hiby-custom-kernel](https://github.com/Jepl4r/hiby-custom-kernel) patches, compressed RAM swap added (24 MiB zram, LZ4) and the stock device tree kept byte for byte. Its pin, configuration, build kit and the Morpthis kernel modules live in [morpthis-kernel](https://github.com/cheesyserg/morpthis-kernel).
+
+- `morpthis-packer/fetch_v1_kernel.sh` downloads it and checks it against `morpthis-packer/kernel/tempotec_v1.json`.
+- `morpthis_firmware_packer.sh` refuses it unless the hash and size are the pinned ones, it is a valid Linux/MIPS uImage no larger than the stock kernel, and its device tree is the one in the stock kernel of the image being repacked. It then writes the new kernel chain and installs the swap hook (`S31morpthis_zram`). `MORPTHIS_STOCK_KERNEL=1` keeps the stock kernel instead.
+- `morpthis_led.ko` (built by morpthis-kernel) runs the status light from the kernel; the player loads it itself and falls back to its own I2C path if it is missing or will not load.
+
+As its pin says, this kernel was statically checked rather than validated on hardware before it was published.
 
 ## Last.fm credentials
 

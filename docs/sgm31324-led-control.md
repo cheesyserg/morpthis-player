@@ -424,3 +424,11 @@ fade_out 48 1200              # slower, finer steps
   so it works with the module disabled. The driver's registered patterns remain
   the fallback, used only when the controller cannot be taken over or on the R1,
   which has no SGM31324 at all.
+- On the zram kernel the same engine runs in the kernel: `morpthis_led.ko`
+  (morpthis-kernel, `modules/morpthis_led`) takes these registers, the level
+  ladder and the four effects, steps fades as kernel work, skips registers a
+  step leaves unchanged and puts the light out at any reboot or power-off. The
+  player loads it from `/module_driver/morpthis_led.ko` after unloading
+  `leds_sgm31324_add` and keeps `led_i2c.c` as the fallback; from a shell,
+  `echo "0 0 79 40 0 0 0 500 10" > /sys/devices/platform/morpthis-led/render`
+  is the `xfade` to teal.

@@ -45,6 +45,7 @@ static lv_obj_t *led_trans_value, *led_trans_slider;
 static lv_obj_t *key_lock_switch;
 static lv_obj_t *hold_menu_switch;
 static lv_obj_t *standby_switch;
+static lv_obj_t *plug_wake_switch;
 static lv_obj_t *charge_note;
 static lv_obj_t *axp_limit_switch, *axp_current_switch; // the R1's two, instead of the slider
 
@@ -120,6 +121,10 @@ void powersettings_apply(void) {
 	// player shortly after the screen goes off.
 	power_set_standby_enabled(config_get_bool("power", "standby_mem", true));
 
+	// What the screen does when a cable comes in. The device leaves standby
+	// for the cable either way; this is only whether the screen lights up.
+	power_set_plug_wake_screen(config_get_bool("power", "plug_wake_screen", true));
+
 	// The LED master switch comes first: with it off there is nothing for the
 	// standby option to turn off, and led.c keeps the charge indicator alive
 	// on its own regardless.
@@ -184,6 +189,7 @@ static void refresh_labels(void) {
 	} else {
 		lv_obj_remove_state(standby_switch, LV_STATE_CHECKED);
 	}
+	set_checked(plug_wake_switch, config_get_bool("power", "plug_wake_screen", true));
 
 	// One card: the slider is only on it while the toggle is on.
 	bool auto_off = config_get_bool("power", "auto_off", false);
@@ -292,6 +298,13 @@ static void auto_off_toggled_cb(lv_event_t *e) {
 	refresh_labels();
 }
 
+static void plug_wake_toggled_cb(lv_event_t *e) {
+	(void)e;
+	config_set_bool("power", "plug_wake_screen", lv_obj_has_state(plug_wake_switch, LV_STATE_CHECKED));
+	config_save();
+	powersettings_apply();
+}
+
 static void standby_toggled_cb(lv_event_t *e) {
 	(void)e;
 	config_set_bool("power", "standby_mem", lv_obj_has_state(standby_switch, LV_STATE_CHECKED));
@@ -314,6 +327,16 @@ void powersettings_init(gui_config_t *cfg) {
 	lv_obj_add_style(standby_note, &theme_style_text_dim, 0);
 	lv_obj_set_style_text_font(standby_note, &font_ui_22, 0);
 	lv_label_set_text(standby_note, tr("power_standby_mem_note"));
+
+	// The cable: it always brings the device out of standby so it can charge;
+	// the switch decides whether the screen comes on with it.
+	settingsrow_toggle(container, "power_plug_wake", &plug_wake_switch, plug_wake_toggled_cb);
+	lv_obj_t *plug_note = lv_label_create(container);
+	lv_label_set_long_mode(plug_note, LV_LABEL_LONG_WRAP);
+	lv_obj_set_width(plug_note, lv_pct(100));
+	lv_obj_add_style(plug_note, &theme_style_text_dim, 0);
+	lv_obj_set_style_text_font(plug_note, &font_ui_22, 0);
+	lv_label_set_text(plug_note, tr("power_plug_wake_note"));
 
 	// The R1 charges through its PMIC, which takes a lower target voltage and a
 	// lower current rather than a percentage: two switches there, the slider

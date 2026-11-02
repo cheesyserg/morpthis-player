@@ -1,0 +1,10 @@
+#!/bin/sh
+# Compressed RAM swap for the zram kernel (see /usr/bin/morpthis-zram).
+
+case "$1" in
+    start) /usr/bin/morpthis-zram start || : ;;
+    stop) /usr/bin/morpthis-zram stop || : ;;
+    *) echo "Usage: $0 {start|stop}" >&2; exit 1 ;;
+esac
+
+exit 0

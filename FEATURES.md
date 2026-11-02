@@ -129,7 +129,13 @@
   > Pictures must be baseline (not progressive) JPEGs, portrait, and no larger than 480x800. The V1 crops and scales them to fill its 240x320 screen. For the sharpest result with nothing cropped, make them 240x320 or 480x640, the screen's own 3:4 shape.
 
 - **Power** - standby, LED behaviour, automatic power-off from thirty seconds to
-  six hours, and a charge limit from 80 to 100 %.
+  six hours, and a charge limit from 80 to 100 %. The screen goes dark on its
+  timeout whatever is playing; standby waits for the music to stop.
+- **Power → Wake screen on charger** - plugging a cable in always brings the
+  player out of standby and keeps it awake while it charges. On (the default),
+  the screen lights up too; off, it stays dark. If a plug ever fails to wake a
+  sleeping player, it starts looking for a charger itself every two minutes
+  while asleep.
 - **Power → Hold power for the menu** - what a held power button does. On, the
   default, the hold brings up the power menu and switching off or rebooting
   takes a slide to confirm. Off, the same hold switches the player off where it

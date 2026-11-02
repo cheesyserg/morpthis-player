@@ -30,4 +30,13 @@ const lv_image_dsc_t *iconscale_fit(const lv_image_dsc_t *src, int max_side);
 // old lv_image_set_scale() call, so a page looks the same either way.
 void iconscale_set(lv_obj_t *icon, const lv_image_dsc_t *src, int max_side);
 
+// lv_image_set_src() followed by lv_image_set_scale(scale), drawn from a
+// pre-scaled copy where one can be made, so the picture costs a plain blit on
+// every redraw instead of a transform. The layout is what the transform gave:
+// a widget sized by its content keeps the source's box (also across later
+// calls with another source), and the picture sits centred in it, where the
+// default centre pivot put it. Use it for every source change of such an icon,
+// not only the first, or a later lv_image_set_src() would draw unscaled.
+void iconscale_set_scaled(lv_obj_t *icon, const lv_image_dsc_t *src, uint32_t scale);
+
 #endif /* ICONSCALE_H */

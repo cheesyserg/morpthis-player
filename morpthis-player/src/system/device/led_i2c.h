@@ -45,4 +45,35 @@ void led_i2c_breathe(int r, int g, int b, unsigned char period, unsigned char du
 // Everything off: the enable map keeps only DEV_EN and the levels go to zero.
 void led_i2c_off(void);
 
+// ---------------------------------------------------------------------------
+// The kernel engine (morpthis_led.ko, kernel/morpthis_led/ in this repository)
+//
+// The same controller and the same effects, run by the kernel instead of the
+// LED worker thread: a fade is ten-millisecond kernel work, unchanged
+// registers are not re-sent, the blink wakes no process, and the light goes
+// out at any reboot or power-off. led_i2c_init() loads it when the image
+// carries it ([led] kernel_driver = 0 turns that off) and the I2C routines
+// above stay the fallback: a module that will not load, or a previous boot
+// that never got past loading it, leaves the player on its own I2C path.
+// ---------------------------------------------------------------------------
+
+// True when the kernel engine is driving the light; the led_i2c_* routines
+// above are then not used.
+bool led_kmod_ready(void);
+
+// The modes, as the module's `render` node takes them.
+#define LED_KMOD_STEADY 0
+#define LED_KMOD_BREATHE 1
+#define LED_KMOD_BLINK 2
+#define LED_KMOD_OFF 3
+
+// Hands one target to the engine, which cuts whatever it is running from
+// wherever it had got to -- the same semantics as the worker's own walk.
+bool led_kmod_render(int mode, int r, int g, int b, int period, int duty, int fade, int transition_ms,
+					 int step_ms);
+
+// Waits a short while (50 ms at most) for a running fade to end. 1 while it
+// is still running, 0 once the engine is idle, -1 if the node cannot be read.
+int led_kmod_wait(void);
+
 #endif /* LED_I2C_H */

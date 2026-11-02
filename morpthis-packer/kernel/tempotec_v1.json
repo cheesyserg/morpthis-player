@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "board": "tempotec_v1",
+  "sha256": "bbad813b20f0c802b54bf2c9824e64539147a2311cde02a751a030f9a02b7384",
+  "size_bytes": 3604544,
+  "dtb_sha256": "8e99b1a2a0b18c18ba4bfd7240689c570a629e665147249ac2d2095974b33751",
+  "kernel_release": "4.4.94+",
+  "source_repo": "https://github.com/Jepl4r/hiby-custom-kernel.git",
+  "source_commit": "4c7d47ede0bfa4b63528574817becc79d327bf9d",
+  "sdk_sha256": "3e8c101b7c12667dcfed888e2eda63cfa833c6e20f22569e2b646c40f8523641",
+  "config_sha256": "beb5bccf91fa3299d177fc1de7e133687f4b456e2a0e1f2477dcf29b63ef7fa1",
+  "system_map_sha256": "4bcc37e75e74d0a69e6fed33d943814cc2ca5aaf4ec80267e463fdc912f1d698",
+  "vmlinux_sha256": "43d07d27a506fcd523282f478b08ffe5083f5d7ce71a73ba357a166ce547e393",
+  "raw_kernel_sha256": "8b3e179f8ebbb0fd345713e5d013b4b30372be6df8026fd53c3ecd43613afa0d",
+  "compression": {
+    "tool": "zopfli",
+    "version": "0.4.3",
+    "iterations": 15,
+    "wheel_sha256": "769875152d0625c46707bcca57d4b2233fe653482067acd55fbf6ec525cb9bdc"
+  },
+  "build_metadata": {
+    "user": "root",
+    "host": "e564c422054b",
+    "version": 1,
+    "timestamp": "Sat Oct 31 19:11:31 UTC 2026",
+    "uimage_timestamp": 1793474132
+  },
+  "hardware_tested": false,
+  "distribution": "TempoTec V1 beta; hardware validation delegated to beta testers by owner",
+  "zram": {
+    "size_bytes": 25165824,
+    "compressor": "lz4",
+    "swappiness": 100
+  }
+}
