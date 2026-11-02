@@ -4,3 +4,9 @@
 # Keep the linker script LF so GNU ld does not see a CR as part of a symbol
 # name.
 *.ld text eol=lf
+
+# Scripts that go into the firmware image run under the device's shell, which
+# reads a CR as part of the command.
+morpthis-packer/assets/V1/etc/init.d/* text eol=lf
+morpthis-packer/assets/V1/usr/bin/* text eol=lf
+*.sh text eol=lf

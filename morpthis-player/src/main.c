@@ -2,6 +2,8 @@
 // Read-only diagnostics: the pressed object's focus flag and the release throw
 // vector. Both are what LVGL itself acts on; neither is changed here.
 #include "lvgl/src/indev/lv_indev_private.h"
+// lv_timer_t is opaque from LVGL 9.2; the refresh pacing reads last_run.
+#include "lvgl/src/misc/lv_timer_private.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -1903,24 +1905,59 @@ static void fb_stage_publish(const uint8_t *px) {
 	}
 }
 
-// The panel scans a frame every 16.67 ms (60 Hz). LVGL's default refresh
-// period is 16 ms, which is 4% fast: the renderer produces a frame the panel
-// cannot show about three times a second, and that beat reads as a regular
-// hitch no matter how the frame is copied or flipped.  A repeating 17/17/16 ms
-// cycle averages 16.67 ms, so the render clock and the panel stay in step
-// without waiting for vsync (and without stalling the drawing thread).
+// The panel scans a frame every 16.67 ms (60 Hz), and the frames have to be
+// produced at exactly that average or the difference shows as a regular hitch
+// -- a frame the panel shows twice -- however fast each one is drawn.
+//
+// LVGL's own period cannot hold that average. A timer is due when
+// `lv_tick_get() - last_run >= period`, and last_run is stamped with the tick
+// at which the timer actually ran, not the one at which it was due: every
+// frame that starts late (the poll() wake-up, a millisecond tick, another
+// timer in the same pass) moves every later frame by the same amount. A fixed
+// 17/17/16 ms cycle therefore averaged 16.67 ms plus the mean lateness, about
+// 57-58 frames a second against the panel's 60, and a scroll repeated a frame
+// several times a second.
+//
+// So the frames follow an absolute schedule instead: the next one is due one
+// panel interval after the previous one was DUE, and the period handed to the
+// timer is whatever reaches that moment from this frame's last_run. Lateness
+// is absorbed by the next period instead of being carried forward. After a
+// pause in drawing (nothing to refresh) or a pass that ran long, the schedule
+// restarts from now rather than trying to catch up with frames that were
+// never going to be shown.
+#define DISPLAY_FRAME_US 16667u
+
 static void display_pace_refresh(lv_display_t *disp, bool advance) {
-	static const uint8_t periods[3] = {17, 17, 16};
-	static uint8_t phase;
+	static uint64_t next_due_us; // when the next frame is due, on now_us()'s clock
 
 	lv_timer_t *timer = lv_display_get_refr_timer(disp);
 	if (!timer) {
 		return;
 	}
-	if (advance) {
-		phase = (uint8_t)((phase + 1) % 3);
+	if (!advance) {
+		next_due_us = 0;
+		lv_timer_set_period(timer, DISPLAY_FRAME_US / 1000u);
+		return;
 	}
-	lv_timer_set_period(timer, periods[phase]);
+
+	uint64_t now = now_us();
+	if (next_due_us == 0 || now >= next_due_us + DISPLAY_FRAME_US) {
+		next_due_us = now + DISPLAY_FRAME_US; // a new run of frames
+	} else {
+		next_due_us += DISPLAY_FRAME_US;
+	}
+
+	// The tick at which the next frame is due, rounded up so it is never
+	// early, against the tick this frame was stamped with.
+	uint32_t tick_now = lv_tick_get();
+	uint32_t ahead_ms = next_due_us > now ? (uint32_t)((next_due_us - now + 999u) / 1000u) : 0;
+	int32_t period = (int32_t)(tick_now + ahead_ms - timer->last_run);
+	if (period < 1) {
+		period = 1;
+	} else if (period > 2 * (int32_t)(DISPLAY_FRAME_US / 1000u)) {
+		period = 2 * (int32_t)(DISPLAY_FRAME_US / 1000u);
+	}
+	lv_timer_set_period(timer, (uint32_t)period);
 }
 
 // The queued-flip path: one frame, copied straight into the page the panel is
@@ -2023,8 +2060,8 @@ static void fb_pan_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *
 		drag_stats.last_frame_us = now;
 	}
 
-	// See display_pace_refresh(): the next refresh is 17 or 16 ms, so the
-	// average is one panel interval.
+	// See display_pace_refresh(): the next refresh is due one panel interval
+	// after this one was, whenever this one actually ran.
 	display_pace_refresh(disp, true);
 }
 

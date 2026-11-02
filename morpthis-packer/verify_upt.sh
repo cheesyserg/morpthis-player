@@ -110,7 +110,7 @@ verify_payload rootfs.squashfs rootfs
 
 KERNEL_SHA256="$(sha256sum "$WORK/xImage" | awk '{print $1}')"
 if [ -n "$EXPECTED_KERNEL" ] && [ "$KERNEL_SHA256" != "$EXPECTED_KERNEL" ]; then
-	echo "Error: output kernel SHA-256 $KERNEL_SHA256 differs from stock $EXPECTED_KERNEL." >&2
+	echo "Error: output kernel SHA-256 $KERNEL_SHA256 differs from the expected $EXPECTED_KERNEL." >&2
 	exit 1
 fi
 printf 'Kernel SHA-256: %s\n' "$KERNEL_SHA256"

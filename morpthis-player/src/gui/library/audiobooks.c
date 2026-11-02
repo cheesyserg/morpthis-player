@@ -1162,7 +1162,7 @@ static void morpthis_continue_panel_build(gui_config_t *cfg) {
 	lv_image_set_src(book_icon, &icon_book_headphones_row);
 	lv_obj_add_style(book_icon, &theme_style_icon, 0);
 	lv_obj_set_size(book_icon, 24, 24);
-	lv_image_set_scale(book_icon, (uint32_t)(LV_SCALE_NONE * 24 / 64));
+	iconscale_set(book_icon, &icon_book_headphones_row, 24);
 	lv_image_set_inner_align(book_icon, LV_IMAGE_ALIGN_CENTER);
 	lv_obj_set_style_image_recolor(book_icon, theme_semantic_color(THEME_SEMANTIC_AMBER), 0);
 	lv_obj_set_style_image_recolor_opa(book_icon, LV_OPA_COVER, 0);
@@ -1207,7 +1207,7 @@ static void morpthis_continue_panel_build(gui_config_t *cfg) {
 	lv_obj_add_style(open_icon, &theme_style_icon, 0);
 	lv_obj_set_size(open_icon, 17, 17);
 	lv_image_set_inner_align(open_icon, LV_IMAGE_ALIGN_CENTER);
-	lv_image_set_scale(open_icon, (uint32_t)(LV_SCALE_NONE * 17 / 40));
+	iconscale_set(open_icon, &icon_play, 17);
 	lv_obj_set_style_image_recolor(open_icon, theme_semantic_color(THEME_SEMANTIC_AMBER), 0);
 	lv_obj_set_style_image_recolor_opa(open_icon, LV_OPA_COVER, 0);
 	lv_obj_t *open_label = lv_label_create(open_continue);
@@ -1220,7 +1220,7 @@ static void morpthis_continue_panel_build(gui_config_t *cfg) {
 	lv_image_set_src(open_chevron, &icon_chevron_right);
 	lv_obj_add_style(open_chevron, &theme_style_icon, 0);
 	lv_obj_set_size(open_chevron, 14, 14);
-	lv_image_set_scale(open_chevron, (uint32_t)(LV_SCALE_NONE * 14 / 36));
+	iconscale_set(open_chevron, &icon_chevron_right, 14);
 	lv_image_set_inner_align(open_chevron, LV_IMAGE_ALIGN_CENTER);
 	lv_obj_set_style_image_opa(open_chevron, LV_OPA_60, 0);
 
@@ -1255,8 +1255,7 @@ static void morpthis_continue_panel_build(gui_config_t *cfg) {
 		lv_image_set_src(icon, category_rows[i].icon);
 		lv_obj_add_style(icon, &theme_style_icon, 0);
 		lv_obj_set_size(icon, 18, 18);
-		int side = LV_MAX((int)category_rows[i].icon->header.w, (int)category_rows[i].icon->header.h);
-		lv_image_set_scale(icon, side ? (uint32_t)(LV_SCALE_NONE * 18 / side) : LV_SCALE_NONE);
+		iconscale_set(icon, category_rows[i].icon, 18);
 		lv_image_set_inner_align(icon, LV_IMAGE_ALIGN_CENTER);
 		lv_obj_set_style_image_recolor(icon, theme_semantic_color(category_rows[i].tone), 0);
 		lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, 0);
@@ -1270,7 +1269,7 @@ static void morpthis_continue_panel_build(gui_config_t *cfg) {
 		lv_image_set_src(chevron, &icon_chevron_right);
 		lv_obj_add_style(chevron, &theme_style_icon, 0);
 		lv_obj_set_size(chevron, 14, 14);
-		lv_image_set_scale(chevron, (uint32_t)(LV_SCALE_NONE * 14 / 36));
+		iconscale_set(chevron, &icon_chevron_right, 14);
 		lv_image_set_inner_align(chevron, LV_IMAGE_ALIGN_CENTER);
 		lv_obj_set_style_image_opa(chevron, LV_OPA_60, 0);
 	}
@@ -1294,7 +1293,7 @@ static void morpthis_continue_panel_build(gui_config_t *cfg) {
 	lv_image_set_src(scan_icon, &icon_book_headphones_row);
 	lv_obj_add_style(scan_icon, &theme_style_icon, 0);
 	lv_obj_set_size(scan_icon, 18, 18);
-	lv_image_set_scale(scan_icon, (uint32_t)(LV_SCALE_NONE * 18 / 64));
+	iconscale_set(scan_icon, &icon_book_headphones_row, 18);
 	lv_image_set_inner_align(scan_icon, LV_IMAGE_ALIGN_CENTER);
 	lv_obj_set_style_image_recolor(scan_icon, theme_semantic_color(THEME_SEMANTIC_AMBER), 0);
 	lv_obj_set_style_image_recolor_opa(scan_icon, LV_OPA_COVER, 0);

@@ -269,7 +269,27 @@ static void *led_worker(void *arg) {
 		seen = led_seq;
 		pthread_mutex_unlock(&led_lock);
 
-		if (led_i2c_ready()) {
+		bool rendered = false;
+		if (led_kmod_ready()) {
+			// The kernel engine plays the target itself, with the same walk
+			// and the same cut-short semantics as the loop below. The worker
+			// only waits for a fade to end, so the done signal below still
+			// means what the shutdown path needs it to mean, and gives up the
+			// wait the moment a newer target arrives.
+			int mode = t.mode == LM_BREATHE ? LED_KMOD_BREATHE
+					   : t.mode == LM_BLINK	 ? LED_KMOD_BLINK
+					   : t.mode == LM_OFF	 ? LED_KMOD_OFF
+											 : LED_KMOD_STEADY;
+			if (led_kmod_render(mode, t.r, t.g, t.b, t.period, t.duty, t.fade, t.transition_ms, LED_STEP_MS)) {
+				if (mode == LED_KMOD_STEADY || mode == LED_KMOD_OFF) {
+					while (led_seq == seen && led_kmod_wait() == 1) {
+					}
+				}
+				rendered = true;
+			}
+		}
+
+		if (!rendered && led_i2c_ready()) {
 			if (t.mode == LM_BREATHE) {
 				led_i2c_breathe(t.r, t.g, t.b, (unsigned char)t.period, (unsigned char)t.duty, (unsigned char)t.fade);
 				cur_r = t.r;
@@ -621,7 +641,7 @@ void led_init(void) {
 		start_worker();
 	}
 
-	const char *mode = direct_mode ? "direct i2c"
+	const char *mode = direct_mode ? (led_kmod_ready() ? "kernel engine" : "direct i2c")
 					   : have_pattern_node ? "pattern node"
 					   : have_blue_node	 ? "blue pwm"
 										 : "unavailable";

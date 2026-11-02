@@ -6,6 +6,7 @@
 
 #include "lvgl/lvgl.h"
 
+#include "src/gui/shell/iconscale.h"
 #include "src/gui/board_profile.h"
 #include "src/gui/shell/confirm.h"
 #include "src/gui/shell/icons.h"
@@ -584,7 +585,12 @@ static const volume_output_t VLIMIT_OUTPUTS[VLIMIT_OUTPUT_COUNT] = {VOLUME_OUTPU
 
 #define VLIMIT_STEPS (100 - VOLUME_LIMIT_MIN + 1)
 
-static bool vlimit_has_balanced(void) { return !sysinfo_model()->cs43131; }
+// An unknown model (the simulator, a system-info.json naming no model) has no
+// table entry to ask, and is taken to have the balanced output.
+static bool vlimit_has_balanced(void) {
+	const sysinfo_model_t *model = sysinfo_model();
+	return !(model && model->cs43131);
+}
 
 static void vlimit_refresh(void) {
 	bool on = volume_limit_enabled();
@@ -2139,7 +2145,7 @@ static void build_rearrange_row(int index) {
 	lv_obj_add_style(entry->icon, &theme_style_icon, 0);
 	lv_obj_set_style_image_recolor_opa(entry->icon, LV_OPA_COVER, 0);
 	lv_obj_set_size(entry->icon, icon_box, icon_box);
-	lv_image_set_scale(entry->icon, (uint32_t)(LV_SCALE_NONE * icon_box / 32));
+	iconscale_set(entry->icon, &icon_music2, icon_box);
 	lv_image_set_inner_align(entry->icon, LV_IMAGE_ALIGN_CENTER);
 	lv_obj_align(entry->icon, LV_ALIGN_LEFT_MID, bp_pick(10, 16), 0);
 
@@ -2167,7 +2173,7 @@ static void build_rearrange_row(int index) {
 	lv_obj_set_style_image_recolor_opa(bars, LV_OPA_COVER, 0);
 	lv_obj_set_style_image_opa(bars, LV_OPA_50, 0);
 	lv_obj_set_size(bars, grip_box, grip_box);
-	lv_image_set_scale(bars, (uint32_t)(LV_SCALE_NONE * grip_box / 24));
+	iconscale_set(bars, &icon_grip, grip_box);
 	lv_image_set_inner_align(bars, LV_IMAGE_ALIGN_CENTER);
 	lv_obj_center(bars);
 }

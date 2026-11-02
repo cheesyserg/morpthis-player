@@ -450,6 +450,13 @@ static uint32_t input_idle_ms(uint32_t now) {
 }
 
 static bool g_screen_on_hold;
+// The longest a view or an app may keep an untouched screen lit: lyrics left
+// open on a playing track, or an app that took a screen hold and never let go,
+// must not hold the panel on all night. [power] screen_hold_max_minutes, 30 by
+// default; 0 lets them hold for ever. The jobs that hold through
+// power_hold_screen_on() -- a scan, a firmware update -- are not capped.
+#define SCREEN_HOLD_MAX_DEFAULT_MIN 30
+static uint32_t g_screen_hold_max_ms = SCREEN_HOLD_MAX_DEFAULT_MIN * 60u * 1000u;
 static bool g_screen_view_hold; // see power_hold_screen_for_view
 static bool g_screen_app_hold;  // see power_hold_screen_for_app; protected by g_lock
 
@@ -1005,6 +1012,13 @@ static time_t g_rtc_alarm_at;
 // ntpdate, so on a device that has seen neither the deadline check never comes
 // true. CLOCK_BOOTTIME counts suspended time and needs nobody's permission.
 static uint32_t g_rtc_alarm_boot_at;
+// What the armed alarm is for. The automatic shutdown and the charger check
+// share the one RTC alarm: the sooner of the two is armed, and only the one it
+// was armed for is acted on at the wake. A charger check that falls first
+// does not lose the shutdown -- the check's own wake re-arms it.
+static bool g_rtc_auto_off_armed;
+static bool g_rtc_poll_armed;
+static uint32_t g_rtc_poll_boot_at;
 
 static bool rtc_wakealarm_write(const char *val) {
 #ifdef HOST_BUILD
@@ -1025,26 +1039,46 @@ static void rtc_alarm_disarm(void) {
 		return;
 	}
 	g_rtc_alarm_armed = false;
+	g_rtc_auto_off_armed = false;
+	g_rtc_poll_armed = false;
 	rtc_wakealarm_write("0");
 	printf("power: RTC wake alarm disarmed\n");
 }
 
-static void rtc_alarm_arm_for_auto_off(void) {
+// The charger check (see power.h): how often a sleeping player looks for a
+// cable when a plug has been seen not to wake it. 0 = never.
+static uint32_t g_plug_poll_ms;
+// Whether that period may still be learned (plug_poll_seconds not set by hand).
+static bool g_plug_poll_auto = true;
+#define PLUG_POLL_LEARNED_S 120
+#define PLUG_POLL_MIN_S 30
+
+static void rtc_alarm_arm_for_sleep(void) {
 	g_rtc_alarm_armed = false;
+	g_rtc_auto_off_armed = false;
+	g_rtc_poll_armed = false;
+
+	// The automatic shutdown's deadline, if it is on and has not already
+	// passed (an expired one is the normal awake tick's to act on).
+	long off_s = -1;
+	if (g_auto_off_enabled && g_auto_off_ms != 0) {
+		uint32_t idle_wall = boottime_ms() - g_last_active_boot_ms;
+		if (idle_wall < g_auto_off_ms) {
+			off_s = (long)((g_auto_off_ms - idle_wall) / 1000u) + 5; // margin
+		}
+	}
+	long poll_s = g_plug_poll_ms ? (long)(g_plug_poll_ms / 1000u) : -1;
+
 	// Cleared on every path, not only when a new one is written: an alarm left
 	// over from an earlier suspend outlives the setting that armed it, and fires
 	// later to wake a device that has no reason to wake -- with the software
 	// flag down, so nothing acts on it and it simply burns battery in the dark.
-	if (!g_auto_off_enabled || g_auto_off_ms == 0) {
+	if (off_s < 0 && poll_s < 0) {
 		rtc_wakealarm_write("0");
 		return;
 	}
-	uint32_t idle_wall = boottime_ms() - g_last_active_boot_ms;
-	if (idle_wall >= g_auto_off_ms) {
-		rtc_wakealarm_write("0");
-		return; // already expired: the normal awake tick handles it
-	}
-	long remaining_s = (long)((g_auto_off_ms - idle_wall) / 1000u) + 5; // margin
+	long remaining_s = off_s < 0 ? poll_s : (poll_s < 0 || off_s <= poll_s) ? off_s : poll_s;
+
 	// Cleared first (the kernel rejects a new alarm over a pending one), then
 	// the absolute time in epoch seconds, which is how the RTC keeps it.
 	if (!rtc_wakealarm_write("0")) {
@@ -1058,9 +1092,158 @@ static void rtc_alarm_arm_for_auto_off(void) {
 	}
 	g_rtc_alarm_armed = true;
 	g_rtc_alarm_at = at;
-	g_rtc_alarm_boot_at = boottime_ms() + (uint32_t)remaining_s * 1000u;
-	printf("power: mem: RTC wake in %ld s for the automatic shutdown\n", remaining_s);
+	uint32_t boot_at = boottime_ms() + (uint32_t)remaining_s * 1000u;
+	if (remaining_s == off_s) {
+		g_rtc_auto_off_armed = true;
+		g_rtc_alarm_boot_at = boot_at;
+		printf("power: mem: RTC wake in %ld s for the automatic shutdown\n", remaining_s);
+	} else {
+		g_rtc_poll_armed = true;
+		g_rtc_poll_boot_at = boot_at;
+		printf("power: mem: RTC wake in %ld s to look for a charger\n", remaining_s);
+	}
 }
+
+// ---------------------------------------------------------------------------
+// The cable as a wake source (see power.h)
+//
+// Whether a device may wake the system is a per-device switch in sysfs
+// (power/wakeup), and a driver arms its interrupt for the sleep only when the
+// switch is on. Which of the V1's devices notice a cable -- the MP2731
+// charger, the AXP2101's USB supply, the dwc2 controller, the Type-C port --
+// and which of their drivers honour the switch is the kernel's business, so
+// every candidate is turned on for the sleep and put back afterwards.
+// [power] plug_wake_nodes adds more (comma-separated paths to power/wakeup
+// files); [power] plug_wake_arm = 0 leaves them all alone.
+// ---------------------------------------------------------------------------
+#define PLUG_WAKE_MAX 16
+// Wakes that nothing accounts for -- no key, no cable, no alarm -- in a row.
+// An armed device may raise more than the cable (a PMIC interrupt for the
+// battery level, say), and past PLUG_WAKE_STRAY_MAX of those the cable's
+// switches are left alone for the rest of the session rather than letting
+// the device wake for nothing all night.
+#define PLUG_WAKE_STRAY_MAX 3
+static int g_plug_wake_strays;
+static bool g_plug_wake_off_for_session;
+static char g_plug_wake_node[PLUG_WAKE_MAX][160];
+static bool g_plug_wake_changed[PLUG_WAKE_MAX];
+static int g_plug_wake_count;
+
+#ifndef HOST_BUILD
+static void plug_wake_add(const char *path) {
+	if (g_plug_wake_count >= PLUG_WAKE_MAX || access(path, W_OK) != 0) {
+		return;
+	}
+	for (int i = 0; i < g_plug_wake_count; i++) {
+		if (strcmp(g_plug_wake_node[i], path) == 0) {
+			return;
+		}
+	}
+	snprintf(g_plug_wake_node[g_plug_wake_count], sizeof(g_plug_wake_node[0]), "%s", path);
+	g_plug_wake_changed[g_plug_wake_count] = false;
+	g_plug_wake_count++;
+}
+#endif
+
+static void plug_wake_arm(void) {
+#ifndef HOST_BUILD
+	g_plug_wake_count = 0;
+	if (config_get_int("power", "plug_wake_arm", 1) == 0 || g_plug_wake_off_for_session) {
+		return;
+	}
+
+	// Every power supply's device: the charger and the PMIC's USB input.
+	DIR *d = opendir("/sys/class/power_supply");
+	if (d) {
+		struct dirent *e;
+		while ((e = readdir(d)) != NULL) {
+			if (e->d_name[0] == '.') {
+				continue;
+			}
+			char path[160];
+			snprintf(path, sizeof(path), "/sys/class/power_supply/%.64s/device/power/wakeup", e->d_name);
+			plug_wake_add(path);
+		}
+		closedir(d);
+	}
+	static const char *fixed[] = {
+		"/sys/devices/platform/jz-dwc2/power/wakeup",
+		"/sys/devices/platform/jz-dwc2/dwc2/power/wakeup",
+		"/sys/class/typec/port0/device/power/wakeup",
+		"/sys/devices/platform/tcs1421/power/wakeup",
+	};
+	for (size_t i = 0; i < sizeof(fixed) / sizeof(fixed[0]); i++) {
+		plug_wake_add(fixed[i]);
+	}
+	const char *extra = config_get("power", "plug_wake_nodes", "");
+	if (extra && extra[0]) {
+		char list[512];
+		snprintf(list, sizeof(list), "%s", extra);
+		char *save = NULL;
+		for (char *tok = strtok_r(list, ", ", &save); tok; tok = strtok_r(NULL, ", ", &save)) {
+			plug_wake_add(tok);
+		}
+	}
+
+	int armed = 0;
+	for (int i = 0; i < g_plug_wake_count; i++) {
+		char now[16] = "";
+		FILE *f = fopen(g_plug_wake_node[i], "r");
+		if (f) {
+			if (!fgets(now, sizeof(now), f)) {
+				now[0] = '\0';
+			}
+			fclose(f);
+		}
+		if (strncmp(now, "enabled", 7) == 0) {
+			armed++;
+			continue;
+		}
+		f = fopen(g_plug_wake_node[i], "w");
+		if (f) {
+			bool ok = fputs("enabled", f) >= 0;
+			ok = fclose(f) == 0 && ok;
+			if (ok) {
+				g_plug_wake_changed[i] = true;
+				armed++;
+			}
+		}
+	}
+	printf("power: mem: %d of %d cable wake sources armed\n", armed, g_plug_wake_count);
+#endif
+}
+
+static void plug_wake_restore(void) {
+	for (int i = 0; i < g_plug_wake_count; i++) {
+		if (!g_plug_wake_changed[i]) {
+			continue;
+		}
+		g_plug_wake_changed[i] = false;
+		FILE *f = fopen(g_plug_wake_node[i], "w");
+		if (f) {
+			fputs("disabled", f);
+			fclose(f);
+		}
+	}
+}
+
+// The screen's half of the plug (power_set_plug_wake_screen) and the wake's
+// own account of itself: a resume opens a short window in which the tick works
+// out what woke the device -- a key, the charger check, or the cable -- and
+// learns from a plug that did not wake it.
+static bool g_plug_wake_screen = true;
+#define WAKE_CLASSIFY_MS 1500
+// A press that lands just after the cable has lit the screen is the user
+// waking it as well, not a request to put it out again.
+#define PLUG_BUTTON_GRACE_MS 1500
+static bool g_wake_classify;
+static uint32_t g_wake_classify_until;
+static bool g_wake_by_user;
+static bool g_wake_by_poll;
+static bool g_wake_vbus_new;
+
+void power_set_plug_wake_screen(bool enabled) { g_plug_wake_screen = enabled; }
+bool power_get_plug_wake_screen(void) { return g_plug_wake_screen; }
 
 void power_shutdown(void) {
 	// Where the music had got to, before anything else stops. The player's own
@@ -1198,7 +1381,10 @@ static void suspend_to_ram(void) {
 
 	// 4-ter. The RTC alarm: if the automatic shutdown deadline falls during the
 	//        sleep, it is what wakes the device to actually shut down.
-	rtc_alarm_arm_for_auto_off();
+	rtc_alarm_arm_for_sleep();
+
+	// 4-ter-bis. Whatever sees the cable may wake the SoC (see power.h).
+	plug_wake_arm();
 
 	// 4-quater. The panel, left powered while the screen was dark so that an
 	//           ordinary wake could be immediate. It is powered down here for
@@ -1219,6 +1405,7 @@ static void suspend_to_ram(void) {
 		printf("power: mem: %s will not open (%s) -- prototype off for this session\n", path, strerror(errno));
 		g_mem_enabled = false;
 		rtc_alarm_disarm(); // armed a moment ago for a sleep that never began
+		plug_wake_restore();
 		headset_suspend_finish();
 		headset_keys_wake();
 		// The route was parked and the DAC muted for a sleep that never began.
@@ -1246,6 +1433,9 @@ static void suspend_to_ram(void) {
 	// record that the suspend itself succeeded.
 	printf("power: mem: awake after %u s (fclose=%d)\n", slept_s, rc);
 	fflush(stdout);
+
+	// The cable's wake switches back as they were.
+	plug_wake_restore();
 
 	// And the LED back, as a fade-in from the dark it was left in.
 	led_resume();
@@ -1303,10 +1493,12 @@ static void suspend_to_ram(void) {
 		g_mem_blocked_this_dark = true;
 		rtc_alarm_disarm(); // no stray alarm left over from a sleep that never began
 		fflush(stdout);
-	} else if (slept_s < 2) {
+	} else if (slept_s < 2 && !usb_vbus_present()) {
 		// Succeeded but lasted no time: something woke it immediately. Once can
 		// be chance; several in a row is a wake source that has to be found
-		// rather than fought.
+		// rather than fought. A cable is not that: it is the plug wake doing
+		// its job, and counting it would leave standby blocked once the cable
+		// came out again.
 		g_mem_instant_wakes++;
 		printf("power: mem: instant wake (%d of %d tolerated)\n", g_mem_instant_wakes,
 			   g_mem_instant_wakes_max);
@@ -1337,9 +1529,27 @@ static void suspend_to_ram(void) {
 	bool user_woke_it = g_power_button_pending;
 	pthread_mutex_unlock(&g_lock);
 
-	if (rc == 0 && g_rtc_alarm_armed && !user_woke_it && (int32_t)(boottime_ms() - g_rtc_alarm_boot_at) >= 0) {
+	if (rc == 0 && g_rtc_auto_off_armed && !user_woke_it && (int32_t)(boottime_ms() - g_rtc_alarm_boot_at) >= 0) {
 		power_auto_off_now("RTC wake after mem: the idle time has run out");
 	}
+
+	// The charger check's own wake: the RTC, with nobody at the keys. The
+	// deadline is allowed a little early, since the alarm is armed in whole
+	// seconds of wall clock and read back here on CLOCK_BOOTTIME.
+	bool poll_wake = rc == 0 && g_rtc_poll_armed && !user_woke_it &&
+					 (int32_t)(boottime_ms() - g_rtc_poll_boot_at) >= -1500;
+	g_rtc_poll_armed = false;
+
+	// The cable cannot have been in before the sleep (suspend_if_idle() does
+	// not sleep on a charger), so a cable now is one that came during it. What
+	// that says about the wake is decided by the tick once the window below
+	// has closed and any key pressed for the wake has had time to arrive.
+	bool vbus_now = rc == 0 && usb_vbus_present();
+	g_wake_classify = rc == 0;
+	g_wake_classify_until = lv_tick_get() + WAKE_CLASSIFY_MS;
+	g_wake_by_user = user_woke_it;
+	g_wake_by_poll = poll_wake;
+	g_wake_vbus_new = vbus_now;
 
 	// No recovery of the old stream: there is nothing left to recover -- the
 	// freeze closed everything before the suspend, and the next play is a fresh
@@ -1355,6 +1565,72 @@ static void suspend_to_ram(void) {
 	g_screen_off_at = lv_tick_get();
 	g_mem_last_attempt_ms = lv_tick_get();
 	g_mem_skip_logged[0] = '\0';
+
+	if (poll_wake && !vbus_now) {
+		// Nothing plugged in: back to sleep at once, screen still dark. The
+		// countdown and the anti-hammer wait are both set as if they had just
+		// run out, less a second, so a key pressed for this very wake still
+		// lands -- and turns the screen on -- before the next attempt.
+		printf("power: mem: charger check, no cable -- back to sleep\n");
+		g_mem_active_ms = lv_tick_get() - g_mem_after_ms + 1000;
+		g_mem_last_attempt_ms = lv_tick_get() - 30 * 1000 + 1000;
+		g_screen_off_at = lv_tick_get() - g_mem_after_ms;
+	} else if (poll_wake) {
+		printf("power: mem: charger check found a cable -- staying awake to charge\n");
+	}
+}
+
+// A cable arriving with the screen dark, asleep a moment ago or awake all
+// along. The device is already awake by the time this runs, and the standby
+// countdown will not put it back to sleep while the cable is in; whether the
+// screen comes on as well is the user's setting.
+static void plug_arrived(uint32_t now) {
+	printf("power: charger plugged in (screen %s)\n", g_screen_on ? "on" : "off");
+	if (g_screen_on || !g_plug_wake_screen) {
+		return;
+	}
+	power_screen_on();
+	g_ignore_button_until = lv_tick_get() + PLUG_BUTTON_GRACE_MS;
+	power_notify_activity(); // the screen-off timer starts from the plug
+	lv_display_trigger_activity(g_disp);
+	(void)now;
+}
+
+// Called by the tick until the window after a resume has closed: by then any
+// key pressed for the wake has been read, and the wake can be told apart.
+static void classify_wake(uint32_t now) {
+	if (!g_wake_classify || (int32_t)(now - g_wake_classify_until) < 0) {
+		return;
+	}
+	g_wake_classify = false;
+	if (!g_wake_vbus_new && !g_wake_by_user && !g_wake_by_poll) {
+		g_plug_wake_strays++;
+		printf("power: mem: woke with no key, cable or alarm (%d in a row)\n", g_plug_wake_strays);
+		if (g_plug_wake_strays >= PLUG_WAKE_STRAY_MAX && !g_plug_wake_off_for_session && g_plug_wake_count > 0) {
+			g_plug_wake_off_for_session = true;
+			printf("power: mem: cable wake sources no longer armed this session\n");
+		}
+		return;
+	}
+	g_plug_wake_strays = 0;
+	if (!g_wake_vbus_new || g_wake_by_poll) {
+		return;
+	}
+	if (!g_wake_by_user) {
+		printf("power: mem: the cable woke the device\n");
+		return;
+	}
+	// The user woke a player that already had a cable in: the plug happened
+	// during the sleep and woke nothing. From here the sleeping player looks
+	// for a cable itself, and remembers that it has to.
+	printf("power: mem: a cable arrived during the sleep without waking the device\n");
+	if (g_plug_poll_auto && g_plug_poll_ms == 0) {
+		g_plug_poll_ms = PLUG_POLL_LEARNED_S * 1000u;
+		g_plug_poll_auto = false;
+		config_set_int("power", "plug_poll_seconds", PLUG_POLL_LEARNED_S);
+		config_save();
+		printf("power: mem: charger check every %d s while asleep from now on\n", PLUG_POLL_LEARNED_S);
+	}
 }
 
 // Every condition in one place, each of them logged, so the log explains why
@@ -1881,6 +2157,9 @@ static void power_timer_cb(lv_timer_t *timer) {
 	pthread_mutex_unlock(&g_lock);
 
 	if (btn) {
+		if (g_wake_classify) {
+			g_wake_by_user = true;
+		}
 		if ((int32_t)(now - g_ignore_button_until) >= 0) {
 			power_toggle_screen();
 		}
@@ -1926,6 +2205,11 @@ static void power_timer_cb(lv_timer_t *timer) {
 	}
 	g_usb_present_last = usb_now;
 	g_usb_present_known = true;
+	if (usb_changed && usb_now) {
+		plug_arrived(now);
+		input_idle = input_idle_ms(lv_tick_get());
+	}
+	classify_wake(now);
 
 	// The automatic shutdown is a shutdown timer, and behaves like one: it is
 	// held at zero for as long as the screen is on or the player is doing
@@ -1942,19 +2226,30 @@ static void power_timer_cb(lv_timer_t *timer) {
 	uint32_t off_idle_wall = boottime_ms() - g_last_active_boot_ms;
 
 	// 4. auto screen-off after the configured input-idle timeout
-	if (g_screen_on && g_cfg.screen_off_enabled && !g_screen_on_hold && !g_screen_view_hold &&
-		!screen_app_hold_active() && input_idle >= g_cfg.screen_off_timeout_ms) {
+	//    Playing music is no reason to keep it lit: the screen goes dark on
+	//    its timeout whatever is playing, and only the standby below waits for
+	//    the music to stop. A view or an app hold keeps it lit, but not past
+	//    g_screen_hold_max_ms of nobody touching anything.
+	bool soft_hold = g_screen_view_hold || screen_app_hold_active();
+	bool soft_hold_expired = soft_hold && g_screen_hold_max_ms && input_idle >= g_screen_hold_max_ms;
+	if (g_screen_on && g_cfg.screen_off_enabled && !g_screen_on_hold && (!soft_hold || soft_hold_expired) &&
+		input_idle >= g_cfg.screen_off_timeout_ms) {
 		// Say why. A screen that goes dark on its own is indistinguishable
 		// from a crash unless the log records that it was the idle timer.
-		printf("power: screen off after %u ms without input (timeout %u ms)\n", input_idle,
-			   g_cfg.screen_off_timeout_ms);
+		if (soft_hold_expired) {
+			printf("power: screen off after %u ms without input despite a %s hold (limit %u ms)\n", input_idle,
+				   g_screen_view_hold ? "view" : "app", g_screen_hold_max_ms);
+		} else {
+			printf("power: screen off after %u ms without input (timeout %u ms)\n", input_idle,
+				   g_cfg.screen_off_timeout_ms);
+		}
 		power_screen_off();
 	}
 
 	// 4a-bis. the shutdown timer, once it has run out.
 	//
 	//     Before the suspend, not after it: on a tick where both are ready,
-	//     suspending first would leave rtc_alarm_arm_for_auto_off() with a
+	//     suspending first would leave rtc_alarm_arm_for_sleep() with a
 	//     deadline already past, so it would arm nothing, that sleep would carry
 	//     no alarm and the shutdown would slip by a whole period.
 	if (g_auto_off_enabled && g_auto_off_ms > 0 && off_idle_wall >= g_auto_off_ms) {
@@ -2214,11 +2509,26 @@ void power_init(const power_config_t *cfg, lv_display_t *disp) {
 	}
 	g_radio_park_after_ms = (uint32_t)park_secs * 1000u;
 
+	// The charger check: -1 (the default) lets it be learned, 0 never, a
+	// number of seconds sets it outright. See power.h.
+	long poll_secs = config_get_int("power", "plug_poll_seconds", -1);
+	g_plug_poll_auto = poll_secs < 0;
+	if (poll_secs > 0 && poll_secs < PLUG_POLL_MIN_S) {
+		poll_secs = PLUG_POLL_MIN_S;
+	}
+	g_plug_poll_ms = poll_secs > 0 ? (uint32_t)poll_secs * 1000u : 0;
+	g_plug_wake_screen = config_get_bool("power", "plug_wake_screen", true);
+
+	long hold_max_min = config_get_int("power", "screen_hold_max_minutes", SCREEN_HOLD_MAX_DEFAULT_MIN);
+	g_screen_hold_max_ms = hold_max_min > 0 ? (uint32_t)hold_max_min * 60u * 1000u : 0;
+
 	g_power_timer = lv_timer_create(power_timer_cb, POWER_TICK_MS, NULL);
 
-	printf("power: initialized (max_brightness=%ld, on=%ld, wake_hold=%ld, screen_off=%s/%ums, mem=%s/%lus)\n",
+	printf("power: initialized (max_brightness=%ld, on=%ld, wake_hold=%ld, screen_off=%s/%ums, mem=%s/%lus, "
+		   "plug: screen %s, check %us%s)\n",
 		   g_max_brightness, g_cfg.brightness, g_wake_hold_level, g_cfg.screen_off_enabled ? "on" : "off",
-		   g_cfg.screen_off_timeout_ms, g_mem_enabled ? "TEST" : "no", (unsigned long)mem_secs);
+		   g_cfg.screen_off_timeout_ms, g_mem_enabled ? "TEST" : "no", (unsigned long)mem_secs,
+		   g_plug_wake_screen ? "on" : "off", g_plug_poll_ms / 1000u, g_plug_poll_auto ? " (auto)" : "");
 }
 
 bool power_radios_parked(void) { return g_wifi_parked || g_bt_parked; }

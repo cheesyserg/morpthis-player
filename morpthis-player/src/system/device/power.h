@@ -264,6 +264,32 @@ void power_set_screen_off_timeout(uint32_t ms);
 // exist there.
 void power_set_standby_enabled(bool enabled);
 
+// The charger cable and the sleep.
+//
+// Plugging a cable in always brings the device out of standby: the SoC
+// resumes and then stays awake for as long as the cable is in (the standby
+// countdown never suspends on a charger, see suspend_if_idle() in power.c), so
+// a player put away asleep charges -- and enforces its charge limit -- without
+// anybody pressing the power key. How the plug reaches a suspended SoC is
+// layered, because which of the board's devices can raise a wake is the
+// kernel's business and differs between kernels:
+//
+//   1. before every `mem` the wakeup switch of each device that sees the cable
+//      (the charger and PMIC power supplies, the USB controller, the Type-C
+//      port, plus [power] plug_wake_nodes) is turned on, and put back after;
+//   2. if a plug ever turns out not to have woken the device -- the user
+//      pressed the power key and found a cable that arrived during the sleep
+//      -- the player falls back to a short RTC check: while asleep it wakes
+//      every [power] plug_poll_seconds (120 by default once learned, 0 never),
+//      looks for the cable with the screen still dark, and goes straight back
+//      to sleep when there is none. The finding is kept in device_config.ini.
+//
+// This switch only decides what the SCREEN does when a cable arrives with it
+// dark, asleep or awake: on, it lights up as if the power key had been
+// pressed; off, it stays dark and the device simply stays awake to charge.
+void power_set_plug_wake_screen(bool enabled);
+bool power_get_plug_wake_screen(void);
+
 // Powers the Bluetooth radio and its daemons down, in order, through
 // bluetooth_power_down_stack(). The stock init script starts the whole stack at
 // every boot -- rfkill on, patchram, bluetoothd, bluealsa -- and with the

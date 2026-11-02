@@ -5,6 +5,7 @@
 
 #include "lvgl/lvgl.h"
 
+#include "src/gui/shell/iconscale.h"
 #include "src/gui/board_profile.h"
 #include "src/gui/bluetooth/btsettings.h"
 #include "src/gui/fonts/fonts.h"
@@ -234,7 +235,7 @@ static lv_obj_t *radio_card(lv_obj_t *parent, const char *label, const lv_image_
 	lv_obj_add_style(icon, &theme_style_icon, 0);
 	lv_obj_set_size(icon, 18, 18);
 	lv_image_set_inner_align(icon, LV_IMAGE_ALIGN_CENTER);
-	lv_image_set_scale(icon, (uint32_t)(LV_SCALE_NONE * 18 / LV_MAX((int)source->header.w, (int)source->header.h)));
+	iconscale_set(icon, source, 18);
 	lv_obj_set_style_image_recolor(icon, theme_semantic_color(tone), 0);
 	lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, 0);
 
@@ -299,8 +300,7 @@ static lv_obj_t *radio_card(lv_obj_t *parent, const char *label, const lv_image_
 	lv_obj_add_style(row->option_icon, &theme_style_icon, 0);
 	lv_obj_set_size(row->option_icon, 16, 16);
 	lv_image_set_inner_align(row->option_icon, LV_IMAGE_ALIGN_CENTER);
-	int option_side = LV_MAX((int)option_source->header.w, (int)option_source->header.h);
-	lv_image_set_scale(row->option_icon, option_side ? (uint32_t)(LV_SCALE_NONE * 16 / option_side) : LV_SCALE_NONE);
+	iconscale_set(row->option_icon, option_source, 16);
 	lv_obj_set_style_image_recolor(row->option_icon, theme_semantic_color(option_tone), 0);
 	lv_obj_set_style_image_recolor_opa(row->option_icon, LV_OPA_COVER, 0);
 
@@ -318,7 +318,7 @@ static lv_obj_t *radio_card(lv_obj_t *parent, const char *label, const lv_image_
 	lv_obj_add_style(chevron, &theme_style_icon, 0);
 	lv_obj_set_size(chevron, 14, 14);
 	lv_image_set_inner_align(chevron, LV_IMAGE_ALIGN_CENTER);
-	lv_image_set_scale(chevron, (uint32_t)(LV_SCALE_NONE * 14 / 36));
+	iconscale_set(chevron, &icon_chevron_right, 14);
 	lv_obj_set_style_image_opa(chevron, LV_OPA_60, 0);
 
 	radios_refresh();
@@ -358,8 +358,7 @@ static lv_obj_t *wireless_action_grid(lv_obj_t *parent) {
 		lv_obj_add_style(icon, &theme_style_icon, 0);
 		lv_obj_set_size(icon, 20, 20);
 		lv_image_set_inner_align(icon, LV_IMAGE_ALIGN_CENTER);
-		int side = LV_MAX((int)item->icon->header.w, (int)item->icon->header.h);
-		lv_image_set_scale(icon, side ? (uint32_t)(LV_SCALE_NONE * 20 / side) : LV_SCALE_NONE);
+		iconscale_set(icon, item->icon, 20);
 		lv_obj_set_style_image_recolor(icon, theme_semantic_color(item->tone), 0);
 		lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, 0);
 

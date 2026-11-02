@@ -5,6 +5,7 @@
 
 #include "src/gui/wireless/airplay.h"
 #include "src/gui/bluetooth/btsettings.h"
+#include "src/gui/shell/iconscale.h"
 #include "src/gui/shell/confirm.h"
 #include "src/gui/board_profile.h"
 #include "src/gui/fonts/fonts.h"
@@ -73,6 +74,16 @@
 // eight-button/two-line interaction instead of turning it into a four-line
 // block which cannot coexist with brightness and now-playing on a 320 px panel.
 static bool qp_compact;
+
+// The compact panel's icon scales. The icons are drawn from pre-scaled copies
+// (iconscale_set_scaled), so the panel's slide does not run a transform per
+// icon per frame; every source change of these icons goes through the same
+// call, or the new picture would be drawn at its full size.
+#define QP_SCALE_NP_SMALL 192 // repeat/shuffle, play/pause, the star
+#define QP_SCALE_NP_SKIP 184  // previous, next
+#define QP_SCALE_CIRCLE 168	  // 46 px source -> about 30 px
+#define QP_SCALE_SUN 160
+static uint32_t qp_scale(uint32_t compact_scale) { return qp_compact ? compact_scale : LV_SCALE_NONE; }
 static int circle_button_size = CIRCLE_BUTTON_SIZE;
 static int circle_button_gap = CIRCLE_BUTTON_GAP;
 static int qp_buttons_per_line = QP_BUTTONS_PER_LINE;
@@ -281,7 +292,7 @@ static void refresh_repeat_icon(void) {
 		color = inactive;
 		break;
 	}
-	lv_image_set_src(np_repeat_icon, glyph);
+	iconscale_set_scaled(np_repeat_icon, glyph, qp_scale(QP_SCALE_NP_SMALL));
 	lv_obj_set_style_image_recolor(np_repeat_icon, color, 0);
 	lv_obj_set_style_image_recolor_opa(np_repeat_icon, LV_OPA_COVER, 0);
 }
@@ -299,7 +310,8 @@ static void refresh_app_now_playing(void) {
 		scrolltext_set(np_artist, "");
 	}
 
-	lv_image_set_src(np_play_icon, apphost_audio_playing() ? &icon_pause_large : &icon_play_large);
+	iconscale_set_scaled(np_play_icon, apphost_audio_playing() ? &icon_pause_large : &icon_play_large,
+						 qp_scale(QP_SCALE_NP_SMALL));
 	lv_obj_set_style_image_recolor(np_play_icon, theme()->accent, 0);
 	lv_obj_set_style_image_recolor_opa(np_play_icon, LV_OPA_COVER, 0);
 
@@ -311,8 +323,8 @@ static void refresh_app_now_playing(void) {
 		lv_obj_remove_state(transport[i], LV_STATE_DISABLED);
 		lv_obj_set_hidden(transport[i], false);
 	}
-	lv_image_set_src(np_prev_icon, &icon_skip_back_large);
-	lv_image_set_src(np_next_icon, &icon_skip_forward_large);
+	iconscale_set_scaled(np_prev_icon, &icon_skip_back_large, qp_scale(QP_SCALE_NP_SKIP));
+	iconscale_set_scaled(np_next_icon, &icon_skip_forward_large, qp_scale(QP_SCALE_NP_SKIP));
 	lv_obj_set_style_image_recolor(np_prev_icon, theme()->text_primary, 0);
 	lv_obj_set_style_image_recolor(np_next_icon, theme()->text_primary, 0);
 	lv_obj_set_style_image_recolor_opa(np_prev_icon, LV_OPA_COVER, 0);
@@ -345,7 +357,7 @@ static void refresh_now_playing_card(void) {
 	}
 
 	const lv_image_dsc_t *glyph = state.status == AUDIO_STATUS_PLAYING ? &icon_pause_large : &icon_play_large;
-	lv_image_set_src(np_play_icon, glyph);
+	iconscale_set_scaled(np_play_icon, glyph, qp_scale(QP_SCALE_NP_SMALL));
 
 	// On a book the transport is a pair of timed jumps, mirroring the player so
 	// the two places do not disagree about what the same buttons do. prev_cb and
@@ -356,16 +368,20 @@ static void refresh_now_playing_card(void) {
 	int back = audiobook_skip_back();
 	int forward = audiobook_skip_forward();
 	if (np_prev_icon) {
-		lv_image_set_src(np_prev_icon, !skips                       ? &icon_skip_back_large
-									   : back == AUDIOBOOK_SKIP_HUGE ? &icon_prev_60
-									   : back == AUDIOBOOK_SKIP_LONG ? &icon_prev_30
-																	 : &icon_prev_10);
+		iconscale_set_scaled(np_prev_icon,
+							 !skips						   ? &icon_skip_back_large
+							 : back == AUDIOBOOK_SKIP_HUGE ? &icon_prev_60
+							 : back == AUDIOBOOK_SKIP_LONG ? &icon_prev_30
+														   : &icon_prev_10,
+							 qp_scale(QP_SCALE_NP_SKIP));
 	}
 	if (np_next_icon) {
-		lv_image_set_src(np_next_icon, !skips                          ? &icon_skip_forward_large
-									   : forward == AUDIOBOOK_SKIP_HUGE ? &icon_next_60
-									   : forward == AUDIOBOOK_SKIP_LONG ? &icon_next_30
-																		: &icon_next_10);
+		iconscale_set_scaled(np_next_icon,
+							 !skips							  ? &icon_skip_forward_large
+							 : forward == AUDIOBOOK_SKIP_HUGE ? &icon_next_60
+							 : forward == AUDIOBOOK_SKIP_LONG ? &icon_next_30
+															  : &icon_next_10,
+							 qp_scale(QP_SCALE_NP_SKIP));
 	}
 
 	// Repeat/shuffle goes away on a book: its queue is the book, not an album.
@@ -385,7 +401,7 @@ static void refresh_now_playing_card(void) {
 	lv_obj_set_style_image_recolor_opa(np_play_icon, LV_OPA_COVER, 0);
 
 	bool fav = state.current_file[0] && library_fav_contains(state.current_file);
-	lv_image_set_src(np_star_icon, fav ? &icon_star_filled : &icon_star);
+	iconscale_set_scaled(np_star_icon, fav ? &icon_star_filled : &icon_star, qp_scale(QP_SCALE_NP_SMALL));
 	lv_obj_set_style_image_recolor(np_star_icon, fav ? lv_color_make(246, 211, 45) : lv_color_make(150, 150, 150), 0);
 	lv_obj_set_style_image_recolor_opa(np_star_icon, LV_OPA_COVER, 0);
 
@@ -1333,12 +1349,9 @@ static lv_obj_t *make_circle_button(lv_obj_t *parent, const lv_image_dsc_t *glyp
 	lv_obj_set_style_shadow_width(btn, 0, 0);
 
 	lv_obj_t *icon = lv_image_create(btn);
-	lv_image_set_src(icon, glyph);
 	lv_obj_add_style(icon, &theme_style_icon, 0);
 	lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, 0);
-	if (qp_compact) {
-		lv_image_set_scale(icon, 168); // 46 px source -> about 30 px
-	}
+	iconscale_set_scaled(icon, glyph, qp_scale(QP_SCALE_CIRCLE));
 	lv_obj_center(icon);
 
 	return btn;
@@ -1393,7 +1406,7 @@ static void refresh_audio_buttons(void) {
 	if (gain_btn) {
 		lv_obj_t *icon = lv_obj_get_child(gain_btn, 0);
 		if (icon) {
-			lv_image_set_src(icon, high ? &icon_high_gain : &icon_low_gain);
+			iconscale_set_scaled(icon, high ? &icon_high_gain : &icon_low_gain, qp_scale(QP_SCALE_CIRCLE));
 		}
 	}
 	circle_button_set_on(gain_btn, high);
@@ -1405,7 +1418,8 @@ static void refresh_audio_buttons(void) {
 	if (gapless_btn) {
 		lv_obj_t *icon = lv_obj_get_child(gapless_btn, 0);
 		if (icon) {
-			lv_image_set_src(icon, gapless ? &icon_gapless_on_quick : &icon_gapless_off_quick);
+			iconscale_set_scaled(icon, gapless ? &icon_gapless_on_quick : &icon_gapless_off_quick,
+								 qp_scale(QP_SCALE_CIRCLE));
 		}
 	}
 	circle_button_set_on(gapless_btn, gapless);
@@ -2019,12 +2033,9 @@ void quickpanel_init(gui_config_t *cfg) {
 	lv_obj_set_flex_align(bright_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
 	lv_obj_t *sun = lv_image_create(bright_row);
-	lv_image_set_src(sun, &icon_sun);
 	lv_obj_add_style(sun, &theme_style_icon, 0);
 	lv_obj_set_style_image_recolor_opa(sun, LV_OPA_COVER, 0);
-	if (qp_compact) {
-		lv_image_set_scale(sun, 160);
-	}
+	iconscale_set_scaled(sun, &icon_sun, qp_scale(QP_SCALE_SUN));
 
 	brightness_slider = lv_slider_create(bright_row);
 	lv_obj_set_height(brightness_slider, 10);
@@ -2152,9 +2163,6 @@ void quickpanel_init(gui_config_t *cfg) {
 	lv_obj_set_ignore_layout(repeat_btn, true);
 	lv_obj_align(repeat_btn, LV_ALIGN_LEFT_MID, 0, 0);
 	np_repeat_icon = lv_image_create(repeat_btn);
-	if (qp_compact) {
-		lv_image_set_scale(np_repeat_icon, 192);
-	}
 	lv_obj_center(np_repeat_icon);
 
 	lv_obj_t *prev_btn = make_flat_button(transport, qp_compact ? 38 : 76, prev_cb);
@@ -2162,12 +2170,9 @@ void quickpanel_init(gui_config_t *cfg) {
 	np_star_icon = NULL; // really created further down, once the star button exists
 	lv_obj_t *prev_icon = lv_image_create(prev_btn);
 	np_prev_icon = prev_icon;
-	lv_image_set_src(prev_icon, &icon_skip_back_large);
 	lv_obj_add_style(prev_icon, &theme_style_icon, 0);
 	lv_obj_set_style_image_recolor_opa(prev_icon, LV_OPA_COVER, 0);
-	if (qp_compact) {
-		lv_image_set_scale(prev_icon, 184);
-	}
+	iconscale_set_scaled(prev_icon, &icon_skip_back_large, qp_scale(QP_SCALE_NP_SKIP));
 	lv_obj_center(prev_icon);
 
 	// Play/pause uses the same transparent button as prev/next, keeping its hit target.
@@ -2175,9 +2180,6 @@ void quickpanel_init(gui_config_t *cfg) {
 	np_play_btn = play_btn;
 	np_play_icon = lv_image_create(play_btn);
 	lv_obj_add_style(np_play_icon, &theme_style_icon, 0);
-	if (qp_compact) {
-		lv_image_set_scale(np_play_icon, 192);
-	}
 	lv_obj_center(np_play_icon);
 
 	lv_obj_t *next_btn = make_flat_button(transport, qp_compact ? 38 : 76, next_cb);
@@ -2188,12 +2190,9 @@ void quickpanel_init(gui_config_t *cfg) {
 	lv_obj_set_style_opa(play_btn, LV_OPA_40, LV_STATE_DISABLED);
 	lv_obj_set_style_opa(next_btn, LV_OPA_40, LV_STATE_DISABLED);
 	np_next_icon = next_icon;
-	lv_image_set_src(next_icon, &icon_skip_forward_large);
 	lv_obj_add_style(next_icon, &theme_style_icon, 0);
 	lv_obj_set_style_image_recolor_opa(next_icon, LV_OPA_COVER, 0);
-	if (qp_compact) {
-		lv_image_set_scale(next_icon, 184);
-	}
+	iconscale_set_scaled(next_icon, &icon_skip_forward_large, qp_scale(QP_SCALE_NP_SKIP));
 	lv_obj_center(next_icon);
 
 	lv_obj_t *star_btn = make_flat_button(transport, qp_compact ? 32 : 56, star_cb);
@@ -2201,9 +2200,6 @@ void quickpanel_init(gui_config_t *cfg) {
 	lv_obj_set_ignore_layout(star_btn, true);
 	lv_obj_align(star_btn, LV_ALIGN_RIGHT_MID, 0, 0);
 	np_star_icon = lv_image_create(star_btn);
-	if (qp_compact) {
-		lv_image_set_scale(np_star_icon, 192);
-	}
 	lv_obj_center(np_star_icon);
 
 	// --- The way out: a short bar at the bottom, a home-indicator rather than a
