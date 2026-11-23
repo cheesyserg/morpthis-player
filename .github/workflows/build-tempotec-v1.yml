@@ -292,93 +292,118 @@ jobs:
           echo "needed=true" >> "$GITHUB_OUTPUT"
           echo "missing=$missing" >> "$GITHUB_OUTPUT"
 
-      # apt's package lists and the .deb files it downloads, kept together so a
-      # run that has to install anything never goes to the network for them.
-      # The image name and version are part of the key because the lists only
-      # describe the image they were fetched on; a new image is a new key.
-      - name: Compute the dependency cache key
-        id: apt-key
-        if: steps.tools.outputs.needed == 'true'
-        run: |
-          set -euo pipefail
-          # The lists describe the image and its apt sources, not this workflow's
-          # package list, so the package names stay out of the key: editing them
-          # no longer throws the cache away. A newly wanted package simply misses
-          # in the archives and is downloaded. ImageVersion is in the key so a
-          # new runner image gets a fresh index.
-          digest="$(printf '%s\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}" | sha256sum | cut -c1-16)"
-          echo "key=apt-${{ runner.os }}-${{ runner.arch }}-$digest" >> "$GITHUB_OUTPUT"
-          echo "Dependency cache key: apt-${{ runner.os }}-${{ runner.arch }}-$digest"
-
-      - name: Restore the dependency cache
-        id: apt-cache
-        if: steps.tools.outputs.needed == 'true'
-        uses: actions/cache/restore@v5
-        with:
-          path: |
-            ${{ github.workspace }}/.apt/lists
-            ${{ github.workspace }}/.apt/archives
-          key: ${{ steps.apt-key.outputs.key }}
-          # A new image version is a new key, but the previous index is still
-          # usable: the archive keeps old versions, and if a package cannot be
-          # resolved the install step refreshes the lists and tries again. This
-          # keeps a cold 36 MB update off every weekly image roll.
-          restore-keys: |
-            apt-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Install build and firmware tools
-        id: apt-install
+      # The installed tools themselves, not apt's lists and .debs: a tar of every
+      # file the missing packages (and whatever they pulled in) put on disk,
+      # unpacked straight onto / on a hit. No update, no dpkg unpack, no
+      # triggers. The key names the exact package set, because the image decides
+      # what is missing and so what the tar holds.
+      - name: Compute the tool cache key
+        id: tools-key
         if: steps.tools.outputs.needed == 'true'
         env:
           MISSING: ${{ steps.tools.outputs.missing }}
         run: |
           set -euo pipefail
+          set_hash="$(printf '%s\n' $MISSING | sort -u | sha256sum | cut -c1-16)"
+          image_hash="$(printf '%s\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}" | sha256sum | cut -c1-8)"
+          # The image goes last so a new image version still finds the previous
+          # tar through restore-keys; the restore step checks it links before
+          # trusting it.
+          prefix="tools-v1-${{ runner.os }}-${{ runner.arch }}-${ImageOS:-unknown}-$set_hash-"
+          echo "prefix=$prefix" >> "$GITHUB_OUTPUT"
+          echo "key=$prefix$image_hash" >> "$GITHUB_OUTPUT"
+          echo "Tool cache key: $prefix$image_hash"
+
+      - name: Restore the tool cache
+        id: tools-cache
+        if: steps.tools.outputs.needed == 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ github.workspace }}/.tools-cache
+          key: ${{ steps.tools-key.outputs.key }}
+          restore-keys: |
+            ${{ steps.tools-key.outputs.prefix }}
+
+      - name: Unpack the cached tools
+        id: tools-unpack
+        if: steps.tools.outputs.needed == 'true'
+        run: |
+          set -euo pipefail
+          tarball="$GITHUB_WORKSPACE/.tools-cache/tools.tar"
+          if [ ! -s "$tarball" ]; then
+            echo "No cached tools; they will be installed."
+            echo "unpacked=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          sudo tar -xpf "$tarball" -C /
+          sudo ldconfig
+          # A tar from an older image version (a restore-keys match) is only
+          # good if everything in it still links against this image's libraries.
+          broken=""
+          while IFS= read -r f; do
+            [ -f "$f" ] && [ ! -L "$f" ] || continue
+            head -c 4 "$f" 2>/dev/null | grep -q $'\x7fELF' || continue
+            if ldd "$f" 2>/dev/null | grep -q 'not found'; then
+              broken="$broken $f"
+            fi
+          done < <(tar -tf "$tarball" | sed 's|^|/|')
+          if [ -n "$broken" ]; then
+            echo "::warning::Cached tools do not link on this image:$broken; installing them instead."
+            echo "unpacked=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Unpacked $(tar -tf "$tarball" | wc -l) cached files."
+          echo "unpacked=true" >> "$GITHUB_OUTPUT"
+
+      # Only on a cache miss (or a tar that no longer links): apt as normal,
+      # then everything it added is recorded into the tar for the next run.
+      - name: Install build and firmware tools
+        id: apt-install
+        if: steps.tools.outputs.needed == 'true' && steps.tools-unpack.outputs.unpacked != 'true'
+        env:
+          MISSING: ${{ steps.tools.outputs.missing }}
+        run: |
+          set -euo pipefail
           echo "Installing:$MISSING"
+          snap="$RUNNER_TEMP/tools-snapshot"
+          mkdir -p "$snap"
+          dpkg-query -W -f='${binary:Package}\n' | sort > "$snap/pkgs.before"
+          # Alternatives links are made by maintainer scripts, so dpkg -L does
+          # not list them; the bin directories are diffed for them instead.
+          find /etc/alternatives /usr/bin /usr/sbin -maxdepth 1 | sort > "$snap/links.before"
 
-          # apt downloads as the _apt user, so both directories have to be
-          # writable by it, whether they were just created or restored. They are
-          # under the workspace and not RUNNER_TEMP: that directory is mode 700,
-          # which _apt cannot traverse, and apt then falls back to downloading
-          # unsandboxed as root. They are handed back to the runner at the end so
-          # the save step can read them.
-          lists="$GITHUB_WORKSPACE/.apt/lists"
-          archives="$GITHUB_WORKSPACE/.apt/archives"
-          mkdir -p "$lists/partial" "$archives/partial"
-          sudo chown -R _apt:root "$lists" "$archives"
-          apt_opts=(-o "Dir::State::lists=$lists"
-                    -o "Dir::Cache::archives=$archives"
-                    -o "APT::Keep-Downloaded-Packages=true"
-                    -o "Acquire::Languages=none")
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $MISSING
 
-          # A restored lists directory means the index is already there. The
-          # update is the slow half of apt and there is nothing left to fetch
-          # for it.
-          if ! find "$lists" -maxdepth 1 -name '*_Packages*' -print -quit 2>/dev/null \
-              | grep -q .; then
-            sudo apt-get "${apt_opts[@]}" update
-          fi
-          if ! sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends $MISSING; then
-            # A cached list can name a version the archive no longer carries.
-            # Refreshing costs one update; failing the job costs the run.
-            echo "::warning::Installing from the cached package lists failed; refreshing them."
-            sudo apt-get "${apt_opts[@]}" update
-            sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends $MISSING
-          fi
+          dpkg-query -W -f='${binary:Package}\n' | sort > "$snap/pkgs.after"
+          find /etc/alternatives /usr/bin /usr/sbin -maxdepth 1 | sort > "$snap/links.after"
+          comm -13 "$snap/pkgs.before" "$snap/pkgs.after" > "$snap/pkgs.new"
+          echo "New packages: $(tr '\n' ' ' < "$snap/pkgs.new")"
 
-          # The lock files are root-only and useless to the next run.
-          sudo rm -f "$lists/lock" "$archives/lock"
-          sudo chown -R "$(id -u):$(id -g)" "$lists" "$archives"
+          # Files and symlinks only: tar makes the parent directories, and
+          # directory entries would reset the mode of /usr and friends.
+          {
+            xargs -r dpkg-query -L < "$snap/pkgs.new" | grep '^/' || true
+            comm -13 "$snap/links.before" "$snap/links.after"
+          } | sort -u | while IFS= read -r f; do
+            if [ -L "$f" ] || [ -f "$f" ]; then printf '%s\n' "${f#/}"; fi
+          done > "$snap/files"
+
+          mkdir -p "$GITHUB_WORKSPACE/.tools-cache"
+          sudo tar -cf "$GITHUB_WORKSPACE/.tools-cache/tools.tar" -C / --no-recursion -T "$snap/files"
+          sudo chown "$(id -u):$(id -g)" "$GITHUB_WORKSPACE/.tools-cache/tools.tar"
+          echo "Recorded $(wc -l < "$snap/files") files ($(du -h "$GITHUB_WORKSPACE/.tools-cache/tools.tar" | cut -f1))."
           echo "installed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Save the dependency cache
-        if: steps.apt-install.outputs.installed == 'true' && steps.apt-cache.outputs.cache-hit != 'true'
+      # Saved under the exact key whenever this run did not restore it exactly:
+      # after an install, and after a restore-keys match that still linked.
+      - name: Save the tool cache
+        if: steps.tools.outputs.needed == 'true' && steps.tools-cache.outputs.cache-hit != 'true' && (steps.apt-install.outputs.installed == 'true' || steps.tools-unpack.outputs.unpacked == 'true')
         continue-on-error: true
         uses: actions/cache/save@v5
         with:
-          path: |
-            ${{ github.workspace }}/.apt/lists
-            ${{ github.workspace }}/.apt/archives
-          key: ${{ steps.apt-key.outputs.key }}
+          path: ${{ github.workspace }}/.tools-cache
+          key: ${{ steps.tools-key.outputs.key }}
 
       # The stock image is the same file from run to run, and it is the slowest
       # network dependency here. The URL is what identifies it, so the download
